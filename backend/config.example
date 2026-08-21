@@ -1,0 +1,4 @@
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-public-anon-key
+SUPABASE_SERVICE_ROLE_KEY=server-only-secret
+ALLOWED_ORIGINS=https://your-github-user.github.io,http://localhost:5173
