@@ -1,0 +1,18 @@
+{
+  "name": "干就是学工作站",
+  "short_name": "干就是学",
+  "description": "个人创业移动工作站",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101d2c",
+  "theme_color": "#101d2c",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
