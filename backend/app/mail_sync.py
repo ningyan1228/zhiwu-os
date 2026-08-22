@@ -8,6 +8,7 @@ from __future__ import annotations
 import imaplib
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from email import policy
@@ -34,6 +35,20 @@ def _text(message: Any) -> str:
                 return part.get_content() or ""
         return ""
     return message.get_content() or ""
+
+
+def _category(subject: str, content: str) -> str:
+    """Classify business mail with transparent keyword rules, never AI inference."""
+    value = f"{subject} {content}".lower()
+    if re.search(r"\b(pi|payment|remittance|invoice|bank slip)\b", value):
+        return "payment"
+    if re.search(r"\b(sample|specimen)\b", value):
+        return "sample"
+    if re.search(r"\b(quote|quotation|price|offer)\b", value):
+        return "quotation"
+    if re.search(r"\b(test|technical|tds|coa|performance|specification)\b", value):
+        return "technical"
+    return "customer_inquiry"
 
 
 def _received_at(value: str | None) -> str:
@@ -95,12 +110,12 @@ def sync_once() -> dict[str, int]:
     try:
         customers = store.request("GET", f"customers?user_id=eq.{cfg.mail_owner_user_id}&select=id,email") or []
         mappings = store.request("GET", f"customer_email_mappings?user_id=eq.{cfg.mail_owner_user_id}&select=customer_id,email_address") or []
-        projects = store.request("GET", f"projects?user_id=eq.{cfg.mail_owner_user_id}&select=id,customer_id&order=created_at.desc") or []
+        projects = store.request("GET", f"projects?user_id=eq.{cfg.mail_owner_user_id}&select=id,customer_id,product_id&order=created_at.desc") or []
         customer_by_email = {str(row.get("email", "")).lower(): row["id"] for row in customers}
         customer_by_email.update({str(row.get("email_address", "")).lower(): row["customer_id"] for row in mappings})
-        project_by_customer: dict[str, str] = {}
+        project_by_customer: dict[str, dict[str, str | None]] = {}
         for project in projects:
-            project_by_customer.setdefault(project["customer_id"], project["id"])
+            project_by_customer.setdefault(project["customer_id"], {"id": project["id"], "product_id": project.get("product_id")})
 
         with imaplib.IMAP4_SSL(cfg.mail_host, cfg.mail_port) as mailbox:
             mailbox.login(cfg.mail_username, cfg.mail_password)
@@ -122,6 +137,7 @@ def sync_once() -> dict[str, int]:
                 sender = sender.lower()
                 customer_id = customer_by_email.get(sender)
                 content = _text(message)
+                project = project_by_customer.get(customer_id or "", {})
                 message_id = message.get("Message-ID") or f"imap-{uid.decode(errors='ignore')}"
                 payload = {
                     "user_id": cfg.mail_owner_user_id,
@@ -135,8 +151,10 @@ def sync_once() -> dict[str, int]:
                     "received_at": _received_at(message.get("Date")),
                     "attachment_count": sum(1 for part in message.walk() if part.get_content_disposition() == "attachment"),
                     "customer_id": customer_id,
-                    "project_id": project_by_customer.get(customer_id) if customer_id else None,
-                    "status": "Unprocessed",
+                    "project_id": project.get("id"),
+                    "product_id": project.get("product_id"),
+                    "category": _category(message.get("Subject", ""), content),
+                    "status": "linked" if customer_id else "new_lead",
                 }
                 created = store.request("POST", "emails?on_conflict=user_id,message_id", payload, "resolution=ignore-duplicates,return=representation") or []
                 saved += len(created)

@@ -1,6 +1,7 @@
 """Thin API gateway: browser credentials are verified with Supabase before data is proxied."""
 from functools import lru_cache
 from typing import Any, Literal
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query
@@ -88,11 +89,15 @@ class QuoteIn(BaseModel):
     status: str = "Draft"
 
 class EmailStatusIn(BaseModel):
-    status: Literal["Unprocessed", "Processed", "Follow-up created"]
+    status: Literal["unread", "new_lead", "linked", "followup_created", "completed"]
 
 class EmailFollowupIn(BaseModel):
     content: str | None = Field(default=None, max_length=5000)
     next_action: str | None = Field(default=None, max_length=1000)
+
+class EmailLinkIn(BaseModel):
+    customer_id: str
+    contact_name: str | None = Field(default=None, max_length=200)
 
 async def supabase(path: str, token: str, method: str = "GET", payload: dict[str, Any] | None = None) -> Any:
     cfg = settings()
@@ -243,8 +248,24 @@ async def create_quote(quote: QuoteIn, authorization: str | None = Header(defaul
     return await supabase("quotes", bearer(authorization), "POST", quote.model_dump(exclude_none=True))
 
 @app.get("/api/emails")
-async def list_emails(authorization: str | None = Header(default=None), limit: int = Query(100, le=200)):
-    return await supabase(f"emails?select=*&order=received_at.desc&limit={limit}", bearer(authorization))
+async def list_emails(
+    authorization: str | None = Header(default=None), limit: int = Query(100, le=200),
+    category: Literal["customer_inquiry", "technical", "quotation", "sample", "payment", "other"] | None = None,
+    status: Literal["unread", "new_lead", "linked", "followup_created", "completed"] | None = None,
+    unlinked: bool = False,
+):
+    filters = ["select=*", "order=received_at.desc", f"limit={limit}"]
+    if category:
+        filters.append(f"category=eq.{category}")
+    if status:
+        filters.append(f"status=eq.{status}")
+    if unlinked:
+        filters.append("customer_id=is.null")
+    return await supabase(f"emails?{'&'.join(filters)}", bearer(authorization))
+
+@app.get("/api/emails/unlinked")
+async def list_unlinked_emails(authorization: str | None = Header(default=None), limit: int = Query(200, le=200)):
+    return await supabase(f"emails?customer_id=is.null&select=*&order=received_at.desc&limit={limit}", bearer(authorization))
 
 @app.get("/api/emails/{email_id}")
 async def get_email(email_id: str, authorization: str | None = Header(default=None)):
@@ -260,6 +281,32 @@ async def update_email_status(email_id: str, payload: EmailStatusIn, authorizati
         raise HTTPException(404, "Email not found")
     return rows[0]
 
+@app.post("/api/emails/{email_id}/link")
+async def link_email_to_customer(email_id: str, payload: EmailLinkIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    rows = await supabase(f"emails?id=eq.{email_id}&select=*", token)
+    if not rows:
+        raise HTTPException(404, "Email not found")
+    customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&select=id,contact_person", token)
+    if not customer_rows:
+        raise HTTPException(404, "Customer not found")
+    projects = await supabase(f"projects?customer_id=eq.{payload.customer_id}&select=id,product_id&order=created_at.desc&limit=1", token)
+    project = projects[0] if projects else {}
+    email = rows[0]
+    mapping_rows = await supabase(f"customer_email_mappings?email_address=eq.{quote(email['sender'], safe='')}&select=id", token)
+    mapping_payload = {"customer_id": payload.customer_id, "email_address": email["sender"], "contact_name": payload.contact_name or email.get("sender_name") or customer_rows[0].get("contact_person")}
+    if mapping_rows:
+        await supabase(f"customer_email_mappings?id=eq.{mapping_rows[0]['id']}", token, "PATCH", mapping_payload)
+    else:
+        await supabase("customer_email_mappings", token, "POST", mapping_payload)
+    updated = await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {
+        "customer_id": payload.customer_id,
+        "project_id": project.get("id"),
+        "product_id": project.get("product_id"),
+        "status": "linked",
+    })
+    return updated[0]
+
 @app.post("/api/emails/{email_id}/followups", status_code=201)
 async def create_followup_from_email(email_id: str, payload: EmailFollowupIn, authorization: str | None = Header(default=None)):
     token = bearer(authorization)
@@ -271,12 +318,22 @@ async def create_followup_from_email(email_id: str, payload: EmailFollowupIn, au
         raise HTTPException(422, "This email is not linked to a CRM customer")
     record = await supabase("followups", token, "POST", {
         "customer_id": email["customer_id"],
+        "email_id": email_id,
         "date": str(email.get("received_at") or "")[:10] or None,
         "content": payload.content or f"邮件：{email.get('subject', '(无主题)')}\n{email.get('content_preview') or ''}",
         "next_action": payload.next_action or "阅读邮件并确认下一步行动",
         "status": "Open",
     })
-    await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {"status": "Follow-up created"})
+    customer_rows = await supabase(f"customers?id=eq.{email['customer_id']}&select=next_followup_date", token)
+    await supabase("email_actions", token, "POST", {
+        "email_id": email_id,
+        "customer_id": email["customer_id"],
+        "action": "Create follow-up",
+        "next_action": payload.next_action or "阅读邮件并确认下一步行动",
+        "deadline": customer_rows[0].get("next_followup_date") if customer_rows else None,
+        "status": "Pending",
+    })
+    await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {"status": "followup_created"})
     return record[0]
 
 @app.get("/api/email-sync")

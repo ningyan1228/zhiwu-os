@@ -35,7 +35,7 @@ const asProduct = (item: Product): Product => ({ ...item, category: item.categor
 const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
 const asProject = (item: Project): Project => ({ ...item, application: item.application || '应用待确认', notes: item.notes || '' })
 const asQuote = (item: Quote): Quote => ({ ...item, currency: item.currency || 'USD', quantity: item.quantity || '待确认', status: item.status || 'Draft' })
-const asMailEmail = (item: MailEmail): MailEmail => ({ ...item, subject: item.subject || '(无主题)', content_preview: item.content_preview || '', attachment_count: item.attachment_count || 0, status: item.status || 'Unprocessed' })
+const asMailEmail = (item: MailEmail): MailEmail => ({ ...item, subject: item.subject || '(无主题)', content_preview: item.content_preview || '', attachment_count: item.attachment_count || 0, status: item.status || 'unread', category: item.category || 'customer_inquiry' })
 
 export const api = {
   customers: () => request<Customer[]>('/api/customers').then(rows => rows.map(asCustomer)),
@@ -55,7 +55,9 @@ export const api = {
     : request<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', body: JSON.stringify({ password }) }),
   requestPasswordRecovery: (email: string) => publicRequest<{ sent: boolean }>('/api/auth/recover', { method: 'POST', body: JSON.stringify({ email }) }),
   emails: () => request<MailEmail[]>('/api/emails').then(rows => rows.map(asMailEmail)),
+  unlinkedEmails: () => request<MailEmail[]>('/api/emails/unlinked').then(rows => rows.map(asMailEmail)),
   emailSync: () => request<EmailSync>('/api/email-sync'),
   createFollowupFromEmail: (id: string, payload: { content?: string; next_action?: string }) => request<Followup>(`/api/emails/${id}/followups`, { method: 'POST', body: JSON.stringify(payload) }).then(asFollowup),
+  linkEmail: (id: string, payload: { customer_id: string; contact_name?: string }) => request<MailEmail>(`/api/emails/${id}/link`, { method: 'POST', body: JSON.stringify(payload) }).then(asMailEmail),
   updateEmailStatus: (id: string, status: MailEmail['status']) => request<MailEmail>(`/api/emails/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }).then(asMailEmail),
 }

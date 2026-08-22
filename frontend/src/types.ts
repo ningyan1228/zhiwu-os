@@ -18,6 +18,8 @@ export type Quote = { id: string; customer_id: string; product_id?: string; prod
 export type MailEmail = {
   id: string; message_id: string; sender: string; receiver?: string; sender_name?: string; subject: string
   content_preview?: string; content_text?: string; received_at: string; attachment_count: number
-  customer_id?: string; project_id?: string; status: 'Unprocessed' | 'Processed' | 'Follow-up created'; created_at: string
+  customer_id?: string; project_id?: string; product_id?: string
+  status: 'unread' | 'new_lead' | 'linked' | 'followup_created' | 'completed'
+  category: 'customer_inquiry' | 'technical' | 'quotation' | 'sample' | 'payment' | 'other'; created_at: string
 }
 export type EmailSync = { status: string; total_synced: number; last_sync_time?: string | null; last_error?: string | null }

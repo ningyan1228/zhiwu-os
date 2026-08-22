@@ -23,7 +23,7 @@ const stageLabels: Record<CustomerStage, string> = {
 
 function App() {
   const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('zhiwu-access-token')))
-  const [view, setView] = useState<View>('dashboard')
+  const [view, setView] = useState<View>(() => window.location.hash.startsWith('#mail') ? 'mail' : 'dashboard')
   const [sidebar, setSidebar] = useState(false)
   const [customers, setCustomers] = useState(seedCustomers)
   const [products, setProducts] = useState(seedProducts)
@@ -57,6 +57,12 @@ function App() {
     }
     void loadWorkspace().catch(error => console.error('Unable to load workspace data:', error))
   }, [authenticated])
+  useEffect(() => {
+    const match = window.location.hash.match(/^#mail\/([^/]+)$/)
+    if (!match || match[1] === 'unlinked') return
+    const email = emails.find(item => item.id === match[1])
+    if (email) { setView('mail'); setSelectedEmail(email) }
+  }, [emails])
   const addCustomer = async (form: HTMLFormElement) => {
     const value = Object.fromEntries(new FormData(form)) as Record<string, string>
     const customer = await api.createCustomer({ company_name: value.company_name, country: value.country, contact_person: value.contact_person, email: value.email, whatsapp: value.whatsapp || '', product_interest: value.product_interest || '', customer_stage: 'New', next_followup_date: value.next_followup_date || '', notes: value.notes || '' })
@@ -92,8 +98,22 @@ function App() {
   const createEmailFollowup = async (email: MailEmail) => {
     const followup = await api.createFollowupFromEmail(email.id, {})
     setFollowupRows(current => [followup, ...current])
-    setEmails(current => current.map(item => item.id === email.id ? { ...item, status: 'Follow-up created' } : item))
-    setSelectedEmail(current => current?.id === email.id ? { ...current, status: 'Follow-up created' } : current)
+    setEmails(current => current.map(item => item.id === email.id ? { ...item, status: 'followup_created' } : item))
+    setSelectedEmail(current => current?.id === email.id ? { ...current, status: 'followup_created' } : current)
+  }
+  const linkEmail = async (email: MailEmail, customer: Customer) => {
+    const linked = await api.linkEmail(email.id, { customer_id: customer.id, contact_name: customer.contact_person })
+    setEmails(current => current.map(item => item.id === email.id ? linked : item))
+    setSelectedEmail(current => current?.id === email.id ? linked : current)
+  }
+  const updateEmailStatus = async (email: MailEmail, status: MailEmail['status']) => {
+    const updated = await api.updateEmailStatus(email.id, status)
+    setEmails(current => current.map(item => item.id === email.id ? updated : item))
+    setSelectedEmail(current => current?.id === email.id ? updated : current)
+  }
+  const openEmail = (email: MailEmail) => {
+    window.history.replaceState(null, '', `${window.location.pathname}#mail/${email.id}`)
+    setView('mail'); setSelectedEmail(email)
   }
   if (!authenticated) return <Login onAuthenticated={() => setAuthenticated(true)} />
   return <div className="app-shell">
@@ -106,12 +126,12 @@ function App() {
       <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', mail: '邮件中心', products: '产品中心', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input placeholder="搜索工作空间" /></label><button className="icon-button"><Bell size={19}/><i/></button><div className="avatar avatar-small">Z</div></div></header>
       {view === 'dashboard' && <Dashboard customers={customers} projects={projects} followups={followupRows} emails={emails} today={today} onOpenCRM={() => setView('crm')} onOpenMail={() => setView('mail')} openCustomer={setSelected} />}
       {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
-      {view === 'mail' && <MailCenter emails={emails} sync={emailSync} customers={customers} projects={projects} open={setSelectedEmail} />}
+      {view === 'mail' && <MailCenter emails={emails} sync={emailSync} customers={customers} projects={projects} products={products} open={openEmail} />}
       {view === 'products' && <Products products={products} create={() => setModal('product')} />}
       {view === 'projects' && <ProjectManagement projects={projects} customers={customers} products={products} quotes={quotes} openCustomer={setSelected} />}
     </main>
-    {selected && <CustomerDrawer customer={selected} projects={projects} quotes={quotes} followups={followupRows} products={products} emails={emails} close={() => setSelected(null)} addFollowup={() => setModal('followup')} addQuote={() => setModal('quote')} updateStage={updateStage} />}
-    {selectedEmail && <MailDetail email={selectedEmail} customers={customers} projects={projects} products={products} close={() => setSelectedEmail(null)} createFollowup={createEmailFollowup} openCustomer={setSelected} />}
+    {selected && <CustomerDrawer customer={selected} projects={projects} quotes={quotes} followups={followupRows} products={products} emails={emails} close={() => setSelected(null)} addFollowup={() => setModal('followup')} addQuote={() => setModal('quote')} updateStage={updateStage} openEmail={openEmail} />}
+    {selectedEmail && <MailDetail email={selectedEmail} customers={customers} projects={projects} products={products} close={() => { window.history.replaceState(null, '', `${window.location.pathname}#mail`); setSelectedEmail(null) }} createFollowup={createEmailFollowup} linkEmail={linkEmail} updateStatus={updateEmailStatus} openCustomer={setSelected} />}
     {modal === 'customer' && <CustomerForm close={() => setModal(null)} submit={addCustomer} />}
     {modal === 'product' && <ProductForm close={() => setModal(null)} submit={addProduct} />}
     {modal === 'followup' && selected && <FollowupForm customer={selected} close={() => setModal(null)} submit={addFollowup} />}
@@ -132,13 +152,13 @@ function Dashboard({ customers, projects, followups, emails, today, onOpenCRM, o
   ]
   const samplesPending = customers.filter(c => c.customer_stage.includes('Sample')).length
   const recentUpdates = [...followups].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3)
-  const mailActions = emails.filter(email => email.status === 'Unprocessed' && email.customer_id).slice(0, 3)
+  const mailActions = emails.filter(email => ['unread', 'new_lead', 'linked'].includes(email.status)).slice(0, 3)
   return <section className="page dashboard"><div className="hero"><div><p className="eyebrow"><span className="pulse"/> {today}</p><h1>早上好，Zhiwu <span>✦</span></h1><p className="subhead">一眼看清客户状态、项目阶段与下一步商业机会。</p></div></div>
     <p className="section-kicker">TODAY'S SALES STATUS</p><div className="metrics metrics-six"><Metric label="客户总数" value={String(customers.length)} delta="来自 CRM 实时统计" icon={<Users/>}/><Metric label="进行中项目" value={String(projects.length)} delta="聚焦本周推进" icon={<Layers3/>}/><Metric label="报价中" value={String(pipeline[1][1])} delta="等待价格沟通" icon={<ClipboardList/>}/><Metric label="样品阶段" value={String(samplesPending)} delta="样品与付款待推进" icon={<Package/>}/><Metric label="待跟进客户" value={String(reminders.length)} delta="按下一步行动排序" icon={<Bell/>}/><Metric label="产品数量" value="5" delta="已关联客户项目" icon={<Sparkles/>}/></div>
     <section className="panel pipeline"><PanelTitle title="销售漏斗" action="进入 CRM" onAction={onOpenCRM}/><div className="pipeline-list">{pipeline.map(([label, count], index) => <button key={label} className="pipeline-step" onClick={onOpenCRM}><span className="pipeline-index">0{index + 1}</span><span>{label}</span><b>{count}</b><i style={{ width: `${Math.max(10, Number(count) / 6 * 100)}%` }}/></button>)}</div></section>
     <div className="dashboard-grid"><section className="panel tasks"><PanelTitle title="今日重点" action="查看全部"/><div>{tasks.map((task, index) => <button className="task" key={task}><span className="task-box">{index === 2 && <Check size={13}/>}</span><span>{task}</span>{index < 2 && <b>重要</b>}<ChevronRight size={16}/></button>)}</div><button className="add-line"><Plus size={17}/> 添加任务</button></section>
     <section className="panel reminders"><PanelTitle title="Today's Follow-up" action="进入 CRM" onAction={onOpenCRM}/>{reminders.map((customer, index) => <button className="reminder-row" key={customer.id} onClick={() => openCustomer(customer)}><span className={`reminder-dot ${customer.status_tone ?? (index ? 'attention' : 'warning')}`}>{customer.status_tone === 'success' ? '●' : '⚠'}</span><div><b>{customer.company_name}</b><span>{customer.next_action?.[0] ?? customer.status_label ?? '安排下一步行动'}</span></div><time>{customer.next_followup_date.slice(5).replace('-', '/')}</time><ChevronRight size={16}/></button>)}</section>
-    <section className="panel mail-alert-panel"><PanelTitle title="邮件提醒" action="进入邮件中心" onAction={onOpenMail}/>{mailActions.length ? mailActions.map(email => { const customer = customers.find(item => item.id === email.customer_id); return <div className="mail-alert" key={email.id}><Mail size={15}/><div><b>{customer?.company_name ?? email.sender_name ?? email.sender}</b><span>{email.subject}</span></div><em>待处理</em></div> }) : <p className="mail-alert-empty">暂无待处理客户邮件</p>}</section></div>
+    <section className="panel mail-alert-panel"><PanelTitle title="Mail Follow-up" action="进入邮件中心" onAction={onOpenMail}/>{mailActions.length ? mailActions.map(email => { const customer = customers.find(item => item.id === email.customer_id); return <div className="mail-alert" key={email.id}><Mail size={15}/><div><b>{customer?.company_name ?? email.sender_name ?? email.sender}</b><span>{customer?.next_action?.[0] ?? email.subject}</span></div><em>{email.status === 'new_lead' ? '新线索' : '待行动'}</em></div> }) : <p className="mail-alert-empty">暂无待处理业务邮件</p>}</section></div>
     <section className="panel activity"><PanelTitle title="Recent Updates" action="查看全部"/><div className="timeline">{recentUpdates.map((update, index) => { const customer = customers.find(item => item.id === update.customer_id); return <Activity key={update.id} icon={index === 1 ? <Package/> : index === 2 ? <Check/> : <Users/>} title={`${customer?.company_name ?? '客户'} · ${update.content}`} text={`Next: ${update.next_action}`} time={update.date}/>} )}</div></section>
   </section>
 }
@@ -171,36 +191,56 @@ function ProjectManagement({ projects, customers, products, quotes, openCustomer
     })}</div>{!projects.length && <div className="empty">还没有项目，请先在 CRM 中创建客户和项目。</div>}</section>
 }
 
-function MailCenter({ emails, sync, customers, projects, open }: { emails: MailEmail[]; sync: EmailSync; customers: Customer[]; projects: Project[]; open: (email: MailEmail) => void }) {
+const mailCategoryLabels: Record<MailEmail['category'], string> = { customer_inquiry: '客户询盘', technical: '技术讨论', quotation: '报价相关', sample: '样品相关', payment: '付款相关', other: '其他' }
+const mailStatusLabels: Record<MailEmail['status'], string> = { unread: '待跟进', new_lead: '新线索', linked: '已关联', followup_created: '已创建跟进', completed: '已处理' }
+
+function MailCenter({ emails, sync, customers, projects, products, open }: { emails: MailEmail[]; sync: EmailSync; customers: Customer[]; projects: Project[]; products: Product[]; open: (email: MailEmail) => void }) {
   const [query, setQuery] = useState('')
+  const [category, setCategory] = useState<'all' | MailEmail['category'] | 'unlinked'>(() => window.location.hash === '#mail/unlinked' ? 'unlinked' : 'all')
   const today = new Date().toISOString().slice(0, 10)
-  const visible = emails.filter(email => `${email.sender_name || ''} ${email.sender} ${email.subject} ${email.content_preview || ''}`.toLowerCase().includes(query.toLowerCase()))
+  const visible = emails.filter(email => {
+    const customer = customers.find(item => item.id === email.customer_id)
+    const project = projects.find(item => item.id === email.project_id || item.customer_id === email.customer_id)
+    const product = products.find(item => item.id === email.product_id || item.id === project?.product_id)
+    const searchable = `${email.sender_name || ''} ${email.sender} ${email.subject} ${email.content_preview || ''} ${customer?.company_name || ''} ${project?.project_name || ''} ${product?.product_code || ''}`.toLowerCase()
+    const typeMatches = category === 'all' || (category === 'unlinked' ? !email.customer_id : email.category === category)
+    return typeMatches && searchable.includes(query.toLowerCase())
+  })
   const customerEmails = emails.filter(email => email.customer_id).length
-  const unprocessed = emails.filter(email => email.status === 'Unprocessed').length
+  const unprocessed = emails.filter(email => ['unread', 'new_lead', 'linked'].includes(email.status)).length
   const attachments = emails.reduce((total, email) => total + email.attachment_count, 0)
   const todayCount = emails.filter(email => email.received_at.slice(0, 10) === today).length
-  return <section className="page mail-page"><div className="page-heading"><div><p className="eyebrow">MAIL CENTER</p><h1>外贸邮件中心</h1><p>从企业邮箱读取客户来信，自动关联 CRM、项目和下一步行动。</p></div><div className="sync-indicator"><RefreshCw size={15}/><span>{sync.status === 'Success' ? '已同步' : sync.status === 'Not configured' ? '等待邮箱配置' : sync.status}</span></div></div>
-    <div className="mail-metrics"><Metric label="今日邮件" value={String(todayCount)} delta="当天接收" icon={<Mail/>}/><Metric label="未处理" value={String(unprocessed)} delta="待转为业务动作" icon={<CircleHelp/>}/><Metric label="客户邮件" value={String(customerEmails)} delta="已自动关联 CRM" icon={<Users/>}/><Metric label="附件" value={String(attachments)} delta="邮件附件数量" icon={<Paperclip/>}/></div>
-    <section className="mail-list-panel"><div className="table-tools"><label><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索客户、主题或邮件关键词" /></label><span className="mail-sync-time">{sync.last_sync_time ? `上次同步 ${new Date(sync.last_sync_time).toLocaleString('zh-CN')}` : 'IMAP 每 10 分钟同步一次'}</span></div><div className="mail-list">{visible.map(email => {
+  const filters: [typeof category, string][] = [['all', '全部'], ['customer_inquiry', '客户询盘'], ['technical', '技术讨论'], ['quotation', '报价相关'], ['sample', '样品相关'], ['payment', '付款相关'], ['unlinked', `未关联邮件 ${emails.filter(email => !email.customer_id).length}`]]
+  const selectFilter = (value: typeof category) => { window.history.replaceState(null, '', `${window.location.pathname}${value === 'unlinked' ? '#mail/unlinked' : '#mail'}`); setCategory(value) }
+  return <section className="page mail-page"><div className="page-heading"><div><p className="eyebrow">MAIL CENTER · BUSINESS INBOX</p><h1>外贸邮件中心</h1><p>每一封客户来信都可关联到客户、项目、产品和下一步行动。</p></div><div className="sync-indicator"><RefreshCw size={15}/><span>{sync.status === 'Success' ? '已同步' : sync.status === 'Not configured' ? '等待邮箱配置' : sync.status}</span></div></div>
+    <div className="mail-metrics"><Metric label="今日邮件" value={String(todayCount)} delta="当天接收" icon={<Mail/>}/><Metric label="待跟进" value={String(unprocessed)} delta="待转为业务动作" icon={<CircleHelp/>}/><Metric label="客户邮件" value={String(customerEmails)} delta="已关联 CRM" icon={<Users/>}/><Metric label="附件" value={String(attachments)} delta="仅统计，不下载" icon={<Paperclip/>}/></div>
+    <section className="mail-list-panel"><div className="table-tools mail-tools"><label><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索客户、邮箱、产品、主题或关键词" /></label><span className="mail-sync-time">{sync.last_sync_time ? `上次同步 ${new Date(sync.last_sync_time).toLocaleString('zh-CN')}` : 'IMAP 每 10 分钟同步一次'}</span></div><div className="mail-filters">{filters.map(([value, label]) => <button key={value} className={category === value ? 'active' : ''} onClick={() => selectFilter(value)}>{label}</button>)}</div><div className="mail-list">{visible.map(email => {
       const customer = customers.find(item => item.id === email.customer_id)
       const project = projects.find(item => item.id === email.project_id || item.customer_id === email.customer_id)
-      return <button className="mail-row" key={email.id} onClick={() => open(email)}><span className={`mail-unread ${email.status === 'Unprocessed' ? 'is-unread' : ''}`}/><div className="mail-sender"><b>{email.sender_name || email.sender}</b><span>{customer ? `${customer.country} · ${customer.company_name}` : '未关联客户'}</span></div><div className="mail-subject"><b>{email.subject}</b><span>{email.content_preview || '无可用正文预览'}</span></div><div className="mail-business"><span>{project?.project_name || '待关联项目'}</span><Stage stage={customer?.customer_stage ?? 'New'}/></div><time>{email.received_at.slice(0, 10)}</time>{email.attachment_count > 0 && <Paperclip size={15}/>}</button>
-    })}</div>{!visible.length && <div className="mail-empty"><Mail size={26}/><b>还没有同步到邮件</b><span>完成服务器端 IMAP 配置后，新的客户邮件会自动出现在这里。</span></div>}</section>
+      const product = products.find(item => item.id === email.product_id || item.id === project?.product_id)
+      return <button className="mail-row business" key={email.id} onClick={() => open(email)}><span className={`mail-unread ${['unread', 'new_lead'].includes(email.status) ? 'is-unread' : ''}`}/><div className="mail-sender"><b>{email.sender_name || email.sender}</b><span>{customer ? `${customer.country} · ${customer.company_name}` : '待匹配客户'}</span></div><div className="mail-subject"><b>{email.subject}</b><span>{email.content_preview || '无可用正文预览'}</span></div><div className="mail-business"><b>{product?.product_code ?? customer?.product_interest ?? '待关联产品'}</b><span>{project?.project_name ?? '待关联项目'}</span></div><div className="mail-tags"><span className={`mail-status ${email.status}`}>{mailStatusLabels[email.status]}</span><span className="mail-category">{mailCategoryLabels[email.category]}</span></div><time>{email.received_at.slice(0, 10)}</time>{email.attachment_count > 0 && <Paperclip size={15}/>}</button>
+    })}</div>{!visible.length && <div className="mail-empty"><Mail size={26}/><b>{emails.length ? '没有符合筛选条件的邮件' : '还没有同步到邮件'}</b><span>{emails.length ? '更换分类或关键词后再试。' : '完成服务器端 IMAP 配置后，新的客户邮件会自动出现在这里。'}</span></div>}</section>
   </section>
 }
 
-function MailDetail({ email, customers, projects, products, close, createFollowup, openCustomer }: { email: MailEmail; customers: Customer[]; projects: Project[]; products: Product[]; close: () => void; createFollowup: (email: MailEmail) => Promise<void>; openCustomer: (customer: Customer) => void }) {
+function MailDetail({ email, customers, projects, products, close, createFollowup, linkEmail, updateStatus, openCustomer }: { email: MailEmail; customers: Customer[]; projects: Project[]; products: Product[]; close: () => void; createFollowup: (email: MailEmail) => Promise<void>; linkEmail: (email: MailEmail, customer: Customer) => Promise<void>; updateStatus: (email: MailEmail, status: MailEmail['status']) => Promise<void>; openCustomer: (customer: Customer) => void }) {
   const [creating, setCreating] = useState(false)
+  const [linking, setLinking] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const customer = customers.find(item => item.id === email.customer_id)
   const project = projects.find(item => item.id === email.project_id || item.customer_id === email.customer_id)
-  const product = products.find(item => item.id === project?.product_id || item.product_code === customer?.product_interest)
+  const product = products.find(item => item.id === email.product_id || item.id === project?.product_id || item.product_code === customer?.product_interest)
+  const candidates = customers.filter(item => `${item.company_name} ${item.country} ${item.contact_person} ${item.email}`.toLowerCase().includes(query.toLowerCase()))
   const create = async () => { setCreating(true); try { await createFollowup(email) } finally { setCreating(false) } }
-  return <div className="drawer-layer" onMouseDown={close}><aside className="drawer mail-detail" onMouseDown={event => event.stopPropagation()}><button className="close" onClick={close}><X size={20}/></button><p className="eyebrow">MAIL DETAIL</p><h2>{email.subject}</h2><div className="mail-detail-meta"><span>{email.sender_name || email.sender}</span><span>{email.sender}</span><time>{new Date(email.received_at).toLocaleString('zh-CN')}</time></div><div className="mail-content">{email.content_text || email.content_preview || '邮件正文不可用。'}</div>{email.attachment_count > 0 && <div className="mail-attachments"><Paperclip size={15}/>{email.attachment_count} 个附件（V1 仅记录附件数量，不下载或修改邮件附件）</div>}
-    <DetailSection title="CRM Link"><div className="mail-link-card"><span>关联客户</span><b>{customer?.company_name ?? '未自动匹配'}</b><span>关联产品</span><b>{product?.product_code ?? customer?.product_interest ?? '待确认'}</b><span>项目</span><b>{project?.project_name ?? '待关联项目'}</b><span>当前阶段</span><b>{customer ? stageLabels[customer.customer_stage] : '待处理'}</b><span>下一步</span><b>{customer?.next_action?.[0] ?? customer?.status_label ?? '确认邮件业务动作'}</b></div>{customer && <button className="mail-open-customer" onClick={() => { close(); openCustomer(customer) }}>打开客户详情 <ChevronRight size={15}/></button>}</DetailSection>
-    <button className="primary full" disabled={!customer || creating || email.status === 'Follow-up created'} onClick={create}>{creating ? '正在创建…' : email.status === 'Follow-up created' ? '已添加跟进记录' : '+ 添加跟进记录'}</button></aside></div>
+  const link = async (target: Customer) => { setLinking(true); try { await linkEmail(email, target); setPickerOpen(false) } finally { setLinking(false) } }
+  return <div className="drawer-layer" onMouseDown={close}><aside className="drawer mail-detail" onMouseDown={event => event.stopPropagation()}><button className="close" onClick={close}><X size={20}/></button><p className="eyebrow">MAIL DETAIL · {mailCategoryLabels[email.category]}</p><h2>{email.subject}</h2><div className="mail-detail-meta"><span>{email.sender_name || email.sender}</span><span>{email.sender}</span><time>{new Date(email.received_at).toLocaleString('zh-CN')}</time></div><div className="mail-content">{email.content_text || email.content_preview || '邮件正文不可用。'}</div>{email.attachment_count > 0 && <div className="mail-attachments"><Paperclip size={15}/>{email.attachment_count} 个附件（当前只记录数量，不下载或修改附件）</div>}
+    <DetailSection title="Business Context"><div className="mail-link-card"><span>关联客户</span><b>{customer?.company_name ?? '未自动匹配'}</b><span>国家 / 联系人</span><b>{customer ? `${customer.country} · ${customer.contact_person}` : '待确认'}</b><span>项目</span><b>{project?.project_name ?? '待关联项目'}</b><span>产品</span><b>{product?.product_code ?? customer?.product_interest ?? '待确认'}</b><span>当前阶段</span><b>{customer ? stageLabels[customer.customer_stage] : '新线索'}</b><span>下一步</span><b>{customer?.next_action?.[0] ?? customer?.status_label ?? '确认邮件业务动作'}</b><span>状态</span><b>{mailStatusLabels[email.status]}</b></div>{customer ? <button className="mail-open-customer" onClick={() => { close(); openCustomer(customer) }}>打开客户详情 <ChevronRight size={15}/></button> : <button className="mail-open-customer" onClick={() => setPickerOpen(true)}>关联客户 <ChevronRight size={15}/></button>}</DetailSection>
+    {pickerOpen && <section className="mail-link-picker"><div><b>关联客户</b><button className="close" onClick={() => setPickerOpen(false)}><X size={16}/></button></div><label><Search size={15}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索公司、联系人或邮箱" /></label><div className="mail-customer-options">{candidates.map(item => <button key={item.id} disabled={linking} onClick={() => void link(item)}><span>{item.company_name}</span><small>{item.country} · {item.contact_person}</small><ChevronRight size={15}/></button>)}</div></section>}
+    <div className="mail-detail-actions"><button className="primary" disabled={!customer || creating || email.status === 'followup_created'} onClick={create}>{creating ? '正在创建…' : email.status === 'followup_created' ? '已创建跟进' : '+ 创建跟进'}</button><button disabled={email.status === 'completed'} onClick={() => void updateStatus(email, 'completed')}>{email.status === 'completed' ? '已处理' : '标记已处理'}</button></div></aside></div>
 }
 
-function CustomerDrawer({customer,projects,quotes,followups,products,emails,close,addFollowup,addQuote,updateStage}:{customer:Customer;projects:Project[];quotes:Quote[];followups:Followup[];products:Product[];emails:MailEmail[];close:()=>void;addFollowup:()=>void;addQuote:()=>void;updateStage:(customer:Customer,stage:CustomerStage)=>Promise<void>}) {
+function CustomerDrawer({customer,projects,quotes,followups,products,emails,close,addFollowup,addQuote,updateStage,openEmail}:{customer:Customer;projects:Project[];quotes:Quote[];followups:Followup[];products:Product[];emails:MailEmail[];close:()=>void;addFollowup:()=>void;addQuote:()=>void;updateStage:(customer:Customer,stage:CustomerStage)=>Promise<void>;openEmail:(email:MailEmail)=>void}) {
   const notes = followups.filter(f=>f.customer_id===customer.id)
   const project = projects.find(item => item.customer_id === customer.id)
   const customerQuotes = quotes.filter(quote => quote.customer_id === customer.id)
@@ -215,7 +255,7 @@ function CustomerDrawer({customer,projects,quotes,followups,products,emails,clos
     <DetailSection title="Customer Project"><div className="project-summary"><span>项目名称</span><b>{project?.project_name ?? customer.product_interest}</b><span>产品</span><b>{project?.product_code ?? customer.product_interest}</b><span>应用</span><b>{project?.application ?? customer.application ?? '应用待确认'}</b><span>项目阶段</span><b>{stageLabels[project?.stage ?? customer.customer_stage]}</b>{customer.monthly_consumption && <><span>月度用量</span><b>{customer.monthly_consumption}</b></>}</div>{customer.project_background && list(customer.project_background)}{customer.requirements && <div className="requirement-box"><span>关键需求</span>{list(customer.requirements)}</div>}</DetailSection>
     <DetailSection title="Interested Products"><div className="product-detail"><span>{product?.product_code ?? customer.product_interest}</span><b>{product?.product_name ?? customer.application ?? '应用待确认'}</b></div><div className="document-tags"><span>TDS</span><span>COA</span><span>Product Images</span></div></DetailSection>
     <DetailSection title="Communication Timeline"><div className="communication-timeline">{timeline.length ? timeline.map(item => <div className="communication-item" key={`${item.date}-${item.title}`}><time>{item.date}</time><div><b>{item.title}</b>{item.detail && <span>{item.detail}</span>}</div></div>) : <p className="detail-empty">尚未添加沟通记录。</p>}</div></DetailSection>
-    <DetailSection title="Email Timeline">{customerEmails.length ? <div className="communication-timeline">{customerEmails.map(email => <div className="communication-item" key={email.id}><time>{email.received_at.slice(0, 10)}</time><div><b>{email.sender_name || '客户'}：{email.subject}</b><span>{email.content_preview || '无邮件预览'}</span></div></div>)}</div> : <p className="detail-empty">尚未同步到该客户的邮件。</p>}</DetailSection>
+    <DetailSection title="Email Timeline">{customerEmails.length ? <div className="communication-timeline">{customerEmails.map(email => <button className="communication-item email-timeline-item" key={email.id} onClick={() => { close(); openEmail(email) }}><time>{email.received_at.slice(0, 10)}</time><div><b>{email.sender_name || '客户'}：{email.subject}</b><span>{email.content_preview || '无邮件预览'}</span></div></button>)}</div> : <p className="detail-empty">尚未同步到该客户的邮件。</p>}</DetailSection>
     <DetailSection title="Quotation History">{customerQuotes.length ? <div className="quote-list">{customerQuotes.map(quote => <div className="quote-row" key={quote.id}><div><b>{quote.product_code ?? customer.product_interest}</b><span>{quote.quantity} · {quote.trade_term}</span></div><div><b>{quote.amount ? `${quote.currency} ${quote.amount.toLocaleString()}` : 'Amount pending'}</b><span>{quote.status}</span></div></div>)}</div> : customer.quotation ? <div className="quotation-box">{customer.quotation.map(item => <span key={item}>{item}</span>)}</div> : <p className="detail-empty">当前没有正式报价记录。</p>}</DetailSection>
     <DetailSection title="Sample Status"><div className="sample-box"><Package size={16}/><span>{customer.sample_status ?? customer.status_label ?? '等待样品安排'}</span></div>{customer.current_progress && <div className="progress-detail"><span>当前进度</span>{list(customer.current_progress)}</div>}</DetailSection>
     <div className="next-action"><Sparkles size={17}/><div><span>Next Action</span><b>{customer.next_action?.[0] ?? notes[0]?.next_action ?? '安排下一次客户联系'}</b>{customer.next_action && customer.next_action.length > 1 && <small>{customer.next_action.slice(1).join(' · ')}</small>}</div><time>{customer.next_followup_date}</time></div><div className="stage-editor"><label htmlFor="customer-stage">更新客户阶段</label><select id="customer-stage" value={customer.customer_stage} onChange={event => void updateStage(customer, event.target.value as CustomerStage)}>{Object.entries(stageLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div><button className="primary full" onClick={addFollowup}><Plus size={17}/> 添加跟进记录</button></aside></div>
