@@ -37,10 +37,16 @@ function App() {
   const visibleCustomers = useMemo(() => customers.filter(c => `${c.company_name} ${c.country} ${c.contact_person}`.toLowerCase().includes(query.toLowerCase())), [customers, query])
   useEffect(() => {
     if (!authenticated || !sessionStorage.getItem('zhiwu-access-token')) return
-    void Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.quotes()]).then(([customerRows, productRows, loadedFollowups, loadedProjects, loadedQuotes]) => {
+    const loadWorkspace = async () => {
+      let [customerRows, productRows, loadedFollowups, loadedProjects, loadedQuotes] = await Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.quotes()])
+      if (!customerRows.length) {
+        await api.seedDemo()
+        ;[customerRows, productRows, loadedFollowups, loadedProjects, loadedQuotes] = await Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.quotes()])
+      }
       setCustomers(customerRows.length ? customerRows : seedCustomers); setProducts(productRows.length ? productRows : seedProducts)
       setFollowupRows(loadedFollowups.length ? loadedFollowups : seedFollowups); setProjects(loadedProjects.length ? loadedProjects : seedProjects); setQuotes(loadedQuotes.length ? loadedQuotes : seedQuotes)
-    }).catch(error => console.error('Unable to load workspace data:', error))
+    }
+    void loadWorkspace().catch(error => console.error('Unable to load workspace data:', error))
   }, [authenticated])
   const addCustomer = async (form: HTMLFormElement) => {
     const value = Object.fromEntries(new FormData(form)) as Record<string, string>
