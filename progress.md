@@ -8,16 +8,16 @@
 - 提供 Supabase 数据库迁移：`customers`、`followups`、`products`，并开启对应 RLS 策略。
 - 提供 Docker Compose、环境变量示例与 GitHub Pages/个人服务器/Supabase 部署说明。
 - 前端已通过 TypeScript 和 Vite 生产构建；后端 Python 语法已验证。
+- GitHub Pages 已发布到 `https://ningyan1228.github.io/zhiwu-os/`，FastAPI 已部署到腾讯云并通过 `https://zhiwu-os-api.gjsx.uno/health` 提供 HTTPS 服务。
+- 已创建 Supabase 项目、执行数据库迁移、创建登录用户；真实登录后的客户和产品读取、新建操作已接入 Supabase。
 
 ## 当前卡在哪里
 
-- 尚未创建或接入实际 Supabase 项目，因此登录、客户和产品目前展示本地演示数据，未连通真实数据库。
-- 尚未填写个人服务器域名、Cloudflare Tunnel、Supabase 环境变量，因此没有部署到公网。
-- V1 需求中的真实数据读写、跟进记录新增和任务持久化尚待 API 对接后完成。
+- 当前数据库尚无真实客户和产品；首次真实登录后页面为空是正常现象，需要手动添加第一批资料。
+- 跟进记录、任务、报价、项目等模块仍为演示界面，尚未接入真实数据接口。
 
 ## 下一步要做什么
 
-1. 创建 Supabase 项目，在 SQL Editor 执行 `backend/supabase/schema.sql`，创建自己的登录账号。
-2. 在个人服务器复制 `backend/.env.example` 为 `.env`，填写 Supabase 配置并运行 Docker Compose。
-3. 配置 Nginx、Cloudflare Tunnel 和前端 `VITE_API_URL`，将前端 `dist` 发布到 GitHub Pages。
-4. 将 CRM、产品库和跟进管理从演示数据改为调用 API，并补齐新增/编辑/删除与真实任务模块。
+1. 用无痕窗口真实登录，添加一个产品和一位客户，刷新页面验证其仍然存在。
+2. 接入跟进记录的新增与历史读取，随后实现任务、报价和项目模块。
+3. 为账号菜单补充退出登录，并增加编辑/删除客户和产品的操作。
