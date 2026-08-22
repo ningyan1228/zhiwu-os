@@ -61,6 +61,30 @@ def _received_at(value: str | None) -> str:
         return datetime.now(timezone.utc).isoformat()
 
 
+def _normalized(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+
+def _resolve_customer(
+    sender: str, sender_name: str | None, customer_by_email: dict[str, str], customer_by_contact: dict[str, str],
+) -> str | None:
+    """Use a saved address first, then a conservative CRM contact-name match.
+
+    Contact matching is only a fallback for obvious sender names such as
+    "Dileep Pathak" -> CRM contact "Dileep". It intentionally leaves unknown
+    aliases (for example a generic colleague name) unlinked for user review.
+    """
+    if sender.lower() in customer_by_email:
+        return customer_by_email[sender.lower()]
+    normalized_sender = _normalized(sender_name)
+    if not normalized_sender:
+        return None
+    for alias, customer_id in customer_by_contact.items():
+        if len(alias) >= 4 and alias in normalized_sender:
+            return customer_id
+    return None
+
+
 class MailStore:
     def __init__(self) -> None:
         self.cfg = settings()
@@ -98,6 +122,58 @@ class MailStore:
         )
 
 
+def _customer_lookup(store: MailStore, owner_id: str) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, str | None]], dict[str, str]]:
+    customers = store.request("GET", f"customers?user_id=eq.{owner_id}&select=id,email,contact_person") or []
+    mappings = store.request("GET", f"customer_email_mappings?user_id=eq.{owner_id}&select=customer_id,email_address,contact_name") or []
+    projects = store.request("GET", f"projects?user_id=eq.{owner_id}&select=id,customer_id,product_id&order=created_at.desc") or []
+    customer_by_email = {str(row.get("email", "")).lower(): row["id"] for row in customers if row.get("email")}
+    customer_by_email.update({str(row.get("email_address", "")).lower(): row["customer_id"] for row in mappings if row.get("email_address")})
+    customer_by_contact: dict[str, str] = {}
+    for row in [*customers, *mappings]:
+        contact = _normalized(row.get("contact_person") or row.get("contact_name"))
+        if contact:
+            customer_by_contact[contact] = row["id"] if row.get("id") else row["customer_id"]
+            # Matching a meaningful individual name supports names with a surname
+            # in the mailbox while avoiding a one/two-letter initial match.
+            for token in re.findall(r"[a-z0-9]+", str(row.get("contact_person") or row.get("contact_name") or "").lower()):
+                if len(token) >= 4:
+                    customer_by_contact.setdefault(token, row["id"] if row.get("id") else row["customer_id"])
+    project_by_customer: dict[str, dict[str, str | None]] = {}
+    for project in projects:
+        project_by_customer.setdefault(project["customer_id"], {"id": project["id"], "product_id": project.get("product_id")})
+    contact_name_by_customer = {row["id"]: str(row.get("contact_person") or "") for row in customers}
+    return customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer
+
+
+def _remember_mapping(store: MailStore, owner_id: str, sender: str, customer_id: str, contact_name: str | None) -> None:
+    if not sender or "@" not in sender:
+        return
+    store.request("POST", "customer_email_mappings?on_conflict=user_id,email_address", {
+        "user_id": owner_id, "customer_id": customer_id, "email_address": sender.lower(), "contact_name": contact_name or None,
+    }, "resolution=merge-duplicates,return=minimal")
+
+
+def _reconcile_existing_links(
+    store: MailStore, owner_id: str, customer_by_email: dict[str, str], customer_by_contact: dict[str, str],
+    project_by_customer: dict[str, dict[str, str | None]], contact_name_by_customer: dict[str, str],
+) -> int:
+    """Backfill older synchronised mail after a customer mapping is added."""
+    rows = store.request("GET", f"emails?user_id=eq.{owner_id}&customer_id=is.null&select=id,sender,sender_name,status&limit=500") or []
+    linked = 0
+    for row in rows:
+        customer_id = _resolve_customer(str(row.get("sender") or ""), row.get("sender_name"), customer_by_email, customer_by_contact)
+        if not customer_id:
+            continue
+        project = project_by_customer.get(customer_id, {})
+        store.request("PATCH", f"emails?id=eq.{row['id']}", {
+            "customer_id": customer_id, "project_id": project.get("id"), "product_id": project.get("product_id"),
+            "status": "linked" if row.get("status") in ("new_lead", "unread", None) else row.get("status"),
+        })
+        _remember_mapping(store, owner_id, str(row.get("sender") or ""), customer_id, contact_name_by_customer.get(customer_id))
+        linked += 1
+    return linked
+
+
 def sync_once() -> dict[str, int]:
     cfg = settings()
     required = (cfg.mail_host, cfg.mail_username, cfg.mail_password, cfg.mail_owner_user_id)
@@ -108,14 +184,8 @@ def sync_once() -> dict[str, int]:
     store = MailStore()
     store.update_sync("Running")
     try:
-        customers = store.request("GET", f"customers?user_id=eq.{cfg.mail_owner_user_id}&select=id,email") or []
-        mappings = store.request("GET", f"customer_email_mappings?user_id=eq.{cfg.mail_owner_user_id}&select=customer_id,email_address") or []
-        projects = store.request("GET", f"projects?user_id=eq.{cfg.mail_owner_user_id}&select=id,customer_id,product_id&order=created_at.desc") or []
-        customer_by_email = {str(row.get("email", "")).lower(): row["id"] for row in customers}
-        customer_by_email.update({str(row.get("email_address", "")).lower(): row["customer_id"] for row in mappings})
-        project_by_customer: dict[str, dict[str, str | None]] = {}
-        for project in projects:
-            project_by_customer.setdefault(project["customer_id"], {"id": project["id"], "product_id": project.get("product_id")})
+        customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer = _customer_lookup(store, cfg.mail_owner_user_id)
+        recovered = _reconcile_existing_links(store, cfg.mail_owner_user_id, customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer)
 
         with imaplib.IMAP4_SSL(cfg.mail_host, cfg.mail_port) as mailbox:
             mailbox.login(cfg.mail_username, cfg.mail_password)
@@ -135,7 +205,7 @@ def sync_once() -> dict[str, int]:
                 message = BytesParser(policy=policy.default).parsebytes(raw)
                 sender_name, sender = parseaddr(message.get("From", ""))
                 sender = sender.lower()
-                customer_id = customer_by_email.get(sender)
+                customer_id = _resolve_customer(sender, sender_name, customer_by_email, customer_by_contact)
                 content = _text(message)
                 project = project_by_customer.get(customer_id or "", {})
                 message_id = message.get("Message-ID") or f"imap-{uid.decode(errors='ignore')}"
@@ -157,10 +227,12 @@ def sync_once() -> dict[str, int]:
                     "status": "linked" if customer_id else "new_lead",
                 }
                 created = store.request("POST", "emails?on_conflict=user_id,message_id", payload, "resolution=ignore-duplicates,return=representation") or []
+                if customer_id:
+                    _remember_mapping(store, cfg.mail_owner_user_id, sender, customer_id, contact_name_by_customer.get(customer_id))
                 saved += len(created)
         store.update_sync("Success", saved)
-        logger.info("Mail sync finished: processed=%s saved=%s", len(uids), saved)
-        return {"processed": len(uids), "saved": saved}
+        logger.info("Mail sync finished: processed=%s saved=%s linked=%s", len(uids), saved, recovered)
+        return {"processed": len(uids), "saved": saved, "linked": recovered}
     except Exception as exc:
         logger.exception("Mail sync failed")
         store.update_sync("Error", 0, str(exc)[:500])
