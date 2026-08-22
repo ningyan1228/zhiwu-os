@@ -15,3 +15,9 @@ export type Product = { id: string; product_name: string; product_code: string; 
 export type TimelineItem = { date: string; title: string; detail?: string }
 export type Project = { id: string; customer_id: string; project_name: string; product_id?: string; product_code?: string; application: string; stage: CustomerStage; notes: string; created_at?: string }
 export type Quote = { id: string; customer_id: string; product_id?: string; product_code?: string; quantity: string; amount?: number; currency: string; trade_term?: string; status: string; created_at?: string }
+export type MailEmail = {
+  id: string; message_id: string; sender: string; receiver?: string; sender_name?: string; subject: string
+  content_preview?: string; content_text?: string; received_at: string; attachment_count: number
+  customer_id?: string; project_id?: string; status: 'Unprocessed' | 'Processed' | 'Follow-up created'; created_at: string
+}
+export type EmailSync = { status: string; total_synced: number; last_sync_time?: string | null; last_error?: string | null }

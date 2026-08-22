@@ -1,6 +1,6 @@
 """Thin API gateway: browser credentials are verified with Supabase before data is proxied."""
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query
@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     supabase_service_role_key: str
     allowed_origins: str = "http://localhost:5173"
     public_app_url: str = "https://ningyan1228.github.io/zhiwu-os/"
+    mail_host: str | None = None
+    mail_port: int = 993
+    mail_username: str | None = None
+    mail_password: str | None = None
+    mail_folder: str = "INBOX"
+    mail_owner_user_id: str | None = None
+    mail_sync_interval_seconds: int = 600
+    mail_sync_max_messages: int = 100
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 @lru_cache
@@ -78,6 +86,13 @@ class QuoteIn(BaseModel):
     currency: str = "USD"
     trade_term: str | None = None
     status: str = "Draft"
+
+class EmailStatusIn(BaseModel):
+    status: Literal["Unprocessed", "Processed", "Follow-up created"]
+
+class EmailFollowupIn(BaseModel):
+    content: str | None = Field(default=None, max_length=5000)
+    next_action: str | None = Field(default=None, max_length=1000)
 
 async def supabase(path: str, token: str, method: str = "GET", payload: dict[str, Any] | None = None) -> Any:
     cfg = settings()
@@ -226,3 +241,45 @@ async def list_quotes(authorization: str | None = Header(default=None)):
 @app.post("/api/quotes", status_code=201)
 async def create_quote(quote: QuoteIn, authorization: str | None = Header(default=None)):
     return await supabase("quotes", bearer(authorization), "POST", quote.model_dump(exclude_none=True))
+
+@app.get("/api/emails")
+async def list_emails(authorization: str | None = Header(default=None), limit: int = Query(100, le=200)):
+    return await supabase(f"emails?select=*&order=received_at.desc&limit={limit}", bearer(authorization))
+
+@app.get("/api/emails/{email_id}")
+async def get_email(email_id: str, authorization: str | None = Header(default=None)):
+    rows = await supabase(f"emails?id=eq.{email_id}&select=*", bearer(authorization))
+    if not rows:
+        raise HTTPException(404, "Email not found")
+    return rows[0]
+
+@app.patch("/api/emails/{email_id}")
+async def update_email_status(email_id: str, payload: EmailStatusIn, authorization: str | None = Header(default=None)):
+    rows = await supabase(f"emails?id=eq.{email_id}", bearer(authorization), "PATCH", payload.model_dump())
+    if not rows:
+        raise HTTPException(404, "Email not found")
+    return rows[0]
+
+@app.post("/api/emails/{email_id}/followups", status_code=201)
+async def create_followup_from_email(email_id: str, payload: EmailFollowupIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    rows = await supabase(f"emails?id=eq.{email_id}&select=*", token)
+    if not rows:
+        raise HTTPException(404, "Email not found")
+    email = rows[0]
+    if not email.get("customer_id"):
+        raise HTTPException(422, "This email is not linked to a CRM customer")
+    record = await supabase("followups", token, "POST", {
+        "customer_id": email["customer_id"],
+        "date": str(email.get("received_at") or "")[:10] or None,
+        "content": payload.content or f"邮件：{email.get('subject', '(无主题)')}\n{email.get('content_preview') or ''}",
+        "next_action": payload.next_action or "阅读邮件并确认下一步行动",
+        "status": "Open",
+    })
+    await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {"status": "Follow-up created"})
+    return record[0]
+
+@app.get("/api/email-sync")
+async def get_email_sync(authorization: str | None = Header(default=None)):
+    rows = await supabase("email_sync?select=*&limit=1", bearer(authorization))
+    return rows[0] if rows else {"status": "Not configured", "total_synced": 0, "last_sync_time": None}

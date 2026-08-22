@@ -2,16 +2,16 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { createRoot } from 'react-dom/client'
 import {
   ArrowUpRight, Bell, CalendarDays, Check, ChevronRight, CircleHelp, ClipboardList, Grid2X2,
-  Layers3, Menu, Package, Plus, Search, Settings, Sparkles, Users, X, type LucideIcon
+  Layers3, Mail, Menu, Package, Paperclip, Plus, RefreshCw, Search, Settings, Sparkles, Users, X, type LucideIcon
 } from 'lucide-react'
 import { customers as seedCustomers, followups as seedFollowups, products as seedProducts, projects as seedProjects, quotes as seedQuotes } from './data'
 import { api } from './api'
-import type { Customer, CustomerStage, Followup, Product, Project, Quote } from './types'
+import type { Customer, CustomerStage, EmailSync, Followup, MailEmail, Product, Project, Quote } from './types'
 import './styles.css'
 
-type View = 'dashboard' | 'crm' | 'products' | 'projects'
+type View = 'dashboard' | 'crm' | 'mail' | 'products' | 'projects'
 const nav: [string, string, LucideIcon][] = [
-  ['dashboard', '总览', Grid2X2], ['crm', '外贸 CRM', Users], ['products', '产品中心', Package],
+  ['dashboard', '总览', Grid2X2], ['crm', '外贸 CRM', Users], ['mail', '邮件中心', Mail], ['products', '产品中心', Package],
   ['quotes', '报价管理', ClipboardList], ['assets', 'AI 资产', Sparkles], ['projects', '项目管理', Layers3],
 ]
 const stageLabels: Record<CustomerStage, string> = {
@@ -30,7 +30,10 @@ function App() {
   const [followupRows, setFollowupRows] = useState(seedFollowups)
   const [projects, setProjects] = useState(seedProjects)
   const [quotes, setQuotes] = useState(seedQuotes)
+  const [emails, setEmails] = useState<MailEmail[]>([])
+  const [emailSync, setEmailSync] = useState<EmailSync>({ status: 'Not configured', total_synced: 0, last_sync_time: null })
   const [selected, setSelected] = useState<Customer | null>(null)
+  const [selectedEmail, setSelectedEmail] = useState<MailEmail | null>(null)
   const [modal, setModal] = useState<'customer' | 'product' | 'followup' | 'quote' | 'password' | null>(null)
   const [query, setQuery] = useState('')
   const today = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(2026, 7, 21))
@@ -45,6 +48,12 @@ function App() {
       }
       setCustomers(customerRows.length ? customerRows : seedCustomers); setProducts(productRows.length ? productRows : seedProducts)
       setFollowupRows(loadedFollowups.length ? loadedFollowups : seedFollowups); setProjects(loadedProjects.length ? loadedProjects : seedProjects); setQuotes(loadedQuotes.length ? loadedQuotes : seedQuotes)
+      try {
+        const [mailRows, syncRow] = await Promise.all([api.emails(), api.emailSync()])
+        setEmails(mailRows); setEmailSync(syncRow)
+      } catch (error) {
+        console.info('Mail Center is waiting for the V1.2 database migration.', error)
+      }
     }
     void loadWorkspace().catch(error => console.error('Unable to load workspace data:', error))
   }, [authenticated])
@@ -80,21 +89,29 @@ function App() {
     const next = sessionStorage.getItem('zhiwu-access-token') ? await api.updateCustomer(customer.id, payload) : updated
     setCustomers(current => current.map(item => item.id === customer.id ? next : item)); setSelected(next)
   }
+  const createEmailFollowup = async (email: MailEmail) => {
+    const followup = await api.createFollowupFromEmail(email.id, {})
+    setFollowupRows(current => [followup, ...current])
+    setEmails(current => current.map(item => item.id === email.id ? { ...item, status: 'Follow-up created' } : item))
+    setSelectedEmail(current => current?.id === email.id ? { ...current, status: 'Follow-up created' } : current)
+  }
   if (!authenticated) return <Login onAuthenticated={() => setAuthenticated(true)} />
   return <div className="app-shell">
     <aside className={`sidebar ${sidebar ? 'is-open' : ''}`}>
       <div className="brand"><div className="brand-mark">Z</div><div><strong>Zhiwu OS</strong><span>个人创业操作系统</span></div><button className="mobile-close" onClick={() => setSidebar(false)}><X size={18}/></button></div>
-      <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'products' || key === 'projects') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && <em>5</em>}</button>)}</nav>
+      <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'mail' || key === 'products' || key === 'projects') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && <em>5</em>}</button>)}</nav>
       <div className="nav-bottom"><button><CalendarDays size={18}/><span>知识库</span></button><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">Z</div><div><b>Zhiwu</b><small>Founder · 修改密码</small></div><ChevronRight size={16}/></button></div>
     </aside>
     <main>
-      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', products: '产品中心', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input placeholder="搜索工作空间" /></label><button className="icon-button"><Bell size={19}/><i/></button><div className="avatar avatar-small">Z</div></div></header>
+      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', mail: '邮件中心', products: '产品中心', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input placeholder="搜索工作空间" /></label><button className="icon-button"><Bell size={19}/><i/></button><div className="avatar avatar-small">Z</div></div></header>
       {view === 'dashboard' && <Dashboard customers={customers} projects={projects} followups={followupRows} today={today} onOpenCRM={() => setView('crm')} openCustomer={setSelected} />}
       {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
+      {view === 'mail' && <MailCenter emails={emails} sync={emailSync} customers={customers} projects={projects} open={setSelectedEmail} />}
       {view === 'products' && <Products products={products} create={() => setModal('product')} />}
       {view === 'projects' && <ProjectManagement projects={projects} customers={customers} products={products} quotes={quotes} openCustomer={setSelected} />}
     </main>
-    {selected && <CustomerDrawer customer={selected} projects={projects} quotes={quotes} followups={followupRows} products={products} close={() => setSelected(null)} addFollowup={() => setModal('followup')} addQuote={() => setModal('quote')} updateStage={updateStage} />}
+    {selected && <CustomerDrawer customer={selected} projects={projects} quotes={quotes} followups={followupRows} products={products} emails={emails} close={() => setSelected(null)} addFollowup={() => setModal('followup')} addQuote={() => setModal('quote')} updateStage={updateStage} />}
+    {selectedEmail && <MailDetail email={selectedEmail} customers={customers} projects={projects} products={products} close={() => setSelectedEmail(null)} createFollowup={createEmailFollowup} openCustomer={setSelected} />}
     {modal === 'customer' && <CustomerForm close={() => setModal(null)} submit={addCustomer} />}
     {modal === 'product' && <ProductForm close={() => setModal(null)} submit={addProduct} />}
     {modal === 'followup' && selected && <FollowupForm customer={selected} close={() => setModal(null)} submit={addFollowup} />}
@@ -152,12 +169,42 @@ function ProjectManagement({ projects, customers, products, quotes, openCustomer
     })}</div>{!projects.length && <div className="empty">还没有项目，请先在 CRM 中创建客户和项目。</div>}</section>
 }
 
-function CustomerDrawer({customer,projects,quotes,followups,products,close,addFollowup,addQuote,updateStage}:{customer:Customer;projects:Project[];quotes:Quote[];followups:Followup[];products:Product[];close:()=>void;addFollowup:()=>void;addQuote:()=>void;updateStage:(customer:Customer,stage:CustomerStage)=>Promise<void>}) {
+function MailCenter({ emails, sync, customers, projects, open }: { emails: MailEmail[]; sync: EmailSync; customers: Customer[]; projects: Project[]; open: (email: MailEmail) => void }) {
+  const [query, setQuery] = useState('')
+  const today = new Date().toISOString().slice(0, 10)
+  const visible = emails.filter(email => `${email.sender_name || ''} ${email.sender} ${email.subject} ${email.content_preview || ''}`.toLowerCase().includes(query.toLowerCase()))
+  const customerEmails = emails.filter(email => email.customer_id).length
+  const unprocessed = emails.filter(email => email.status === 'Unprocessed').length
+  const attachments = emails.reduce((total, email) => total + email.attachment_count, 0)
+  const todayCount = emails.filter(email => email.received_at.slice(0, 10) === today).length
+  return <section className="page mail-page"><div className="page-heading"><div><p className="eyebrow">MAIL CENTER</p><h1>外贸邮件中心</h1><p>从企业邮箱读取客户来信，自动关联 CRM、项目和下一步行动。</p></div><div className="sync-indicator"><RefreshCw size={15}/><span>{sync.status === 'Success' ? '已同步' : sync.status === 'Not configured' ? '等待邮箱配置' : sync.status}</span></div></div>
+    <div className="mail-metrics"><Metric label="今日邮件" value={String(todayCount)} delta="当天接收" icon={<Mail/>}/><Metric label="未处理" value={String(unprocessed)} delta="待转为业务动作" icon={<CircleHelp/>}/><Metric label="客户邮件" value={String(customerEmails)} delta="已自动关联 CRM" icon={<Users/>}/><Metric label="附件" value={String(attachments)} delta="邮件附件数量" icon={<Paperclip/>}/></div>
+    <section className="mail-list-panel"><div className="table-tools"><label><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索客户、主题或邮件关键词" /></label><span className="mail-sync-time">{sync.last_sync_time ? `上次同步 ${new Date(sync.last_sync_time).toLocaleString('zh-CN')}` : 'IMAP 每 10 分钟同步一次'}</span></div><div className="mail-list">{visible.map(email => {
+      const customer = customers.find(item => item.id === email.customer_id)
+      const project = projects.find(item => item.id === email.project_id || item.customer_id === email.customer_id)
+      return <button className="mail-row" key={email.id} onClick={() => open(email)}><span className={`mail-unread ${email.status === 'Unprocessed' ? 'is-unread' : ''}`}/><div className="mail-sender"><b>{email.sender_name || email.sender}</b><span>{customer ? `${customer.country} · ${customer.company_name}` : '未关联客户'}</span></div><div className="mail-subject"><b>{email.subject}</b><span>{email.content_preview || '无可用正文预览'}</span></div><div className="mail-business"><span>{project?.project_name || '待关联项目'}</span><Stage stage={customer?.customer_stage ?? 'New'}/></div><time>{email.received_at.slice(0, 10)}</time>{email.attachment_count > 0 && <Paperclip size={15}/>}</button>
+    })}</div>{!visible.length && <div className="mail-empty"><Mail size={26}/><b>还没有同步到邮件</b><span>完成服务器端 IMAP 配置后，新的客户邮件会自动出现在这里。</span></div>}</section>
+  </section>
+}
+
+function MailDetail({ email, customers, projects, products, close, createFollowup, openCustomer }: { email: MailEmail; customers: Customer[]; projects: Project[]; products: Product[]; close: () => void; createFollowup: (email: MailEmail) => Promise<void>; openCustomer: (customer: Customer) => void }) {
+  const [creating, setCreating] = useState(false)
+  const customer = customers.find(item => item.id === email.customer_id)
+  const project = projects.find(item => item.id === email.project_id || item.customer_id === email.customer_id)
+  const product = products.find(item => item.id === project?.product_id || item.product_code === customer?.product_interest)
+  const create = async () => { setCreating(true); try { await createFollowup(email) } finally { setCreating(false) } }
+  return <div className="drawer-layer" onMouseDown={close}><aside className="drawer mail-detail" onMouseDown={event => event.stopPropagation()}><button className="close" onClick={close}><X size={20}/></button><p className="eyebrow">MAIL DETAIL</p><h2>{email.subject}</h2><div className="mail-detail-meta"><span>{email.sender_name || email.sender}</span><span>{email.sender}</span><time>{new Date(email.received_at).toLocaleString('zh-CN')}</time></div><div className="mail-content">{email.content_text || email.content_preview || '邮件正文不可用。'}</div>{email.attachment_count > 0 && <div className="mail-attachments"><Paperclip size={15}/>{email.attachment_count} 个附件（V1 仅记录附件数量，不下载或修改邮件附件）</div>}
+    <DetailSection title="CRM Link"><div className="mail-link-card"><span>关联客户</span><b>{customer?.company_name ?? '未自动匹配'}</b><span>关联产品</span><b>{product?.product_code ?? customer?.product_interest ?? '待确认'}</b><span>项目</span><b>{project?.project_name ?? '待关联项目'}</b><span>当前阶段</span><b>{customer ? stageLabels[customer.customer_stage] : '待处理'}</b><span>下一步</span><b>{customer?.next_action?.[0] ?? customer?.status_label ?? '确认邮件业务动作'}</b></div>{customer && <button className="mail-open-customer" onClick={() => { close(); openCustomer(customer) }}>打开客户详情 <ChevronRight size={15}/></button>}</DetailSection>
+    <button className="primary full" disabled={!customer || creating || email.status === 'Follow-up created'} onClick={create}>{creating ? '正在创建…' : email.status === 'Follow-up created' ? '已添加跟进记录' : '+ 添加跟进记录'}</button></aside></div>
+}
+
+function CustomerDrawer({customer,projects,quotes,followups,products,emails,close,addFollowup,addQuote,updateStage}:{customer:Customer;projects:Project[];quotes:Quote[];followups:Followup[];products:Product[];emails:MailEmail[];close:()=>void;addFollowup:()=>void;addQuote:()=>void;updateStage:(customer:Customer,stage:CustomerStage)=>Promise<void>}) {
   const notes = followups.filter(f=>f.customer_id===customer.id)
   const project = projects.find(item => item.customer_id === customer.id)
   const customerQuotes = quotes.filter(quote => quote.customer_id === customer.id)
   const product = products.find(item => item.id === project?.product_id || item.product_code === project?.product_code || item.product_code === customer.product_interest)
   const timeline = customer.timeline ?? notes.map(note => ({ date: note.date, title: note.content, detail: `Next: ${note.next_action}` }))
+  const customerEmails = emails.filter(email => email.customer_id === customer.id)
   const list = (items?: string[]) => items?.length ? <ul className="detail-list">{items.map(item => <li key={item}>{item}</li>)}</ul> : <p className="detail-empty">暂无补充信息</p>
   return <div className="drawer-layer" onMouseDown={close}><aside className="drawer" onMouseDown={e=>e.stopPropagation()}><button className="close" onClick={close}><X size={20}/></button>
     <div className="drawer-head"><div className="company-avatar large">{customer.company_name[0]}</div><div><p>{customer.country} · {customer.contact_person}</p><h2>{customer.company_name}</h2><div className="drawer-badges"><Stage stage={customer.customer_stage}/><Priority value={customer.priority}/></div></div></div>
@@ -166,6 +213,7 @@ function CustomerDrawer({customer,projects,quotes,followups,products,close,addFo
     <DetailSection title="Customer Project"><div className="project-summary"><span>项目名称</span><b>{project?.project_name ?? customer.product_interest}</b><span>产品</span><b>{project?.product_code ?? customer.product_interest}</b><span>应用</span><b>{project?.application ?? customer.application ?? '应用待确认'}</b><span>项目阶段</span><b>{stageLabels[project?.stage ?? customer.customer_stage]}</b>{customer.monthly_consumption && <><span>月度用量</span><b>{customer.monthly_consumption}</b></>}</div>{customer.project_background && list(customer.project_background)}{customer.requirements && <div className="requirement-box"><span>关键需求</span>{list(customer.requirements)}</div>}</DetailSection>
     <DetailSection title="Interested Products"><div className="product-detail"><span>{product?.product_code ?? customer.product_interest}</span><b>{product?.product_name ?? customer.application ?? '应用待确认'}</b></div><div className="document-tags"><span>TDS</span><span>COA</span><span>Product Images</span></div></DetailSection>
     <DetailSection title="Communication Timeline"><div className="communication-timeline">{timeline.length ? timeline.map(item => <div className="communication-item" key={`${item.date}-${item.title}`}><time>{item.date}</time><div><b>{item.title}</b>{item.detail && <span>{item.detail}</span>}</div></div>) : <p className="detail-empty">尚未添加沟通记录。</p>}</div></DetailSection>
+    <DetailSection title="Email Timeline">{customerEmails.length ? <div className="communication-timeline">{customerEmails.map(email => <div className="communication-item" key={email.id}><time>{email.received_at.slice(0, 10)}</time><div><b>{email.sender_name || '客户'}：{email.subject}</b><span>{email.content_preview || '无邮件预览'}</span></div></div>)}</div> : <p className="detail-empty">尚未同步到该客户的邮件。</p>}</DetailSection>
     <DetailSection title="Quotation History">{customerQuotes.length ? <div className="quote-list">{customerQuotes.map(quote => <div className="quote-row" key={quote.id}><div><b>{quote.product_code ?? customer.product_interest}</b><span>{quote.quantity} · {quote.trade_term}</span></div><div><b>{quote.amount ? `${quote.currency} ${quote.amount.toLocaleString()}` : 'Amount pending'}</b><span>{quote.status}</span></div></div>)}</div> : customer.quotation ? <div className="quotation-box">{customer.quotation.map(item => <span key={item}>{item}</span>)}</div> : <p className="detail-empty">当前没有正式报价记录。</p>}</DetailSection>
     <DetailSection title="Sample Status"><div className="sample-box"><Package size={16}/><span>{customer.sample_status ?? customer.status_label ?? '等待样品安排'}</span></div>{customer.current_progress && <div className="progress-detail"><span>当前进度</span>{list(customer.current_progress)}</div>}</DetailSection>
     <div className="next-action"><Sparkles size={17}/><div><span>Next Action</span><b>{customer.next_action?.[0] ?? notes[0]?.next_action ?? '安排下一次客户联系'}</b>{customer.next_action && customer.next_action.length > 1 && <small>{customer.next_action.slice(1).join(' · ')}</small>}</div><time>{customer.next_followup_date}</time></div><div className="stage-editor"><label htmlFor="customer-stage">更新客户阶段</label><select id="customer-stage" value={customer.customer_stage} onChange={event => void updateStage(customer, event.target.value as CustomerStage)}>{Object.entries(stageLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div><button className="primary full" onClick={addFollowup}><Plus size={17}/> 添加跟进记录</button></aside></div>

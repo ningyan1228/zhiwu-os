@@ -1,4 +1,4 @@
-import type { Customer, Followup, Product, Project, Quote } from './types'
+import type { Customer, EmailSync, Followup, MailEmail, Product, Project, Quote } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -28,6 +28,7 @@ const asProduct = (item: Product): Product => ({ ...item, category: item.categor
 const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
 const asProject = (item: Project): Project => ({ ...item, application: item.application || '应用待确认', notes: item.notes || '' })
 const asQuote = (item: Quote): Quote => ({ ...item, currency: item.currency || 'USD', quantity: item.quantity || '待确认', status: item.status || 'Draft' })
+const asMailEmail = (item: MailEmail): MailEmail => ({ ...item, subject: item.subject || '(无主题)', content_preview: item.content_preview || '', attachment_count: item.attachment_count || 0, status: item.status || 'Unprocessed' })
 
 export const api = {
   customers: () => request<Customer[]>('/api/customers').then(rows => rows.map(asCustomer)),
@@ -46,4 +47,8 @@ export const api = {
     ? publicRequest<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', headers: { Authorization: `Bearer ${recoveryToken}` }, body: JSON.stringify({ password }) })
     : request<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', body: JSON.stringify({ password }) }),
   requestPasswordRecovery: (email: string) => publicRequest<{ sent: boolean }>('/api/auth/recover', { method: 'POST', body: JSON.stringify({ email }) }),
+  emails: () => request<MailEmail[]>('/api/emails').then(rows => rows.map(asMailEmail)),
+  emailSync: () => request<EmailSync>('/api/email-sync'),
+  createFollowupFromEmail: (id: string, payload: { content?: string; next_action?: string }) => request<Followup>(`/api/emails/${id}/followups`, { method: 'POST', body: JSON.stringify(payload) }).then(asFollowup),
+  updateEmailStatus: (id: string, status: MailEmail['status']) => request<MailEmail>(`/api/emails/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }).then(asMailEmail),
 }

@@ -11,6 +11,14 @@ services:
     networks:
       - web
 
+  mail-sync-service:
+    build: .
+    command: ["python", "-m", "app.mail_sync"]
+    env_file: .env
+    restart: unless-stopped
+    networks:
+      - web
+
 networks:
   web:
     external: true
