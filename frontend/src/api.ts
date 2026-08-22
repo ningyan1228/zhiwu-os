@@ -1,4 +1,4 @@
-import type { Customer, EmailSync, Followup, MailEmail, Product, Project, Quote } from './types'
+import type { Customer, EmailSync, Followup, MailEmail, Product, ProductCustomerRelation, Project, Quote } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -42,6 +42,8 @@ export const api = {
   createCustomer: (payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>('/api/customers', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
   products: () => request<Product[]>('/api/products').then(rows => rows.map(asProduct)),
   createProduct: (payload: Omit<Product, 'id'>) => request<Product[]>('/api/products', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asProduct(rows[0])),
+  productCustomerRelations: () => request<ProductCustomerRelation[]>('/api/product-customer-relations'),
+  linkProductCustomer: (productId: string, customerId: string) => request<ProductCustomerRelation>(`/api/products/${productId}/customers`, { method: 'POST', body: JSON.stringify({ customer_id: customerId }) }),
   updateCustomer: (id: string, payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>(`/api/customers/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
   followups: () => request<Followup[]>('/api/followups').then(rows => rows.map(asFollowup)),
   createFollowup: (payload: Omit<Followup, 'id'>) => request<Followup[]>('/api/followups', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asFollowup(rows[0])),

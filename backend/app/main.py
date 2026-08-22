@@ -79,6 +79,9 @@ class ProjectIn(BaseModel):
     stage: str = "New Inquiry"
     notes: str | None = None
 
+class ProductCustomerRelationIn(BaseModel):
+    customer_id: str
+
 class QuoteIn(BaseModel):
     customer_id: str
     product_id: str | None = None
@@ -222,6 +225,23 @@ async def list_products(authorization: str | None = Header(default=None)):
 @app.post("/api/products", status_code=201)
 async def create_product(product: ProductIn, authorization: str | None = Header(default=None)):
     return await supabase("products", bearer(authorization), "POST", product.model_dump(exclude_none=True))
+
+@app.get("/api/product-customer-relations")
+async def list_product_customer_relations(authorization: str | None = Header(default=None)):
+    return await supabase("product_customer_relations?select=*&order=created_at.desc", bearer(authorization))
+
+@app.post("/api/products/{product_id}/customers", status_code=201)
+async def link_product_to_customer(product_id: str, payload: ProductCustomerRelationIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    product_rows = await supabase(f"products?id=eq.{product_id}&select=id", token)
+    customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&select=id", token)
+    if not product_rows or not customer_rows:
+        raise HTTPException(404, "Product or customer not found")
+    existing = await supabase(f"product_customer_relations?product_id=eq.{product_id}&customer_id=eq.{payload.customer_id}&select=*", token)
+    if existing:
+        return existing[0]
+    rows = await supabase("product_customer_relations", token, "POST", {"product_id": product_id, "customer_id": payload.customer_id})
+    return rows[0]
 
 @app.get("/api/followups")
 async def list_followups(authorization: str | None = Header(default=None)):

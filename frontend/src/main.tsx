@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { customers as seedCustomers, followups as seedFollowups, products as seedProducts, projects as seedProjects, quotes as seedQuotes } from './data'
 import { api } from './api'
-import type { Customer, CustomerStage, EmailSync, Followup, MailEmail, Product, Project, Quote } from './types'
+import type { Customer, CustomerStage, EmailSync, Followup, MailEmail, Product, ProductCustomerRelation, Project, Quote } from './types'
 import './styles.css'
 
 type View = 'dashboard' | 'crm' | 'mail' | 'products' | 'relationships' | 'projects'
@@ -30,11 +30,13 @@ function App() {
   const [followupRows, setFollowupRows] = useState(seedFollowups)
   const [projects, setProjects] = useState(seedProjects)
   const [quotes, setQuotes] = useState(seedQuotes)
+  const [productCustomerRelations, setProductCustomerRelations] = useState<ProductCustomerRelation[]>([])
   const [emails, setEmails] = useState<MailEmail[]>([])
   const [emailSync, setEmailSync] = useState<EmailSync>({ status: 'Not configured', total_synced: 0, last_sync_time: null })
   const [selected, setSelected] = useState<Customer | null>(null)
   const [selectedEmail, setSelectedEmail] = useState<MailEmail | null>(null)
   const [modal, setModal] = useState<'customer' | 'product' | 'followup' | 'quote' | 'password' | null>(null)
+  const [relationProduct, setRelationProduct] = useState<Product | null>(null)
   const [query, setQuery] = useState('')
   const today = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(2026, 7, 21))
   const visibleCustomers = useMemo(() => customers.filter(c => `${c.company_name} ${c.country} ${c.contact_person} ${c.product_interest} ${c.application || ''} ${c.customer_summary || ''} ${c.customer_need || ''} ${(c.customer_tags || []).join(' ')}`.toLowerCase().includes(query.toLowerCase())), [customers, query])
@@ -53,6 +55,11 @@ function App() {
         setEmails(mailRows); setEmailSync(syncRow)
       } catch (error) {
         console.info('Mail Center is waiting for the V1.2 database migration.', error)
+      }
+      try {
+        setProductCustomerRelations(await api.productCustomerRelations())
+      } catch (error) {
+        console.info('Product relationships are waiting for the V1.5 database migration.', error)
       }
     }
     void loadWorkspace().catch(error => console.error('Unable to load workspace data:', error))
@@ -111,6 +118,12 @@ function App() {
     setEmails(current => current.map(item => item.id === email.id ? updated : item))
     setSelectedEmail(current => current?.id === email.id ? updated : current)
   }
+  const linkProductCustomer = async (customer: Customer) => {
+    if (!relationProduct) return
+    const relation = await api.linkProductCustomer(relationProduct.id, customer.id)
+    setProductCustomerRelations(current => current.some(item => item.id === relation.id) ? current : [relation, ...current])
+    setRelationProduct(null)
+  }
   const openEmail = (email: MailEmail) => {
     window.history.replaceState(null, '', `${window.location.pathname}#mail/${email.id}`)
     setView('mail'); setSelectedEmail(email)
@@ -128,7 +141,7 @@ function App() {
       {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
       {view === 'mail' && <MailCenter emails={emails} sync={emailSync} customers={customers} projects={projects} products={products} open={openEmail} />}
       {view === 'products' && <Products products={products} create={() => setModal('product')} />}
-      {view === 'relationships' && <RelationshipMatrix products={products} customers={customers} projects={projects} openCustomer={setSelected} />}
+      {view === 'relationships' && <RelationshipMatrix products={products} customers={customers} projects={projects} relations={productCustomerRelations} openCustomer={setSelected} linkCustomer={setRelationProduct} />}
       {view === 'projects' && <ProjectManagement projects={projects} customers={customers} products={products} quotes={quotes} openCustomer={setSelected} />}
     </main>
     {selected && <CustomerDrawer customer={selected} projects={projects} quotes={quotes} followups={followupRows} products={products} emails={emails} close={() => setSelected(null)} addFollowup={() => setModal('followup')} addQuote={() => setModal('quote')} updateStage={updateStage} openEmail={openEmail} />}
@@ -138,6 +151,7 @@ function App() {
     {modal === 'followup' && selected && <FollowupForm customer={selected} close={() => setModal(null)} submit={addFollowup} />}
     {modal === 'quote' && selected && <QuoteForm customer={selected} close={() => setModal(null)} submit={addQuote} />}
     {modal === 'password' && <PasswordForm close={() => setModal(null)} />}
+    {relationProduct && <ProductCustomerLinkModal product={relationProduct} customers={customers} relations={productCustomerRelations} close={() => setRelationProduct(null)} submit={linkProductCustomer} />}
   </div>
 }
 
@@ -185,10 +199,14 @@ function Priority({ value }: { value?: Customer['priority'] }) { return value ? 
 function Products({products,create}:{products:Product[];create:()=>void}) { return <section className="page products"><div className="page-heading"><div><p className="eyebrow">PRODUCT INTELLIGENCE</p><h1>产品中心</h1><p>把每一份产品资料变成随时可用的销售资产。</p></div><button className="primary" onClick={create}><Plus size={17}/> 添加产品</button></div><div className="product-toolbar"><label><Search size={17}/><input placeholder="搜索产品名称或编号" /></label><button className="filter">全部分类 <ChevronRight size={15}/></button></div><div className="products-grid">{products.map(p=><ProductCard key={p.id} product={p}/>)}</div>{!products.length && <div className="empty">还没有产品，点击“添加产品”创建第一份资料。</div>}</section> }
 function ProductCard({product}:{product:Product}) { return <article className="product-card"><div className="product-art"><span>{product.product_code.slice(0,2)}</span><div className="product-shape one"/><div className="product-shape two"/></div><div className="product-body"><span className="category">{product.category}</span><h2>{product.product_name}</h2><code>{product.product_code}</code><p>{product.description}</p><div><span>{product.application}</span><ChevronRight size={16}/></div></div></article> }
 
-function RelationshipMatrix({ products, customers, projects, openCustomer }: { products: Product[]; customers: Customer[]; projects: Project[]; openCustomer: (customer: Customer) => void }) {
-  return <section className="page relationship-page"><div className="page-heading"><div><p className="eyebrow"><Network size={13}/> PRODUCT RELATIONSHIP</p><h1>产品 - 客户关系</h1><p>从产品视角识别正在推进的客户、应用和项目。</p></div></div><div className="relationship-grid">{products.map(product => {
-    const linkedCustomers = customers.filter(customer => customer.product_interest === product.product_code || projects.some(project => project.customer_id === customer.id && project.product_id === product.id))
-    return <article className="relationship-card" key={product.id}><div className="relationship-head"><div><code>{product.product_code}</code><h2>{product.product_name}</h2></div><span>{linkedCustomers.length} 客户</span></div><p>{product.application || product.category}</p><div className="relationship-customers">{linkedCustomers.length ? linkedCustomers.map(customer => <button key={customer.id} onClick={() => openCustomer(customer)}><span>{countryFlags[customer.country] ?? '🌍'}</span><div><b>{customer.company_name}</b><small>{customer.country} · {customer.application || '应用待确认'}</small></div><ChevronRight size={15}/></button>) : <span className="detail-empty">尚未关联客户</span>}</div></article>
+function RelationshipMatrix({ products, customers, projects, relations, openCustomer, linkCustomer }: { products: Product[]; customers: Customer[]; projects: Project[]; relations: ProductCustomerRelation[]; openCustomer: (customer: Customer) => void; linkCustomer: (product: Product) => void }) {
+  return <section className="page relationship-page"><div className="page-heading"><div><p className="eyebrow"><Network size={13}/> PRODUCT RELATIONSHIP</p><h1>产品 - 客户关系</h1><p>从产品视角识别正在推进的客户、应用和项目；可直接建立新的客户关联。</p></div></div><div className="relationship-grid">{products.map(product => {
+    const linkedIds = new Set([
+      ...relations.filter(relation => relation.product_id === product.id).map(relation => relation.customer_id),
+      ...customers.filter(customer => customer.product_interest === product.product_code || projects.some(project => project.customer_id === customer.id && project.product_id === product.id)).map(customer => customer.id),
+    ])
+    const linkedCustomers = customers.filter(customer => linkedIds.has(customer.id))
+    return <article className="relationship-card" key={product.id}><div className="relationship-head"><div><code>{product.product_code}</code><h2>{product.product_name}</h2></div><span>{linkedCustomers.length} 客户</span></div><p>{product.application || product.category}</p><div className="relationship-customers">{linkedCustomers.length ? linkedCustomers.map(customer => <button className="relationship-customer-row" type="button" key={customer.id} onClick={() => openCustomer(customer)} title={`打开 ${customer.company_name} 客户 360`}><span>{countryFlags[customer.country] ?? '🌍'}</span><div><b>{customer.company_name}</b><small>{customer.country} · {customer.application || '应用待确认'} · 客户 360</small></div><ChevronRight size={15}/></button>) : <span className="detail-empty">尚未关联客户，请点击下方按钮添加。</span>}<button type="button" className="relationship-add" onClick={() => linkCustomer(product)}><Plus size={14}/> 关联客户</button></div></article>
   })}</div></section>
 }
 
@@ -285,6 +303,7 @@ function CustomerPipeline({ stage }: { stage: CustomerStage }) {
 }
 function DetailSection({ title, children }: { title: string; children: ReactNode }) { return <section className="detail-section"><h3>{title}</h3>{children}</section> }
 function CustomerForm({close,submit}:{close:()=>void;submit:(f:HTMLFormElement)=>Promise<void>}) { return <Modal title="新建客户" close={close}><form onSubmit={async e=>{e.preventDefault();try { await submit(e.currentTarget) } catch (error) { alert(error instanceof Error ? error.message : '创建失败，请稍后重试。') }}}><div className="form-grid"><Field label="公司名称 *" name="company_name" required/><Field label="国家/地区 *" name="country" required/><Field label="联系人 *" name="contact_person" required/><Field label="邮箱 *" name="email" type="email" required/><Field label="WhatsApp" name="whatsapp"/><Field label="产品兴趣" name="product_interest"/><Field label="下次跟进" name="next_followup_date" type="date"/><label className="wide">备注<textarea name="notes" placeholder="记录客户背景、需求或特别事项"/></label></div><div className="form-actions"><button type="button" onClick={close}>取消</button><button className="primary">创建客户</button></div></form></Modal> }
+function ProductCustomerLinkModal({ product, customers, relations, close, submit }: { product: Product; customers: Customer[]; relations: ProductCustomerRelation[]; close: () => void; submit: (customer: Customer) => Promise<void> }) { const [query, setQuery] = useState(''); const [saving, setSaving] = useState(''); const linkedIds = new Set(relations.filter(relation => relation.product_id === product.id).map(relation => relation.customer_id)); const available = customers.filter(customer => !linkedIds.has(customer.id) && `${customer.company_name} ${customer.country} ${customer.contact_person}`.toLowerCase().includes(query.toLowerCase())); return <Modal title={`关联客户 · ${product.product_code}`} close={close}><div className="relationship-modal-copy">选择一个客户，即可将 <b>{product.product_name}</b> 加入该客户的产品关系；不会改动原有项目或产品兴趣。</div><label className="relationship-search"><Search size={16}/><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索公司、国家或联系人" /></label><div className="relationship-picker">{available.map(customer => <button type="button" key={customer.id} disabled={Boolean(saving)} onClick={async () => { setSaving(customer.id); try { await submit(customer) } catch (error) { alert(error instanceof Error ? error.message : '关联失败，请稍后重试。'); setSaving('') } }}><span>{countryFlags[customer.country] ?? '🌍'}</span><div><b>{customer.company_name}</b><small>{customer.country} · {customer.contact_person}</small></div><Plus size={15}/></button>)}{!available.length && <p className="detail-empty">没有可关联的客户。</p>}</div><div className="form-actions"><button type="button" onClick={close}>取消</button></div></Modal> }
 function ProductForm({close,submit}:{close:()=>void;submit:(f:HTMLFormElement)=>Promise<void>}) { return <Modal title="添加产品" close={close}><form onSubmit={async e=>{e.preventDefault();try { await submit(e.currentTarget) } catch (error) { alert(error instanceof Error ? error.message : '保存失败，请稍后重试。') }}}><div className="form-grid"><Field label="产品名称 *" name="product_name" required/><Field label="产品编号 *" name="product_code" required/><Field label="分类" name="category"/><Field label="应用场景" name="application"/><label className="wide">产品描述<textarea name="description" placeholder="描述产品特性、优势与应用"/><textarea name="notes" placeholder="内部备注（可选）"/></label></div><div className="form-actions"><button type="button" onClick={close}>取消</button><button className="primary">保存产品</button></div></form></Modal> }
 function FollowupForm({ customer, close, submit }: { customer: Customer; close: () => void; submit: (form: HTMLFormElement) => Promise<void> }) { return <Modal title={`添加跟进 · ${customer.company_name}`} close={close}><form onSubmit={async event => { event.preventDefault(); try { await submit(event.currentTarget) } catch (error) { alert(error instanceof Error ? error.message : '保存失败，请稍后重试。') } }}><div className="form-grid"><Field label="日期 *" name="date" type="date" required/><Field label="下一步行动" name="next_action"/><label className="wide">沟通内容 *<textarea name="content" required placeholder="记录客户反馈、技术确认或项目进展"/></label></div><div className="form-actions"><button type="button" onClick={close}>取消</button><button className="primary">保存跟进</button></div></form></Modal> }
 function QuoteForm({ customer, close, submit }: { customer: Customer; close: () => void; submit: (form: HTMLFormElement) => Promise<void> }) { return <Modal title={`创建报价 · ${customer.company_name}`} close={close}><form onSubmit={async event => { event.preventDefault(); try { await submit(event.currentTarget) } catch (error) { alert(error instanceof Error ? error.message : '保存失败，请稍后重试。') } }}><div className="form-grid"><Field label="数量 *" name="quantity" required/><Field label="金额" name="amount" type="number"/><Field label="币种" name="currency"/><Field label="贸易条款" name="trade_term"/><Field label="状态" name="status"/><div/></div><div className="form-actions"><button type="button" onClick={close}>取消</button><button className="primary">保存报价</button></div></form></Modal> }
