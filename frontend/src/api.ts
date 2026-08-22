@@ -13,6 +13,13 @@ async function request<T>(path: string, init: RequestInit = {}) {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}`, ...init.headers },
   })
+  if (response.status === 401) {
+    // A password reset or expired Supabase session must never leave the UI
+    // showing seed/demo data as though the user were still authenticated.
+    sessionStorage.removeItem('zhiwu-access-token')
+    window.location.reload()
+    throw new Error('登录会话已失效，请重新登录。')
+  }
   if (!response.ok) throw new Error('保存失败，请稍后重试。')
   return response.json() as Promise<T>
 }
