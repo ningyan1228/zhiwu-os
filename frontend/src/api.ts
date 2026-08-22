@@ -30,7 +30,7 @@ async function publicRequest<T>(path: string, init: RequestInit = {}) {
   return response.json() as Promise<T>
 }
 
-const asCustomer = (item: Customer): Customer => ({ ...item, whatsapp: item.whatsapp || '—', product_interest: item.product_interest || '—', last_contact_date: item.last_contact_date || '—', next_followup_date: item.next_followup_date || '—', notes: item.notes || '暂无备注' })
+const asCustomer = (item: Customer): Customer => ({ ...item, whatsapp: item.whatsapp || '—', product_interest: item.product_interest || '—', last_contact_date: item.last_contact_date || '—', next_followup_date: item.next_followup_date || '—', notes: item.notes || '暂无备注', customer_summary: item.customer_summary || '待补充客户画像。', customer_background: item.customer_background || '待补充客户背景。', customer_need: item.customer_need || item.product_interest || '待确认客户需求。', important_notes: item.important_notes || '暂无特别注意事项。', customer_value: item.customer_value || 3, customer_tags: item.customer_tags || [], industry: item.industry || '待确认行业' })
 const asProduct = (item: Product): Product => ({ ...item, category: item.category || '未分类', application: item.application || '—', description: item.description || '暂无描述', notes: item.notes || '' })
 const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
 const asProject = (item: Project): Project => ({ ...item, application: item.application || '应用待确认', notes: item.notes || '' })
