@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     supabase_anon_key: str
     supabase_service_role_key: str
     allowed_origins: str = "http://localhost:5173"
+    public_app_url: str = "https://ningyan1228.github.io/zhiwu-os/"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 @lru_cache
@@ -42,6 +43,9 @@ class LoginIn(BaseModel):
 
 class PasswordIn(BaseModel):
     password: str = Field(min_length=8, max_length=128)
+
+class RecoveryIn(BaseModel):
+    email: str
 
 class ProductIn(BaseModel):
     product_name: str
@@ -131,6 +135,20 @@ async def update_password(payload: PasswordIn, authorization: str | None = Heade
     if response.status_code >= 400:
         raise HTTPException(response.status_code, "Password update failed. Please log in again and retry.")
     return {"updated": True}
+
+@app.post("/api/auth/recover")
+async def request_password_recovery(payload: RecoveryIn):
+    """Send a Supabase password recovery link without exposing account existence."""
+    cfg = settings()
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(
+            f"{cfg.supabase_url}/auth/v1/recover",
+            headers={"apikey": cfg.supabase_anon_key, "Content-Type": "application/json"},
+            json={"email": payload.email, "redirect_to": cfg.public_app_url},
+        )
+    if response.status_code >= 400:
+        raise HTTPException(response.status_code, "Unable to send password recovery email")
+    return {"sent": True}
 
 @app.get("/health")
 def health(): return {"status": "ok"}

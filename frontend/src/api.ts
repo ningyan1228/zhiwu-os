@@ -17,6 +17,12 @@ async function request<T>(path: string, init: RequestInit = {}) {
   return response.json() as Promise<T>
 }
 
+async function publicRequest<T>(path: string, init: RequestInit = {}) {
+  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...init.headers } })
+  if (!response.ok) throw new Error('请求失败，请稍后重试。')
+  return response.json() as Promise<T>
+}
+
 const asCustomer = (item: Customer): Customer => ({ ...item, whatsapp: item.whatsapp || '—', product_interest: item.product_interest || '—', last_contact_date: item.last_contact_date || '—', next_followup_date: item.next_followup_date || '—', notes: item.notes || '暂无备注' })
 const asProduct = (item: Product): Product => ({ ...item, category: item.category || '未分类', application: item.application || '—', description: item.description || '暂无描述', notes: item.notes || '' })
 const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
@@ -36,5 +42,8 @@ export const api = {
   quotes: () => request<Quote[]>('/api/quotes').then(rows => rows.map(asQuote)),
   createQuote: (payload: Omit<Quote, 'id'>) => request<Quote[]>('/api/quotes', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asQuote(rows[0])),
   seedDemo: () => request<{ seeded: boolean }>('/api/demo/seed', { method: 'POST' }),
-  updatePassword: (password: string) => request<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', body: JSON.stringify({ password }) }),
+  updatePassword: (password: string, recoveryToken?: string) => recoveryToken
+    ? publicRequest<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', headers: { Authorization: `Bearer ${recoveryToken}` }, body: JSON.stringify({ password }) })
+    : request<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', body: JSON.stringify({ password }) }),
+  requestPasswordRecovery: (email: string) => publicRequest<{ sent: boolean }>('/api/auth/recover', { method: 'POST', body: JSON.stringify({ email }) }),
 }
