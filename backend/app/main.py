@@ -1,4 +1,5 @@
 """Thin API gateway: browser credentials are verified with Supabase before data is proxied."""
+from datetime import date, datetime
 from functools import lru_cache
 from typing import Any, Literal
 from urllib.parse import quote
@@ -102,6 +103,29 @@ class EmailLinkIn(BaseModel):
     customer_id: str
     contact_name: str | None = Field(default=None, max_length=200)
 
+class TaskIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=5000)
+    category: Literal["外贸", "网站", "设计", "学习", "生活", "其他"] = "外贸"
+    priority: Literal["important", "normal", "low"] = "normal"
+    status: Literal["Pending", "Completed"] = "Pending"
+    task_date: str
+    start_time: str | None = None
+    end_time: str | None = None
+    estimated_minutes: int | None = Field(default=None, ge=5, le=1440)
+    customer_id: str | None = None
+    project_id: str | None = None
+    product_id: str | None = None
+
+class TaskStatusIn(BaseModel):
+    status: Literal["Pending", "Completed"]
+
+class DailyLogIn(BaseModel):
+    summary: str | None = Field(default=None, max_length=5000)
+    problem: str | None = Field(default=None, max_length=5000)
+    tomorrow_plan: str | None = Field(default=None, max_length=5000)
+    rating: int | None = Field(default=None, ge=1, le=5)
+
 async def supabase(path: str, token: str, method: str = "GET", payload: dict[str, Any] | None = None) -> Any:
     cfg = settings()
     headers = {"apikey": cfg.supabase_anon_key, "Authorization": token, "Content-Type": "application/json", "Prefer": "return=representation"}
@@ -114,6 +138,23 @@ def bearer(authorization: str | None) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing Supabase user token")
     return authorization
+
+async def record_timeline_event(
+    token: str, *, title: str, event_type: Literal["task", "email", "crm", "project", "note"],
+    source: str, related_id: str | None = None, customer_id: str | None = None,
+    project_id: str | None = None, product_id: str | None = None,
+    event_date: str | None = None, event_time: str | None = None,
+) -> None:
+    """A failed optional timeline write must not block an existing CRM/mail action."""
+    try:
+        await supabase("timeline_events", token, "POST", {
+            "title": title, "event_type": event_type, "source": source, "related_id": related_id,
+            "customer_id": customer_id, "project_id": project_id, "product_id": product_id,
+            "event_date": event_date or str(date.today()),
+            "event_time": event_time or datetime.now().strftime("%H:%M:%S"),
+        })
+    except HTTPException:
+        pass
 
 DEMO_PRODUCTS = [
     {"product_name": "NL-007", "product_code": "NL-007", "category": "Barrier Masterbatch", "application": "PPC Film", "description": "Food packaging barrier masterbatch", "notes": "Active"},
@@ -249,7 +290,10 @@ async def list_followups(authorization: str | None = Header(default=None)):
 
 @app.post("/api/followups", status_code=201)
 async def create_followup(followup: FollowupIn, authorization: str | None = Header(default=None)):
-    return await supabase("followups", bearer(authorization), "POST", followup.model_dump(exclude_none=True))
+    token = bearer(authorization)
+    rows = await supabase("followups", token, "POST", followup.model_dump(exclude_none=True))
+    await record_timeline_event(token, title=f"跟进客户：{followup.content}", event_type="crm", source="followup", related_id=rows[0]["id"], customer_id=followup.customer_id, event_date=followup.date)
+    return rows
 
 @app.get("/api/projects")
 async def list_projects(authorization: str | None = Header(default=None)):
@@ -257,7 +301,76 @@ async def list_projects(authorization: str | None = Header(default=None)):
 
 @app.post("/api/projects", status_code=201)
 async def create_project(project: ProjectIn, authorization: str | None = Header(default=None)):
-    return await supabase("projects", bearer(authorization), "POST", project.model_dump(exclude_none=True))
+    token = bearer(authorization)
+    rows = await supabase("projects", token, "POST", project.model_dump(exclude_none=True))
+    await record_timeline_event(token, title=f"创建项目：{project.project_name}", event_type="project", source="project", related_id=rows[0]["id"], customer_id=project.customer_id, product_id=project.product_id)
+    return rows
+
+@app.get("/api/tasks")
+async def list_tasks(
+    authorization: str | None = Header(default=None), task_date: str | None = None,
+    from_date: str | None = Query(default=None), to_date: str | None = Query(default=None),
+):
+    filters = ["select=*", "order=task_date.asc,start_time.asc"]
+    if task_date:
+        filters.append(f"task_date=eq.{task_date}")
+    if from_date:
+        filters.append(f"task_date=gte.{from_date}")
+    if to_date:
+        filters.append(f"task_date=lte.{to_date}")
+    return await supabase(f"tasks?{'&'.join(filters)}", bearer(authorization))
+
+@app.post("/api/tasks", status_code=201)
+async def create_task(task: TaskIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    rows = await supabase("tasks", token, "POST", task.model_dump(exclude_none=True))
+    record = rows[0]
+    await record_timeline_event(token, title=f"计划：{record['title']}", event_type="task", source="task", related_id=record["id"], customer_id=record.get("customer_id"), project_id=record.get("project_id"), product_id=record.get("product_id"), event_date=record["task_date"], event_time=record.get("start_time"))
+    return record
+
+@app.patch("/api/tasks/{task_id}")
+async def update_task_status(task_id: str, payload: TaskStatusIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    existing = await supabase(f"tasks?id=eq.{task_id}&select=*", token)
+    if not existing:
+        raise HTTPException(404, "Task not found")
+    task = existing[0]
+    update = {"status": payload.status, "completed_at": datetime.now().isoformat() if payload.status == "Completed" else None}
+    rows = await supabase(f"tasks?id=eq.{task_id}", token, "PATCH", update)
+    if payload.status == "Completed":
+        await record_timeline_event(token, title=f"完成任务：{task['title']}", event_type="task", source="task", related_id=task_id, customer_id=task.get("customer_id"), project_id=task.get("project_id"), product_id=task.get("product_id"))
+    return rows[0]
+
+@app.get("/api/daily-logs")
+async def get_daily_log(log_date: str, authorization: str | None = Header(default=None)):
+    rows = await supabase(f"daily_logs?log_date=eq.{log_date}&select=*&limit=1", bearer(authorization))
+    return rows[0] if rows else None
+
+@app.put("/api/daily-logs/{log_date}")
+async def save_daily_log(log_date: str, payload: DailyLogIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    existing = await supabase(f"daily_logs?log_date=eq.{log_date}&select=id&limit=1", token)
+    data = {**payload.model_dump(exclude_none=True), "updated_at": datetime.now().isoformat()}
+    if existing:
+        rows = await supabase(f"daily_logs?id=eq.{existing[0]['id']}", token, "PATCH", data)
+    else:
+        rows = await supabase("daily_logs", token, "POST", {**data, "log_date": log_date})
+    await record_timeline_event(token, title="完成今日复盘", event_type="note", source="daily_log", related_id=rows[0]["id"], event_date=log_date)
+    return rows[0]
+
+@app.get("/api/timeline")
+async def list_timeline(
+    authorization: str | None = Header(default=None), event_date: str | None = None,
+    from_date: str | None = Query(default=None), to_date: str | None = Query(default=None), limit: int = Query(300, le=500),
+):
+    filters = ["select=*", "order=event_date.desc,event_time.desc", f"limit={limit}"]
+    if event_date:
+        filters.append(f"event_date=eq.{event_date}")
+    if from_date:
+        filters.append(f"event_date=gte.{from_date}")
+    if to_date:
+        filters.append(f"event_date=lte.{to_date}")
+    return await supabase(f"timeline_events?{'&'.join(filters)}", bearer(authorization))
 
 @app.get("/api/quotes")
 async def list_quotes(authorization: str | None = Header(default=None)):
@@ -353,6 +466,21 @@ async def create_followup_from_email(email_id: str, payload: EmailFollowupIn, au
         "deadline": customer_rows[0].get("next_followup_date") if customer_rows else None,
         "status": "Pending",
     })
+    # Turning an email into a CRM follow-up also creates a visible Daily Focus task.
+    # The migration is optional during rollout, so an unavailable tasks table must
+    # never prevent the user from creating the original CRM follow-up.
+    try:
+        task_rows = await supabase("tasks", token, "POST", {
+            "title": f"回复邮件：{email.get('subject', '(无主题)')[:120]}",
+            "description": payload.content or email.get("content_preview") or "由邮件中心创建的跟进任务",
+            "category": "外贸", "priority": "normal", "status": "Pending",
+            "task_date": customer_rows[0].get("next_followup_date") if customer_rows and customer_rows[0].get("next_followup_date") else str(date.today()),
+            "customer_id": email["customer_id"], "project_id": email.get("project_id"), "product_id": email.get("product_id"),
+        })
+        task = task_rows[0]
+        await record_timeline_event(token, title=f"邮件转任务：{task['title']}", event_type="email", source="mail_followup", related_id=task["id"], customer_id=task.get("customer_id"), project_id=task.get("project_id"), product_id=task.get("product_id"), event_date=task["task_date"])
+    except HTTPException:
+        pass
     await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {"status": "followup_created"})
     return record[0]
 

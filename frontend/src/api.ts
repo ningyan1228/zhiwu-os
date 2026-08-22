@@ -1,4 +1,4 @@
-import type { Customer, EmailSync, Followup, MailEmail, Product, ProductCustomerRelation, Project, Quote } from './types'
+import type { Customer, DailyLog, EmailSync, Followup, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -36,6 +36,7 @@ const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.n
 const asProject = (item: Project): Project => ({ ...item, application: item.application || '应用待确认', notes: item.notes || '' })
 const asQuote = (item: Quote): Quote => ({ ...item, currency: item.currency || 'USD', quantity: item.quantity || '待确认', status: item.status || 'Draft' })
 const asMailEmail = (item: MailEmail): MailEmail => ({ ...item, subject: item.subject || '(无主题)', content_preview: item.content_preview || '', attachment_count: item.attachment_count || 0, status: item.status || 'unread', category: item.category || 'customer_inquiry' })
+const asTask = (item: Task): Task => ({ ...item, description: item.description || '', start_time: item.start_time || null, end_time: item.end_time || null, status: item.status || 'Pending', category: item.category || '外贸', priority: item.priority || 'normal' })
 
 export const api = {
   customers: () => request<Customer[]>('/api/customers').then(rows => rows.map(asCustomer)),
@@ -62,4 +63,16 @@ export const api = {
   createFollowupFromEmail: (id: string, payload: { content?: string; next_action?: string }) => request<Followup>(`/api/emails/${id}/followups`, { method: 'POST', body: JSON.stringify(payload) }).then(asFollowup),
   linkEmail: (id: string, payload: { customer_id: string; contact_name?: string }) => request<MailEmail>(`/api/emails/${id}/link`, { method: 'POST', body: JSON.stringify(payload) }).then(asMailEmail),
   updateEmailStatus: (id: string, status: MailEmail['status']) => request<MailEmail>(`/api/emails/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }).then(asMailEmail),
+  tasks: (filters: { task_date?: string; from_date?: string; to_date?: string } = {}) => {
+    const params = new URLSearchParams(filters as Record<string, string>)
+    return request<Task[]>(`/api/tasks${params.size ? `?${params}` : ''}`).then(rows => rows.map(asTask))
+  },
+  createTask: (payload: Omit<Task, 'id' | 'created_at' | 'completed_at'>) => request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(payload) }).then(asTask),
+  updateTaskStatus: (id: string, status: Task['status']) => request<Task>(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }).then(asTask),
+  dailyLog: (day: string) => request<DailyLog | null>(`/api/daily-logs?log_date=${encodeURIComponent(day)}`),
+  saveDailyLog: (day: string, payload: Omit<DailyLog, 'id' | 'log_date' | 'created_at' | 'updated_at'>) => request<DailyLog>(`/api/daily-logs/${day}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  timeline: (filters: { event_date?: string; from_date?: string; to_date?: string } = {}) => {
+    const params = new URLSearchParams(filters as Record<string, string>)
+    return request<TimelineEvent[]>(`/api/timeline${params.size ? `?${params}` : ''}`)
+  },
 }

@@ -26,3 +26,13 @@ export type MailEmail = {
   category: 'customer_inquiry' | 'technical' | 'quotation' | 'sample' | 'payment' | 'other'; created_at: string
 }
 export type EmailSync = { status: string; total_synced: number; last_sync_time?: string | null; last_error?: string | null }
+export type TaskCategory = '外贸' | '网站' | '设计' | '学习' | '生活' | '其他'
+export type TaskPriority = 'important' | 'normal' | 'low'
+export type TaskStatus = 'Pending' | 'Completed'
+export type Task = {
+  id: string; title: string; description?: string; category: TaskCategory; priority: TaskPriority; status: TaskStatus
+  task_date: string; start_time?: string | null; end_time?: string | null; estimated_minutes?: number | null
+  customer_id?: string | null; project_id?: string | null; product_id?: string | null; created_at?: string; completed_at?: string | null
+}
+export type DailyLog = { id: string; log_date: string; summary?: string | null; problem?: string | null; tomorrow_plan?: string | null; rating?: number | null; created_at?: string; updated_at?: string }
+export type TimelineEvent = { id: string; event_date: string; event_time?: string | null; title: string; event_type: 'task' | 'email' | 'crm' | 'project' | 'note'; source: string; related_id?: string | null; customer_id?: string | null; project_id?: string | null; product_id?: string | null; created_at?: string }
