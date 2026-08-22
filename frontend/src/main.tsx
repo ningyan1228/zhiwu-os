@@ -22,7 +22,7 @@ const stageLabels: Record<CustomerStage, string> = {
 }
 
 function App() {
-  const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('zhiwu-demo-session') === 'active' || sessionStorage.getItem('zhiwu-access-token')))
+  const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('zhiwu-access-token')))
   const [view, setView] = useState<View>('dashboard')
   const [sidebar, setSidebar] = useState(false)
   const [customers, setCustomers] = useState(seedCustomers)
@@ -80,7 +80,7 @@ function App() {
     const next = sessionStorage.getItem('zhiwu-access-token') ? await api.updateCustomer(customer.id, payload) : updated
     setCustomers(current => current.map(item => item.id === customer.id ? next : item)); setSelected(next)
   }
-  if (!authenticated) return <Login onAuthenticated={() => { sessionStorage.setItem('zhiwu-demo-session', 'active'); setAuthenticated(true) }} />
+  if (!authenticated) return <Login onAuthenticated={() => setAuthenticated(true)} />
   return <div className="app-shell">
     <aside className={`sidebar ${sidebar ? 'is-open' : ''}`}>
       <div className="brand"><div className="brand-mark">Z</div><div><strong>Zhiwu OS</strong><span>个人创业操作系统</span></div><button className="mobile-close" onClick={() => setSidebar(false)}><X size={18}/></button></div>
@@ -174,7 +174,7 @@ function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
       const session = await response.json(); sessionStorage.setItem('zhiwu-access-token', session.access_token); onAuthenticated()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '暂时无法登录，请稍后重试。') } finally { setLoading(false) }
   }
-  return <main className="login-page"><section className="login-intro"><div className="brand"><div className="brand-mark">Z</div><div><strong>Zhiwu OS</strong><span>个人创业操作系统</span></div></div><div><p className="eyebrow"><span className="pulse"/> PERSONAL CEO WORKSPACE</p><h1>为今天的关键决策，<br/>腾出一个清晰的空间。</h1><p>外贸、产品与项目，全部聚合在同一个专注的工作台。</p></div><div className="login-quote">“小而清晰的系统，胜过散落各处的待办。”</div></section><section className="login-form-wrap"><form className="login-form" onSubmit={login}><div className="mobile-brand brand"><div className="brand-mark">Z</div><strong>Zhiwu OS</strong></div><p className="eyebrow">WELCOME BACK</p><h2>登录工作空间</h2><p>使用你的专属账号继续今天的工作。</p><label>邮箱<input type="email" name="email" placeholder="you@example.com" required /></label><label>密码<input type="password" name="password" placeholder="输入密码" required /></label>{error && <div className="login-error">{error}</div>}<button className="primary login-submit" disabled={loading}>{loading ? '正在验证…' : '登录'} <ArrowUpRight size={17}/></button><button type="button" className="demo-login" onClick={onAuthenticated}>进入演示工作空间 <ChevronRight size={16}/></button><small>正式部署后，登录由你的 Supabase 账号安全验证。</small></form></section></main>
+  return <main className="login-page"><section className="login-intro"><div className="brand"><div className="brand-mark">Z</div><div><strong>Zhiwu OS</strong><span>个人创业操作系统</span></div></div><div><p className="eyebrow"><span className="pulse"/> PERSONAL CEO WORKSPACE</p><h1>为今天的关键决策，<br/>腾出一个清晰的空间。</h1><p>外贸、产品与项目，全部聚合在同一个专注的工作台。</p></div><div className="login-quote">“小而清晰的系统，胜过散落各处的待办。”</div></section><section className="login-form-wrap"><form className="login-form" onSubmit={login}><div className="mobile-brand brand"><div className="brand-mark">Z</div><strong>Zhiwu OS</strong></div><p className="eyebrow">SECURE WORKSPACE</p><h2>密码登录</h2><p>使用已在 Supabase 创建的邮箱和密码进入专属工作空间。</p><label>登录邮箱<input type="email" name="email" placeholder="you@example.com" autoComplete="email" required /></label><label>密码<input type="password" name="password" placeholder="输入密码" autoComplete="current-password" required /></label>{error && <div className="login-error">{error}</div>}<button className="primary login-submit" disabled={loading}>{loading ? '正在验证…' : '安全登录'} <ArrowUpRight size={17}/></button><small>密码由 Supabase 安全验证，不会保存到 GitHub 或腾讯云服务器。</small></form></section></main>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
