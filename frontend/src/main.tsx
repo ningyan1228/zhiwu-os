@@ -9,7 +9,7 @@ import { api } from './api'
 import type { Customer, CustomerStage, Followup, Product, Project, Quote } from './types'
 import './styles.css'
 
-type View = 'dashboard' | 'crm' | 'products'
+type View = 'dashboard' | 'crm' | 'products' | 'projects'
 const nav: [string, string, LucideIcon][] = [
   ['dashboard', '总览', Grid2X2], ['crm', '外贸 CRM', Users], ['products', '产品中心', Package],
   ['quotes', '报价管理', ClipboardList], ['assets', 'AI 资产', Sparkles], ['projects', '项目管理', Layers3],
@@ -84,14 +84,15 @@ function App() {
   return <div className="app-shell">
     <aside className={`sidebar ${sidebar ? 'is-open' : ''}`}>
       <div className="brand"><div className="brand-mark">Z</div><div><strong>Zhiwu OS</strong><span>个人创业操作系统</span></div><button className="mobile-close" onClick={() => setSidebar(false)}><X size={18}/></button></div>
-      <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'products') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && <em>5</em>}</button>)}</nav>
+      <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'products' || key === 'projects') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && <em>5</em>}</button>)}</nav>
       <div className="nav-bottom"><button><CalendarDays size={18}/><span>知识库</span></button><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">Z</div><div><b>Zhiwu</b><small>Founder · 修改密码</small></div><ChevronRight size={16}/></button></div>
     </aside>
     <main>
-      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{view === 'dashboard' ? '总览' : view === 'crm' ? '外贸 CRM' : '产品中心'}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input placeholder="搜索工作空间" /></label><button className="icon-button"><Bell size={19}/><i/></button><div className="avatar avatar-small">Z</div></div></header>
+      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', products: '产品中心', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input placeholder="搜索工作空间" /></label><button className="icon-button"><Bell size={19}/><i/></button><div className="avatar avatar-small">Z</div></div></header>
       {view === 'dashboard' && <Dashboard customers={customers} projects={projects} followups={followupRows} today={today} onOpenCRM={() => setView('crm')} openCustomer={setSelected} />}
       {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
       {view === 'products' && <Products products={products} create={() => setModal('product')} />}
+      {view === 'projects' && <ProjectManagement projects={projects} customers={customers} products={products} quotes={quotes} openCustomer={setSelected} />}
     </main>
     {selected && <CustomerDrawer customer={selected} projects={projects} quotes={quotes} followups={followupRows} products={products} close={() => setSelected(null)} addFollowup={() => setModal('followup')} addQuote={() => setModal('quote')} updateStage={updateStage} />}
     {modal === 'customer' && <CustomerForm close={() => setModal(null)} submit={addCustomer} />}
@@ -136,6 +137,20 @@ function Priority({ value }: { value?: Customer['priority'] }) { return value ? 
 
 function Products({products,create}:{products:Product[];create:()=>void}) { return <section className="page products"><div className="page-heading"><div><p className="eyebrow">PRODUCT INTELLIGENCE</p><h1>产品中心</h1><p>把每一份产品资料变成随时可用的销售资产。</p></div><button className="primary" onClick={create}><Plus size={17}/> 添加产品</button></div><div className="product-toolbar"><label><Search size={17}/><input placeholder="搜索产品名称或编号" /></label><button className="filter">全部分类 <ChevronRight size={15}/></button></div><div className="products-grid">{products.map(p=><ProductCard key={p.id} product={p}/>)}</div>{!products.length && <div className="empty">还没有产品，点击“添加产品”创建第一份资料。</div>}</section> }
 function ProductCard({product}:{product:Product}) { return <article className="product-card"><div className="product-art"><span>{product.product_code.slice(0,2)}</span><div className="product-shape one"/><div className="product-shape two"/></div><div className="product-body"><span className="category">{product.category}</span><h2>{product.product_name}</h2><code>{product.product_code}</code><p>{product.description}</p><div><span>{product.application}</span><ChevronRight size={16}/></div></div></article> }
+
+function ProjectManagement({ projects, customers, products, quotes, openCustomer }: { projects: Project[]; customers: Customer[]; products: Product[]; quotes: Quote[]; openCustomer: (customer: Customer) => void }) {
+  const activeProjects = projects.filter(project => !['Won', 'Lost'].includes(project.stage)).length
+  const quotationProjects = projects.filter(project => project.stage === 'Quotation' || project.stage === 'Quoted').length
+  const technicalProjects = projects.filter(project => project.stage.includes('Technical')).length
+  return <section className="page projects-page"><div className="page-heading"><div><p className="eyebrow">PROJECT DELIVERY BOARD</p><h1>项目管理</h1><p>以客户项目为单位管理技术验证、寄样、报价与下一步商业动作。</p></div></div>
+    <div className="project-kpis"><span><b>{projects.length}</b> 项目总数</span><span><b>{activeProjects}</b> 推进中</span><span><b>{technicalProjects}</b> 技术阶段</span><span><b>{quotationProjects}</b> 报价沟通</span></div>
+    <div className="project-board">{projects.map(project => {
+      const customer = customers.find(item => item.id === project.customer_id)
+      const product = products.find(item => item.id === project.product_id || item.product_code === project.product_code)
+      const quote = quotes.find(item => item.customer_id === project.customer_id)
+      return <article className="project-card" key={project.id}><div className="project-card-top"><div><span className="project-label">{customer?.company_name ?? '客户待关联'}</span><h2>{project.project_name}</h2></div><Stage stage={project.stage}/></div><dl><div><dt>关联产品</dt><dd>{product?.product_code ?? project.product_code ?? '待确认'}</dd></div><div><dt>应用方向</dt><dd>{project.application}</dd></div><div><dt>当前动作</dt><dd>{project.notes || '安排下一步推进'}</dd></div><div><dt>报价状态</dt><dd>{quote ? `${quote.currency} ${quote.amount?.toLocaleString() ?? '待定'} · ${quote.status}` : '尚未创建报价'}</dd></div></dl><div className="project-card-foot"><span>{customer?.next_followup_date ? `下次跟进 ${customer.next_followup_date}` : '待安排跟进'}</span>{customer && <button onClick={() => openCustomer(customer)}>打开客户 <ChevronRight size={14}/></button>}</div></article>
+    })}</div>{!projects.length && <div className="empty">还没有项目，请先在 CRM 中创建客户和项目。</div>}</section>
+}
 
 function CustomerDrawer({customer,projects,quotes,followups,products,close,addFollowup,addQuote,updateStage}:{customer:Customer;projects:Project[];quotes:Quote[];followups:Followup[];products:Product[];close:()=>void;addFollowup:()=>void;addQuote:()=>void;updateStage:(customer:Customer,stage:CustomerStage)=>Promise<void>}) {
   const notes = followups.filter(f=>f.customer_id===customer.id)
