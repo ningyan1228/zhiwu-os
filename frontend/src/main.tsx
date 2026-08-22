@@ -1,10 +1,11 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   ArrowUpRight, Bell, CalendarDays, Check, ChevronRight, CircleHelp, ClipboardList, Grid2X2,
   Layers3, Menu, Package, Plus, Search, Settings, Sparkles, Users, X, type LucideIcon
 } from 'lucide-react'
-import { customers as seedCustomers, followups, products } from './data'
+import { customers as seedCustomers, followups, products as seedProducts } from './data'
+import { api } from './api'
 import type { Customer, CustomerStage, Product } from './types'
 import './styles.css'
 
@@ -14,21 +15,34 @@ const nav: [string, string, LucideIcon][] = [
   ['quotes', '报价管理', ClipboardList], ['assets', 'AI 资产', Sparkles], ['projects', '项目管理', Layers3],
 ]
 const stageLabels: Record<CustomerStage, string> = { New: '新线索', Inquiry: '询盘', Quoted: '已报价', Sample: '寄样中', Negotiation: '谈判中', Won: '已成交', Lost: '已流失' }
-const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
 function App() {
-  const [authenticated, setAuthenticated] = useState(() => sessionStorage.getItem('zhiwu-demo-session') === 'active')
+  const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('zhiwu-demo-session') === 'active' || sessionStorage.getItem('zhiwu-access-token')))
   const [view, setView] = useState<View>('dashboard')
   const [sidebar, setSidebar] = useState(false)
   const [customers, setCustomers] = useState(seedCustomers)
+  const [products, setProducts] = useState(seedProducts)
   const [selected, setSelected] = useState<Customer | null>(null)
   const [modal, setModal] = useState<'customer' | 'product' | null>(null)
   const [query, setQuery] = useState('')
   const today = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(2026, 7, 21))
   const visibleCustomers = useMemo(() => customers.filter(c => `${c.company_name} ${c.country} ${c.contact_person}`.toLowerCase().includes(query.toLowerCase())), [customers, query])
-  const addCustomer = (form: HTMLFormElement) => {
+  useEffect(() => {
+    if (!authenticated || !sessionStorage.getItem('zhiwu-access-token')) return
+    void Promise.all([api.customers(), api.products()]).then(([customerRows, productRows]) => {
+      setCustomers(customerRows); setProducts(productRows)
+    }).catch(error => console.error('Unable to load workspace data:', error))
+  }, [authenticated])
+  const addCustomer = async (form: HTMLFormElement) => {
     const value = Object.fromEntries(new FormData(form)) as Record<string, string>
-    setCustomers([{ id: crypto.randomUUID(), company_name: value.company_name, country: value.country, contact_person: value.contact_person, email: value.email, whatsapp: value.whatsapp || '—', product_interest: value.product_interest || '—', customer_stage: 'New', last_contact_date: '—', next_followup_date: value.next_followup_date || '—', notes: value.notes || '暂无备注', created_at: '2026-08-21' }, ...customers])
+    const customer = await api.createCustomer({ company_name: value.company_name, country: value.country, contact_person: value.contact_person, email: value.email, whatsapp: value.whatsapp || '', product_interest: value.product_interest || '', customer_stage: 'New', next_followup_date: value.next_followup_date || '', notes: value.notes || '' })
+    setCustomers(current => [customer, ...current])
+    setModal(null)
+  }
+  const addProduct = async (form: HTMLFormElement) => {
+    const value = Object.fromEntries(new FormData(form)) as Record<string, string>
+    const product = await api.createProduct({ product_name: value.product_name, product_code: value.product_code, category: value.category || '', application: value.application || '', description: value.description || '', notes: value.notes || '' })
+    setProducts(current => [product, ...current])
     setModal(null)
   }
   if (!authenticated) return <Login onAuthenticated={() => { sessionStorage.setItem('zhiwu-demo-session', 'active'); setAuthenticated(true) }} />
@@ -42,11 +56,11 @@ function App() {
       <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{view === 'dashboard' ? '总览' : view === 'crm' ? '外贸 CRM' : '产品中心'}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input placeholder="搜索工作空间" /></label><button className="icon-button"><Bell size={19}/><i/></button><div className="avatar avatar-small">Z</div></div></header>
       {view === 'dashboard' && <Dashboard customers={customers} today={today} onOpenCRM={() => setView('crm')} />}
       {view === 'crm' && <CRM customers={visibleCustomers} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} />}
-      {view === 'products' && <Products create={() => setModal('product')} />}
+      {view === 'products' && <Products products={products} create={() => setModal('product')} />}
     </main>
     {selected && <CustomerDrawer customer={selected} close={() => setSelected(null)} />}
     {modal === 'customer' && <CustomerForm close={() => setModal(null)} submit={addCustomer} />}
-    {modal === 'product' && <ProductForm close={() => setModal(null)} />}
+    {modal === 'product' && <ProductForm close={() => setModal(null)} submit={addProduct} />}
   </div>
 }
 
@@ -63,15 +77,15 @@ function Metric({label,value,delta,icon}:{label:string;value:string;delta:string
 function PanelTitle({title,action,onAction}:{title:string;action:string;onAction?:()=>void}) { return <div className="panel-title"><h2>{title}</h2><button onClick={onAction}>{action}<ChevronRight size={15}/></button></div> }
 function Activity({icon,title,text,time}:{icon:ReactNode;title:string;text:string;time:string}) { return <div className="activity-row"><div className="activity-icon">{icon}</div><div><b>{title}</b><span>{text}</span></div><time>{time}</time></div> }
 
-function CRM({customers,query,setQuery,open,create}:{customers:Customer[];query:string;setQuery:(v:string)=>void;open:(c:Customer)=>void;create:()=>void}) { return <section className="page crm"><div className="page-heading"><div><p className="eyebrow">EXTERNAL TRADE</p><h1>外贸 CRM</h1><p>集中管理每一段客户关系与下一步机会。</p></div><button className="primary" onClick={create}><Plus size={17}/> 新建客户</button></div><div className="crm-kpis"><span><b>5</b> 全部客户</span><span><b>3</b> 需本周跟进</span><span><b>2</b> 处于关键阶段</span></div><div className="table-panel"><div className="table-tools"><label><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索公司、联系人或国家" /></label><button className="filter">阶段 <ChevronRight size={15}/></button><button className="filter">国家 <ChevronRight size={15}/></button></div><div className="table-wrap"><table><thead><tr><th>客户</th><th>阶段</th><th>产品兴趣</th><th>最后联系</th><th>下次跟进</th><th/></tr></thead><tbody>{customers.map(c=><tr key={c.id} onClick={()=>open(c)}><td><div className="customer-cell"><div className="company-avatar">{c.company_name[0]}</div><div><b>{c.company_name}</b><span>{c.contact_person} · {c.country}</span></div></div></td><td><Stage stage={c.customer_stage}/></td><td>{c.product_interest}</td><td>{c.last_contact_date}</td><td><span className={c.next_followup_date==='2026-08-21'?'due':''}>{c.next_followup_date}</span></td><td><ChevronRight size={17}/></td></tr>)}</tbody></table>{!customers.length && <div className="empty">没有找到相匹配的客户。</div>}</div></div></section> }
+function CRM({customers,query,setQuery,open,create}:{customers:Customer[];query:string;setQuery:(v:string)=>void;open:(c:Customer)=>void;create:()=>void}) { return <section className="page crm"><div className="page-heading"><div><p className="eyebrow">EXTERNAL TRADE</p><h1>外贸 CRM</h1><p>集中管理每一段客户关系与下一步机会。</p></div><button className="primary" onClick={create}><Plus size={17}/> 新建客户</button></div><div className="crm-kpis"><span><b>{customers.length}</b> 全部客户</span><span><b>{customers.filter(c=>c.customer_stage !== 'Won').length}</b> 活跃客户</span><span><b>{customers.filter(c=>c.customer_stage === 'Negotiation').length}</b> 处于谈判</span></div><div className="table-panel"><div className="table-tools"><label><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索公司、联系人或国家" /></label><button className="filter">阶段 <ChevronRight size={15}/></button><button className="filter">国家 <ChevronRight size={15}/></button></div><div className="table-wrap"><table><thead><tr><th>客户</th><th>阶段</th><th>产品兴趣</th><th>最后联系</th><th>下次跟进</th><th/></tr></thead><tbody>{customers.map(c=><tr key={c.id} onClick={()=>open(c)}><td><div className="customer-cell"><div className="company-avatar">{c.company_name[0]}</div><div><b>{c.company_name}</b><span>{c.contact_person} · {c.country}</span></div></div></td><td><Stage stage={c.customer_stage}/></td><td>{c.product_interest}</td><td>{c.last_contact_date}</td><td><span className={c.next_followup_date==='2026-08-21'?'due':''}>{c.next_followup_date}</span></td><td><ChevronRight size={17}/></td></tr>)}</tbody></table>{!customers.length && <div className="empty">还没有客户，点击“新建客户”开始添加。</div>}</div></div></section> }
 function Stage({stage}:{stage:CustomerStage}) { return <span className={`stage ${stage.toLowerCase()}`}>{stageLabels[stage]}</span> }
 
-function Products({create}:{create:()=>void}) { return <section className="page products"><div className="page-heading"><div><p className="eyebrow">PRODUCT INTELLIGENCE</p><h1>产品中心</h1><p>把每一份产品资料变成随时可用的销售资产。</p></div><button className="primary" onClick={create}><Plus size={17}/> 添加产品</button></div><div className="product-toolbar"><label><Search size={17}/><input placeholder="搜索产品名称或编号" /></label><button className="filter">全部分类 <ChevronRight size={15}/></button></div><div className="products-grid">{products.map(p=><ProductCard key={p.id} product={p}/>)}</div></section> }
+function Products({products,create}:{products:Product[];create:()=>void}) { return <section className="page products"><div className="page-heading"><div><p className="eyebrow">PRODUCT INTELLIGENCE</p><h1>产品中心</h1><p>把每一份产品资料变成随时可用的销售资产。</p></div><button className="primary" onClick={create}><Plus size={17}/> 添加产品</button></div><div className="product-toolbar"><label><Search size={17}/><input placeholder="搜索产品名称或编号" /></label><button className="filter">全部分类 <ChevronRight size={15}/></button></div><div className="products-grid">{products.map(p=><ProductCard key={p.id} product={p}/>)}</div>{!products.length && <div className="empty">还没有产品，点击“添加产品”创建第一份资料。</div>}</section> }
 function ProductCard({product}:{product:Product}) { return <article className="product-card"><div className="product-art"><span>{product.product_code.slice(0,2)}</span><div className="product-shape one"/><div className="product-shape two"/></div><div className="product-body"><span className="category">{product.category}</span><h2>{product.product_name}</h2><code>{product.product_code}</code><p>{product.description}</p><div><span>{product.application}</span><ChevronRight size={16}/></div></div></article> }
 
 function CustomerDrawer({customer,close}:{customer:Customer;close:()=>void}) { const notes=followups.filter(f=>f.customer_id===customer.id); return <div className="drawer-layer" onMouseDown={close}><aside className="drawer" onMouseDown={e=>e.stopPropagation()}><button className="close" onClick={close}><X size={20}/></button><div className="drawer-head"><div className="company-avatar large">{customer.company_name[0]}</div><div><p>{customer.country}</p><h2>{customer.company_name}</h2><Stage stage={customer.customer_stage}/></div></div><div className="contact-grid"><span>联系人<b>{customer.contact_person}</b></span><span>邮箱<b>{customer.email}</b></span><span>WhatsApp<b>{customer.whatsapp}</b></span><span>关注产品<b>{customer.product_interest}</b></span></div><div className="next-action"><Sparkles size={17}/><div><span>下一步行动</span><b>{notes[0]?.next_action ?? '安排下一次客户联系'}</b></div><time>{customer.next_followup_date}</time></div><h3>沟通记录</h3>{notes.length ? notes.map(n=><div className="note" key={n.id}><time>{n.date}</time><p>{n.content}</p><small>下一步：{n.next_action}</small></div>) : <div className="note"><p>尚未添加沟通记录。</p></div>}<button className="primary full"><Plus size={17}/> 添加跟进记录</button></aside></div> }
-function CustomerForm({close,submit}:{close:()=>void;submit:(f:HTMLFormElement)=>void}) { return <Modal title="新建客户" close={close}><form onSubmit={e=>{e.preventDefault();submit(e.currentTarget)}}><div className="form-grid"><Field label="公司名称 *" name="company_name" required/><Field label="国家/地区 *" name="country" required/><Field label="联系人 *" name="contact_person" required/><Field label="邮箱 *" name="email" type="email" required/><Field label="WhatsApp" name="whatsapp"/><Field label="产品兴趣" name="product_interest"/><Field label="下次跟进" name="next_followup_date" type="date"/><label className="wide">备注<textarea name="notes" placeholder="记录客户背景、需求或特别事项"/></label></div><div className="form-actions"><button type="button" onClick={close}>取消</button><button className="primary">创建客户</button></div></form></Modal> }
-function ProductForm({close}:{close:()=>void}) { return <Modal title="添加产品" close={close}><form onSubmit={e=>{e.preventDefault();close()}}><div className="form-grid"><Field label="产品名称 *" name="name" required/><Field label="产品编号 *" name="code" required/><Field label="分类" name="category"/><Field label="应用场景" name="application"/><label className="wide">产品描述<textarea placeholder="描述产品特性、优势与应用"/></label></div><div className="form-actions"><button type="button" onClick={close}>取消</button><button className="primary">保存产品</button></div></form></Modal> }
+function CustomerForm({close,submit}:{close:()=>void;submit:(f:HTMLFormElement)=>Promise<void>}) { return <Modal title="新建客户" close={close}><form onSubmit={async e=>{e.preventDefault();try { await submit(e.currentTarget) } catch (error) { alert(error instanceof Error ? error.message : '创建失败，请稍后重试。') }}}><div className="form-grid"><Field label="公司名称 *" name="company_name" required/><Field label="国家/地区 *" name="country" required/><Field label="联系人 *" name="contact_person" required/><Field label="邮箱 *" name="email" type="email" required/><Field label="WhatsApp" name="whatsapp"/><Field label="产品兴趣" name="product_interest"/><Field label="下次跟进" name="next_followup_date" type="date"/><label className="wide">备注<textarea name="notes" placeholder="记录客户背景、需求或特别事项"/></label></div><div className="form-actions"><button type="button" onClick={close}>取消</button><button className="primary">创建客户</button></div></form></Modal> }
+function ProductForm({close,submit}:{close:()=>void;submit:(f:HTMLFormElement)=>Promise<void>}) { return <Modal title="添加产品" close={close}><form onSubmit={async e=>{e.preventDefault();try { await submit(e.currentTarget) } catch (error) { alert(error instanceof Error ? error.message : '保存失败，请稍后重试。') }}}><div className="form-grid"><Field label="产品名称 *" name="product_name" required/><Field label="产品编号 *" name="product_code" required/><Field label="分类" name="category"/><Field label="应用场景" name="application"/><label className="wide">产品描述<textarea name="description" placeholder="描述产品特性、优势与应用"/><textarea name="notes" placeholder="内部备注（可选）"/></label></div><div className="form-actions"><button type="button" onClick={close}>取消</button><button className="primary">保存产品</button></div></form></Modal> }
 function Field({label,name,type='text',required=false}:{label:string;name:string;type?:string;required?:boolean}) { return <label>{label}<input name={name} type={type} required={required}/></label> }
 function Modal({title,close,children}:{title:string;close:()=>void;children:ReactNode}) { return <div className="modal-layer"><section className="modal"><div className="modal-head"><h2>{title}</h2><button className="close" onClick={close}><X size={20}/></button></div>{children}</section></div> }
 
@@ -82,7 +96,7 @@ function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
     event.preventDefault(); setLoading(true); setError('')
     const values = Object.fromEntries(new FormData(event.currentTarget))
     try {
-      const response = await fetch(`${apiBaseUrl}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) })
+      const response = await fetch(`${import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) })
       if (!response.ok) throw new Error('邮箱或密码不正确，请检查后重试。')
       const session = await response.json(); sessionStorage.setItem('zhiwu-access-token', session.access_token); onAuthenticated()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '暂时无法登录，请稍后重试。') } finally { setLoading(false) }

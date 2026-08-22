@@ -36,9 +36,17 @@ class LoginIn(BaseModel):
     email: str
     password: str
 
+class ProductIn(BaseModel):
+    product_name: str
+    product_code: str
+    category: str | None = None
+    application: str | None = None
+    description: str | None = None
+    notes: str | None = None
+
 async def supabase(path: str, token: str, method: str = "GET", payload: dict[str, Any] | None = None) -> Any:
     cfg = settings()
-    headers = {"apikey": cfg.supabase_anon_key, "Authorization": token, "Content-Type": "application/json"}
+    headers = {"apikey": cfg.supabase_anon_key, "Authorization": token, "Content-Type": "application/json", "Prefer": "return=representation"}
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.request(method, f"{cfg.supabase_url}/rest/v1/{path}", headers=headers, json=payload)
     if response.status_code >= 400: raise HTTPException(response.status_code, response.text)
@@ -77,3 +85,7 @@ async def create_customer(customer: CustomerIn, authorization: str | None = Head
 @app.get("/api/products")
 async def list_products(authorization: str | None = Header(default=None)):
     return await supabase("products?select=*&order=product_name.asc", bearer(authorization))
+
+@app.post("/api/products", status_code=201)
+async def create_product(product: ProductIn, authorization: str | None = Header(default=None)):
+    return await supabase("products", bearer(authorization), "POST", product.model_dump(exclude_none=True))
