@@ -14,6 +14,7 @@ const nav: [string, string, LucideIcon][] = [
   ['quotes', '报价管理', ClipboardList], ['assets', 'AI 资产', Sparkles], ['projects', '项目管理', Layers3],
 ]
 const stageLabels: Record<CustomerStage, string> = { New: '新线索', Inquiry: '询盘', Quoted: '已报价', Sample: '寄样中', Negotiation: '谈判中', Won: '已成交', Lost: '已流失' }
+const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
 function App() {
   const [authenticated, setAuthenticated] = useState(() => sessionStorage.getItem('zhiwu-demo-session') === 'active')
@@ -81,7 +82,7 @@ function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
     event.preventDefault(); setLoading(true); setError('')
     const values = Object.fromEntries(new FormData(event.currentTarget))
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) })
+      const response = await fetch(`${apiBaseUrl}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) })
       if (!response.ok) throw new Error('邮箱或密码不正确，请检查后重试。')
       const session = await response.json(); sessionStorage.setItem('zhiwu-access-token', session.access_token); onAuthenticated()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '暂时无法登录，请稍后重试。') } finally { setLoading(false) }
