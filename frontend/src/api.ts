@@ -36,4 +36,5 @@ export const api = {
   quotes: () => request<Quote[]>('/api/quotes').then(rows => rows.map(asQuote)),
   createQuote: (payload: Omit<Quote, 'id'>) => request<Quote[]>('/api/quotes', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asQuote(rows[0])),
   seedDemo: () => request<{ seeded: boolean }>('/api/demo/seed', { method: 'POST' }),
+  updatePassword: (password: string) => request<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', body: JSON.stringify({ password }) }),
 }

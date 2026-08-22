@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -39,6 +39,9 @@ class CustomerIn(BaseModel):
 class LoginIn(BaseModel):
     email: str
     password: str
+
+class PasswordIn(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
 
 class ProductIn(BaseModel):
     product_name: str
@@ -114,6 +117,20 @@ async def login(credentials: LoginIn):
     if response.status_code >= 400:
         raise HTTPException(401, "Invalid login")
     return response.json()
+
+@app.post("/api/auth/update-password")
+async def update_password(payload: PasswordIn, authorization: str | None = Header(default=None)):
+    """Change the password for the currently authenticated Supabase user."""
+    cfg = settings()
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.put(
+            f"{cfg.supabase_url}/auth/v1/user",
+            headers={"apikey": cfg.supabase_anon_key, "Authorization": bearer(authorization), "Content-Type": "application/json"},
+            json=payload.model_dump(),
+        )
+    if response.status_code >= 400:
+        raise HTTPException(response.status_code, "Password update failed. Please log in again and retry.")
+    return {"updated": True}
 
 @app.get("/health")
 def health(): return {"status": "ok"}
