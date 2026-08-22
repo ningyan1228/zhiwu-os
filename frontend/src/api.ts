@@ -1,4 +1,4 @@
-import type { Customer, Product } from './types'
+import type { Customer, Followup, Product, Project, Quote } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -19,10 +19,20 @@ async function request<T>(path: string, init: RequestInit = {}) {
 
 const asCustomer = (item: Customer): Customer => ({ ...item, whatsapp: item.whatsapp || '—', product_interest: item.product_interest || '—', last_contact_date: item.last_contact_date || '—', next_followup_date: item.next_followup_date || '—', notes: item.notes || '暂无备注' })
 const asProduct = (item: Product): Product => ({ ...item, category: item.category || '未分类', application: item.application || '—', description: item.description || '暂无描述', notes: item.notes || '' })
+const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
+const asProject = (item: Project): Project => ({ ...item, application: item.application || '应用待确认', notes: item.notes || '' })
+const asQuote = (item: Quote): Quote => ({ ...item, currency: item.currency || 'USD', quantity: item.quantity || '待确认', status: item.status || 'Draft' })
 
 export const api = {
   customers: () => request<Customer[]>('/api/customers').then(rows => rows.map(asCustomer)),
   createCustomer: (payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>('/api/customers', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
   products: () => request<Product[]>('/api/products').then(rows => rows.map(asProduct)),
   createProduct: (payload: Omit<Product, 'id'>) => request<Product[]>('/api/products', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asProduct(rows[0])),
+  updateCustomer: (id: string, payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>(`/api/customers/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
+  followups: () => request<Followup[]>('/api/followups').then(rows => rows.map(asFollowup)),
+  createFollowup: (payload: Omit<Followup, 'id'>) => request<Followup[]>('/api/followups', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asFollowup(rows[0])),
+  projects: () => request<Project[]>('/api/projects').then(rows => rows.map(asProject)),
+  createProject: (payload: Omit<Project, 'id'>) => request<Project[]>('/api/projects', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asProject(rows[0])),
+  quotes: () => request<Quote[]>('/api/quotes').then(rows => rows.map(asQuote)),
+  createQuote: (payload: Omit<Quote, 'id'>) => request<Quote[]>('/api/quotes', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asQuote(rows[0])),
 }

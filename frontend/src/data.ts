@@ -1,4 +1,4 @@
-import type { Customer, Followup, Product } from './types'
+import type { Customer, Followup, Product, Project, Quote } from './types'
 
 export const customers: Customer[] = [
   { id: 'c1', company_name: 'Uflex', country: 'India', contact_person: 'Dileep', email: 'dileep@uflex.co.in', whatsapp: '+91 98 221 8608', product_interest: 'NL-007', application: 'PPC Film / Food Packaging', customer_stage: 'Sample Payment Pending', priority: 'HIGH', status_label: '等待样品付款', status_tone: 'warning', last_contact_date: '2026-08-20', next_followup_date: '2026-08-22', notes: 'PPC Film / Cast Film / Food Packaging / Fresh Keeping Film', requirements: ['MFR 5–7', 'Film Thickness 20–30μm', 'OTR < 5', 'WVTR < 5'], current_progress: ['客户已确认性能指标', '25kg 样品需求', '样品 + 快递：USD 310'], next_action: ['发送 PI', 'QTY：1 bag', '确认付款'], sample_status: 'Sample payment pending · 25kg', created_at: '2026-08-08' },
@@ -21,4 +21,18 @@ export const products: Product[] = [
   { id: 'p3', product_name: 'HM-800', product_code: 'HM-800', category: 'Bio-based Polyester Plasticizer', application: 'PVC Film · Wire & Cable · Flexible Hose', description: '生物基聚酯增塑剂，兼顾材料柔韧性与低迁移表现。', notes: 'Active' },
   { id: 'p4', product_name: 'ESO', product_code: 'ESO', category: 'Epoxidized Soybean Oil', application: 'PVC Plasticizer', description: '环保型环氧大豆油，用于 PVC 增塑与稳定体系。', notes: 'Active' },
   { id: 'p5', product_name: 'MCPP', product_code: 'MCPP', category: 'Maleic Anhydride Modified Chlorinated Polypropylene', application: 'Adhesion Promoter', description: '马来酸酐改性氯化聚丙烯，用于 PP 基材的附着力改善。', notes: 'Active' },
+]
+
+export const projects: Project[] = [
+  { id: 'project-1', customer_id: 'c1', project_name: 'PPC Film Barrier Masterbatch', product_code: 'NL-007', application: 'Food Packaging', stage: 'Sample Payment Pending', notes: '25kg 样品，等待 PI 与付款确认。' },
+  { id: 'project-2', customer_id: 'c2', project_name: 'Water-based Barrier Coating Sample', product_code: 'NL-PHA-21', application: 'Water-based Barrier Coating', stage: 'Sample Payment', notes: '5kg 样品与快递费用 USD 150。' },
+  { id: 'project-3', customer_id: 'c3', project_name: 'E4050 Replacement Project', product_code: 'E4050 Replacement', application: 'Glassine Extrusion Coating', stage: 'Technical Testing', notes: '准备 2kg 测试样品与实验室评估。' },
+  { id: 'project-4', customer_id: 'c4', project_name: 'PFAS-free Paper Cup Barrier Coating', product_code: 'NL-PHA-21', application: 'Paper Cup Barrier Coating', stage: 'Technical Confirmation', notes: '等待确认 1–2L 技术样品。' },
+  { id: 'project-5', customer_id: 'c5', project_name: 'PP Adhesion Modification', product_code: 'MCPP', application: 'Polypropylene Adhesion Modification', stage: 'Maintain Relationship', notes: '年潜在需求 20 tons。' },
+  { id: 'project-6', customer_id: 'c6', project_name: 'Mundra Quotation Project', product_code: 'NL-PHA-21', application: 'Water-based Barrier Coating', stage: 'Quotation', notes: 'CIF Mundra 价格沟通中。' },
+]
+
+export const quotes: Quote[] = [
+  { id: 'quote-1', customer_id: 'c1', product_code: 'NL-007', quantity: '25kg', amount: 310, currency: 'USD', trade_term: 'Sample + Express', status: 'Pending Payment', created_at: '2026-08-21' },
+  { id: 'quote-2', customer_id: 'c6', product_code: 'NL-PHA-21', quantity: '18 tons / 20GP', amount: 5550, currency: 'USD', trade_term: 'CIF Mundra / T', status: 'Price Discussion', created_at: '2026-08-15' },
 ]
