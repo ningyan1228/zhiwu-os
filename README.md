@@ -1,5 +1,7 @@
 # Zhiwu OS
 
+完整功能与使用方法请见：[PRODUCT_MANUAL.md](PRODUCT_MANUAL.md)。
+
 一个为单人创业者设计的个人工作台 V1。当前版本覆盖 Dashboard、外贸 CRM、客户跟进和产品库，并提供可部署到个人服务器的 FastAPI API Gateway 骨架与 Supabase 数据库迁移。
 
 ## 本地运行
