@@ -43,8 +43,11 @@ function App() {
   const [relationProduct, setRelationProduct] = useState<Product | null>(null)
   const [query, setQuery] = useState('')
   const [globalQuery, setGlobalQuery] = useState('')
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const today = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${focusDate}T12:00:00`))
   const visibleCustomers = useMemo(() => customers.filter(c => `${c.company_name} ${c.country} ${c.contact_person} ${c.product_interest} ${c.application || ''} ${c.customer_summary || ''} ${c.customer_need || ''} ${(c.customer_tags || []).join(' ')}`.toLowerCase().includes(query.toLowerCase())), [customers, query])
+  const alertDate = new Date().toISOString().slice(0, 10)
+  const hasNotifications = tasks.some(task => task.task_date === alertDate && task.status !== 'Completed') || emails.some(email => ['unread', 'new_lead'].includes(email.status))
   useEffect(() => {
     if (!authenticated || !sessionStorage.getItem('zhiwu-access-token')) return
     const loadWorkspace = async () => {
@@ -203,6 +206,15 @@ function App() {
     window.history.replaceState(null, '', `${window.location.pathname}#mail/${email.id}`)
     setView('mail'); setSelectedEmail(email)
   }
+  const openNotificationTask = (task: Task) => {
+    setFocusDate(task.task_date)
+    setView('tasks')
+    setNotificationsOpen(false)
+  }
+  const openNotificationEmail = (email: MailEmail) => {
+    setNotificationsOpen(false)
+    openEmail(email)
+  }
   if (!authenticated) return <Login onAuthenticated={() => setAuthenticated(true)} />
   return <div className="app-shell">
     <aside className={`sidebar ${sidebar ? 'is-open' : ''}`}>
@@ -211,7 +223,7 @@ function App() {
       <div className="nav-bottom"><a href="https://notes.101921.xyz/" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开知识库"><CalendarDays size={18}/><span>知识库 ↗</span></a><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">Z</div><div><b>Zhiwu</b><small>Founder · 修改密码</small></div><ChevronRight size={16}/></button></div>
     </aside>
     <main>
-      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', mail: '邮件中心', products: '产品中心', relationships: '产品关系', tasks: '每日计划', calendar: '工作日历', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><button className="icon-button"><Bell size={19}/><i/></button><div className="avatar avatar-small">Z</div></div></header>
+      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', mail: '邮件中心', products: '产品中心', relationships: '产品关系', tasks: '每日计划', calendar: '工作日历', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="avatar avatar-small">Z</div></div></header>
       {globalQuery.trim() && <WorkspaceSearch query={globalQuery} customers={customers} products={products} projects={projects} emails={emails} close={() => setGlobalQuery('')} openCustomer={customer => { setView('crm'); setSelected(customer) }} openProduct={() => setView('products')} openProject={customer => { setView('projects'); setSelected(customer) }} openEmail={openEmail} />}
       {view === 'dashboard' && <Dashboard customers={customers} projects={projects} followups={followupRows} emails={emails} tasks={tasks} today={today} onOpenCRM={() => setView('crm')} onOpenMail={() => setView('mail')} onOpenTasks={() => setView('tasks')} onOpenProducts={() => setView('products')} openCustomer={setSelected} />}
       {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
@@ -235,6 +247,14 @@ function App() {
     {relationProduct && <ProductCustomerLinkModal product={relationProduct} customers={customers} relations={productCustomerRelations} close={() => setRelationProduct(null)} submit={linkProductCustomer} />}
     <nav className="mobile-bottom-nav" aria-label="移动快捷导航"><button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}><Home size={19}/><span>首页</span></button><button className={view === 'crm' ? 'active' : ''} onClick={() => setView('crm')}><Users size={19}/><span>客户</span></button><button className={view === 'mail' ? 'active' : ''} onClick={() => setView('mail')}><Mail size={19}/><span>邮件</span></button><button className={view === 'tasks' ? 'active' : ''} onClick={() => setView('tasks')}><CircleCheck size={19}/><span>任务</span></button><button onClick={() => setSidebar(true)}><MoreHorizontal size={20}/><span>更多</span></button></nav>
   </div>
+}
+
+function NotificationCenter({ tasks, emails, onOpenTask, onOpenEmail, onOpenTasks, onOpenMail }: { tasks: Task[]; emails: MailEmail[]; onOpenTask: (task: Task) => void; onOpenEmail: (email: MailEmail) => void; onOpenTasks: () => void; onOpenMail: () => void }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const todayTasks = tasks.filter(task => task.task_date === today && task.status !== 'Completed').sort((a, b) => `${a.start_time || ''}${a.title}`.localeCompare(`${b.start_time || ''}${b.title}`)).slice(0, 3)
+  const newEmails = emails.filter(email => ['unread', 'new_lead'].includes(email.status)).sort((a, b) => b.received_at.localeCompare(a.received_at)).slice(0, 3)
+  const total = todayTasks.length + newEmails.length
+  return <section className="notification-center" aria-label="工作提醒"><div className="notification-head"><div><p>WORKSPACE ALERTS</p><h2>提醒中心</h2></div>{total > 0 && <span>{total} 项待处理</span>}</div>{todayTasks.length > 0 && <div className="notification-group"><div className="notification-group-head"><b><CircleCheck size={15}/> 今日待办</b><button onClick={onOpenTasks}>查看全部</button></div>{todayTasks.map(task => <button className="notification-row" key={task.id} onClick={() => onOpenTask(task)}><span className={`notification-symbol ${task.priority}`}><ClipboardList size={14}/></span><div><b>{task.title}</b><small>{task.start_time ? `${task.start_time} · ` : ''}{task.category} · 待完成</small></div><ChevronRight size={15}/></button>)}</div>}{newEmails.length > 0 && <div className="notification-group"><div className="notification-group-head"><b><Mail size={15}/> 新邮件</b><button onClick={onOpenMail}>查看全部</button></div>{newEmails.map(email => <button className="notification-row" key={email.id} onClick={() => onOpenEmail(email)}><span className="notification-symbol mail"><Mail size={14}/></span><div><b>{email.sender_name || email.sender}</b><small>{email.subject || '无主题'}</small></div><time>{email.received_at.slice(5, 10)}</time><ChevronRight size={15}/></button>)}</div>}{total === 0 && <div className="notification-empty"><CircleCheck size={20}/><b>暂时没有需要处理的提醒</b><span>今天的待办和新邮件都会显示在这里。</span></div>}</section>
 }
 
 function WorkspaceSearch({ query, customers, products, projects, emails, close, openCustomer, openProduct, openProject, openEmail }: { query: string; customers: Customer[]; products: Product[]; projects: Project[]; emails: MailEmail[]; close: () => void; openCustomer: (customer: Customer) => void; openProduct: (product: Product) => void; openProject: (customer: Customer) => void; openEmail: (email: MailEmail) => void }) {
