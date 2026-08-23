@@ -9,7 +9,7 @@ export type Customer = {
   requirements?: string[]; project_background?: string[]; monthly_consumption?: string; quotation?: string[]
   sample_status?: string; timeline?: TimelineItem[]
   customer_summary?: string; customer_background?: string; customer_need?: string; important_notes?: string
-  customer_value?: number; customer_tags?: string[]; industry?: string
+  customer_value?: number; customer_tags?: string[]; industry?: string; website?: string; wechat?: string
 }
 
 export type Followup = { id: string; customer_id: string; date: string; content: string; next_action: string; status: 'Open' | 'Done' }

@@ -50,6 +50,7 @@ export const api = {
   createFollowup: (payload: Omit<Followup, 'id'>) => request<Followup[]>('/api/followups', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asFollowup(rows[0])),
   projects: () => request<Project[]>('/api/projects').then(rows => rows.map(asProject)),
   createProject: (payload: Omit<Project, 'id'>) => request<Project[]>('/api/projects', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asProject(rows[0])),
+  updateProject: (id: string, payload: Omit<Project, 'id' | 'customer_id' | 'created_at'>) => request<Project[]>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asProject(rows[0])),
   quotes: () => request<Quote[]>('/api/quotes').then(rows => rows.map(asQuote)),
   createQuote: (payload: Omit<Quote, 'id'>) => request<Quote[]>('/api/quotes', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asQuote(rows[0])),
   seedDemo: () => request<{ seeded: boolean }>('/api/demo/seed', { method: 'POST' }),

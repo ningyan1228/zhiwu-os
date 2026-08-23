@@ -46,6 +46,16 @@ class CustomerIn(BaseModel):
     status_tone: str | None = None
     next_followup_date: str | None = None
     notes: str | None = None
+    website: str | None = None
+    wechat: str | None = None
+    industry: str | None = None
+    customer_summary: str | None = None
+    customer_background: str | None = None
+    customer_need: str | None = None
+    important_notes: str | None = None
+    customer_value: int | None = Field(default=None, ge=1, le=5)
+    customer_tags: list[str] | None = None
+    next_action: list[str] | None = None
 
 class LoginIn(BaseModel):
     email: str
@@ -74,6 +84,13 @@ class FollowupIn(BaseModel):
 
 class ProjectIn(BaseModel):
     customer_id: str
+    project_name: str
+    product_id: str | None = None
+    application: str | None = None
+    stage: str = "New Inquiry"
+    notes: str | None = None
+
+class ProjectUpdateIn(BaseModel):
     project_name: str
     product_id: str | None = None
     application: str | None = None
@@ -304,6 +321,17 @@ async def create_project(project: ProjectIn, authorization: str | None = Header(
     token = bearer(authorization)
     rows = await supabase("projects", token, "POST", project.model_dump(exclude_none=True))
     await record_timeline_event(token, title=f"创建项目：{project.project_name}", event_type="project", source="project", related_id=rows[0]["id"], customer_id=project.customer_id, product_id=project.product_id)
+    return rows
+
+@app.patch("/api/projects/{project_id}")
+async def update_project(project_id: str, project: ProjectUpdateIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    existing = await supabase(f"projects?id=eq.{project_id}&select=id,customer_id", token)
+    if not existing:
+        raise HTTPException(404, "Project not found")
+    rows = await supabase(f"projects?id=eq.{project_id}", token, "PATCH", project.model_dump(exclude_none=True))
+    record = rows[0]
+    await record_timeline_event(token, title=f"更新项目：{record['project_name']}", event_type="project", source="project", related_id=record["id"], customer_id=existing[0]["customer_id"], product_id=record.get("product_id"))
     return rows
 
 @app.get("/api/tasks")
