@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from app.main import settings
+from app.main import is_internal_mail_address, settings
 
 logger = logging.getLogger("zhiwu.mail_sync")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -161,7 +161,10 @@ def _reconcile_existing_links(
     rows = store.request("GET", f"emails?user_id=eq.{owner_id}&customer_id=is.null&select=id,sender,sender_name,status&limit=500") or []
     linked = 0
     for row in rows:
-        customer_id = _resolve_customer(str(row.get("sender") or ""), row.get("sender_name"), customer_by_email, customer_by_contact)
+        sender = str(row.get("sender") or "")
+        if is_internal_mail_address(sender):
+            continue
+        customer_id = _resolve_customer(sender, row.get("sender_name"), customer_by_email, customer_by_contact)
         if not customer_id:
             continue
         project = project_by_customer.get(customer_id, {})
@@ -205,7 +208,9 @@ def sync_once() -> dict[str, int]:
                 message = BytesParser(policy=policy.default).parsebytes(raw)
                 sender_name, sender = parseaddr(message.get("From", ""))
                 sender = sender.lower()
-                customer_id = _resolve_customer(sender, sender_name, customer_by_email, customer_by_contact)
+                # A message forwarded by an internal colleague is business context,
+                # not proof that the colleague is the overseas customer.
+                customer_id = None if is_internal_mail_address(sender) else _resolve_customer(sender, sender_name, customer_by_email, customer_by_contact)
                 content = _text(message)
                 project = project_by_customer.get(customer_id or "", {})
                 message_id = message.get("Message-ID") or f"imap-{uid.decode(errors='ignore')}"

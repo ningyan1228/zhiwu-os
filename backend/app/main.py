@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     mail_password: str | None = None
     mail_folder: str = "INBOX"
     mail_owner_user_id: str | None = None
+    mail_internal_addresses: str = ""
     mail_sync_interval_seconds: int = 600
     mail_sync_max_messages: int = 100
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -166,6 +167,11 @@ def bearer(authorization: str | None) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing Supabase user token")
     return authorization
+
+def is_internal_mail_address(address: str | None) -> bool:
+    """Keep colleague-forwarded mail out of customer auto-matching."""
+    internal_addresses = {item.strip().lower() for item in settings().mail_internal_addresses.split(",") if item.strip()}
+    return (address or "").strip().lower() in internal_addresses
 
 async def record_timeline_event(
     token: str, *, title: str, event_type: Literal["task", "email", "crm", "project", "note"],
@@ -433,25 +439,27 @@ async def list_emails(
         filters.append(f"status=eq.{status}")
     if unlinked:
         filters.append("customer_id=is.null")
-    return await supabase(f"emails?{'&'.join(filters)}", bearer(authorization))
+    rows = await supabase(f"emails?{'&'.join(filters)}", bearer(authorization))
+    return [{**row, "is_internal_sender": is_internal_mail_address(row.get("sender"))} for row in rows]
 
 @app.get("/api/emails/unlinked")
 async def list_unlinked_emails(authorization: str | None = Header(default=None), limit: int = Query(200, le=200)):
-    return await supabase(f"emails?customer_id=is.null&select=*&order=received_at.desc&limit={limit}", bearer(authorization))
+    rows = await supabase(f"emails?customer_id=is.null&select=*&order=received_at.desc&limit={limit}", bearer(authorization))
+    return [{**row, "is_internal_sender": is_internal_mail_address(row.get("sender"))} for row in rows]
 
 @app.get("/api/emails/{email_id}")
 async def get_email(email_id: str, authorization: str | None = Header(default=None)):
     rows = await supabase(f"emails?id=eq.{email_id}&select=*", bearer(authorization))
     if not rows:
         raise HTTPException(404, "Email not found")
-    return rows[0]
+    return {**rows[0], "is_internal_sender": is_internal_mail_address(rows[0].get("sender"))}
 
 @app.patch("/api/emails/{email_id}")
 async def update_email_status(email_id: str, payload: EmailStatusIn, authorization: str | None = Header(default=None)):
     rows = await supabase(f"emails?id=eq.{email_id}", bearer(authorization), "PATCH", payload.model_dump())
     if not rows:
         raise HTTPException(404, "Email not found")
-    return rows[0]
+    return {**rows[0], "is_internal_sender": is_internal_mail_address(rows[0].get("sender"))}
 
 @app.post("/api/emails/{email_id}/link")
 async def link_email_to_customer(email_id: str, payload: EmailLinkIn, authorization: str | None = Header(default=None)):
@@ -465,19 +473,20 @@ async def link_email_to_customer(email_id: str, payload: EmailLinkIn, authorizat
     projects = await supabase(f"projects?customer_id=eq.{payload.customer_id}&select=id,product_id&order=created_at.desc&limit=1", token)
     project = projects[0] if projects else {}
     email = rows[0]
-    mapping_rows = await supabase(f"customer_email_mappings?email_address=eq.{quote(email['sender'], safe='')}&select=id", token)
-    mapping_payload = {"customer_id": payload.customer_id, "email_address": email["sender"], "contact_name": payload.contact_name or email.get("sender_name") or customer_rows[0].get("contact_person")}
-    if mapping_rows:
-        await supabase(f"customer_email_mappings?id=eq.{mapping_rows[0]['id']}", token, "PATCH", mapping_payload)
-    else:
-        await supabase("customer_email_mappings", token, "POST", mapping_payload)
+    if not is_internal_mail_address(email.get("sender")):
+        mapping_rows = await supabase(f"customer_email_mappings?email_address=eq.{quote(email['sender'], safe='')}&select=id", token)
+        mapping_payload = {"customer_id": payload.customer_id, "email_address": email["sender"], "contact_name": payload.contact_name or email.get("sender_name") or customer_rows[0].get("contact_person")}
+        if mapping_rows:
+            await supabase(f"customer_email_mappings?id=eq.{mapping_rows[0]['id']}", token, "PATCH", mapping_payload)
+        else:
+            await supabase("customer_email_mappings", token, "POST", mapping_payload)
     updated = await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {
         "customer_id": payload.customer_id,
         "project_id": project.get("id"),
         "product_id": project.get("product_id"),
         "status": "linked",
     })
-    return updated[0]
+    return {**updated[0], "is_internal_sender": is_internal_mail_address(updated[0].get("sender"))}
 
 @app.post("/api/emails/{email_id}/followups", status_code=201)
 async def create_followup_from_email(email_id: str, payload: EmailFollowupIn, authorization: str | None = Header(default=None)):
@@ -558,12 +567,13 @@ async def update_crm_from_email(email_id: str, payload: EmailCrmUpdateIn, author
         "status_label": payload.next_action,
         "product_interest": product_code,
     }))[0]
-    mapping_rows = await supabase(f"customer_email_mappings?email_address=eq.{quote(email['sender'], safe='')}&select=id", token)
-    mapping_payload = {"customer_id": payload.customer_id, "email_address": email["sender"], "contact_name": email.get("sender_name") or customer.get("contact_person")}
-    if mapping_rows:
-        await supabase(f"customer_email_mappings?id=eq.{mapping_rows[0]['id']}", token, "PATCH", mapping_payload)
-    else:
-        await supabase("customer_email_mappings", token, "POST", mapping_payload)
+    if not is_internal_mail_address(email.get("sender")):
+        mapping_rows = await supabase(f"customer_email_mappings?email_address=eq.{quote(email['sender'], safe='')}&select=id", token)
+        mapping_payload = {"customer_id": payload.customer_id, "email_address": email["sender"], "contact_name": email.get("sender_name") or customer.get("contact_person")}
+        if mapping_rows:
+            await supabase(f"customer_email_mappings?id=eq.{mapping_rows[0]['id']}", token, "PATCH", mapping_payload)
+        else:
+            await supabase("customer_email_mappings", token, "POST", mapping_payload)
     email_updated = (await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {
         "customer_id": payload.customer_id, "project_id": payload.project_id,
         "product_id": payload.product_id, "status": "followup_created",
@@ -589,7 +599,7 @@ async def update_crm_from_email(email_id: str, payload: EmailCrmUpdateIn, author
         except HTTPException:
             # Daily Focus tables may be introduced later; the CRM update remains valid.
             task = None
-    return {"email": email_updated, "customer": updated_customer, "project": project, "followup": followup, "task": task}
+    return {"email": {**email_updated, "is_internal_sender": is_internal_mail_address(email_updated.get("sender"))}, "customer": updated_customer, "project": project, "followup": followup, "task": task}
 
 @app.get("/api/email-sync")
 async def get_email_sync(authorization: str | None = Header(default=None)):

@@ -22,6 +22,7 @@ export type MailEmail = {
   id: string; message_id: string; sender: string; receiver?: string; sender_name?: string; subject: string
   content_preview?: string; content_text?: string; received_at: string; attachment_count: number
   customer_id?: string; project_id?: string; product_id?: string
+  is_internal_sender?: boolean
   status: 'unread' | 'new_lead' | 'linked' | 'followup_created' | 'completed'
   category: 'customer_inquiry' | 'technical' | 'quotation' | 'sample' | 'payment' | 'other'; created_at: string
 }
