@@ -37,3 +37,9 @@ export type Task = {
 }
 export type DailyLog = { id: string; log_date: string; summary?: string | null; problem?: string | null; tomorrow_plan?: string | null; rating?: number | null; created_at?: string; updated_at?: string }
 export type TimelineEvent = { id: string; event_date: string; event_time?: string | null; title: string; event_type: 'task' | 'email' | 'crm' | 'project' | 'note'; source: string; related_id?: string | null; customer_id?: string | null; project_id?: string | null; product_id?: string | null; created_at?: string }
+export type ImportAction = { entity: string; action: string; label: string; record_id?: string | null }
+export type ImportCustomerMatch = { kind: 'email_exact' | 'company_manual_review' | 'company_ambiguous' | 'internal_forwarder' | 'new_customer'; customer_id?: string | null; candidates: { id: string; company_name: string; email?: string | null }[]; requires_confirmation: boolean; message: string }
+export type ImportPreview = { customer_match: ImportCustomerMatch; actions: ImportAction[]; requires_human_confirmation: boolean; uncertain_fields: string[] }
+export type ImportBatch = { id: string; schema_version: string; source_type?: string; source_date?: string; source_reference?: string; preview?: ImportPreview; status: 'draft' | 'applied' | 'reverted' | 'failed'; applied_at?: string | null; reverted_at?: string | null; created_at: string }
+export type ImportPreviewResult = { batch: ImportBatch; preview: ImportPreview }
+export type ImportApplyResult = { batch_id: string; customer: Customer; customer_action: 'created' | 'updated'; project?: Project | null; products: Product[]; followup?: Followup | null; task?: Task | null }

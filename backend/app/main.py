@@ -155,6 +155,13 @@ class DailyLogIn(BaseModel):
     tomorrow_plan: str | None = Field(default=None, max_length=5000)
     rating: int | None = Field(default=None, ge=1, le=5)
 
+class ImportPreviewIn(BaseModel):
+    payload: dict[str, Any]
+
+class ImportApplyIn(BaseModel):
+    confirm_company_match: bool = False
+    selected_customer_id: str | None = None
+
 async def supabase(path: str, token: str, method: str = "GET", payload: dict[str, Any] | None = None) -> Any:
     cfg = settings()
     headers = {"apikey": cfg.supabase_anon_key, "Authorization": token, "Content-Type": "application/json", "Prefer": "return=representation"}
@@ -172,6 +179,100 @@ def is_internal_mail_address(address: str | None) -> bool:
     """Keep colleague-forwarded mail out of customer auto-matching."""
     internal_addresses = {item.strip().lower() for item in settings().mail_internal_addresses.split(",") if item.strip()}
     return (address or "").strip().lower() in internal_addresses
+
+def import_text(value: Any) -> str:
+    return str(value or "").strip()
+
+def import_key(value: Any) -> str:
+    return import_text(value).casefold()
+
+def import_nonempty(data: dict[str, Any]) -> dict[str, Any]:
+    """Do not let blank fields from a ChatGPT summary erase CRM fields."""
+    return {key: value for key, value in data.items() if value not in (None, "", [], {})}
+
+def import_date(value: Any, field: str, *, required: bool = False) -> str | None:
+    text = import_text(value)
+    if not text:
+        if required:
+            raise HTTPException(422, f"{field} is required")
+        return None
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError as exc:
+        raise HTTPException(422, f"{field} must use YYYY-MM-DD") from exc
+
+async def add_import_effect(
+    token: str, batch_id: str, *, entity_type: str, action: str, record_id: str,
+    before_data: dict[str, Any] | None, after_data: dict[str, Any] | None,
+) -> None:
+    await supabase("import_effects", token, "POST", {
+        "import_batch_id": batch_id, "entity_type": entity_type, "action": action,
+        "record_id": record_id, "before_data": before_data, "after_data": after_data,
+    })
+
+async def build_import_preview(token: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate a chat JSON packet and calculate its effects without writing CRM data."""
+    if payload.get("schema_version") != "zhiwu-os-import/v1":
+        raise HTTPException(422, "schema_version must be zhiwu-os-import/v1")
+    if payload.get("intent") != "upsert_customer_and_followup":
+        raise HTTPException(422, "intent must be upsert_customer_and_followup")
+    source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+    import_date(source.get("date"), "source.date", required=True)
+    customer = payload.get("customer") if isinstance(payload.get("customer"), dict) else {}
+    match = payload.get("match") if isinstance(payload.get("match"), dict) else {}
+    company_name = import_text(customer.get("company_name") or match.get("company_name"))
+    email = import_text(customer.get("email") or match.get("customer_email")).lower()
+    if not company_name and not email:
+        raise HTTPException(422, "customer.company_name or customer.email is required")
+    product_refs = payload.get("product_refs") if isinstance(payload.get("product_refs"), list) else []
+    for index, product in enumerate(product_refs):
+        if not isinstance(product, dict) or not import_text(product.get("code")).upper().startswith("NL-"):
+            raise HTTPException(422, f"product_refs[{index}].code must start with NL-")
+
+    customers = await supabase("customers?select=*&import_reverted=eq.false&limit=500", token)
+    products = await supabase("products?select=*&import_reverted=eq.false&limit=500", token)
+    email_matches = [row for row in customers if email and import_key(row.get("email")) == email]
+    company_matches = [row for row in customers if company_name and import_key(row.get("company_name")) == import_key(company_name)]
+    internal = is_internal_mail_address(email)
+    candidates = [{"id": row["id"], "company_name": row.get("company_name"), "email": row.get("email")} for row in company_matches]
+    if internal:
+        customer_match = {"kind": "internal_forwarder", "customer_id": None, "candidates": candidates, "requires_confirmation": True, "message": "内部同事邮箱不能自动创建或自动匹配客户；请人工选择真实客户。"}
+    elif email_matches:
+        customer_match = {"kind": "email_exact", "customer_id": email_matches[0]["id"], "candidates": [], "requires_confirmation": False, "message": "按邮箱精确匹配到现有客户。"}
+    elif len(company_matches) == 1:
+        customer_match = {"kind": "company_manual_review", "customer_id": company_matches[0]["id"], "candidates": candidates, "requires_confirmation": True, "message": "按公司名称找到可能的现有客户，必须人工确认后才会更新。"}
+    elif len(company_matches) > 1:
+        customer_match = {"kind": "company_ambiguous", "customer_id": None, "candidates": candidates, "requires_confirmation": True, "message": "存在多个同名客户，请人工选择。"}
+    else:
+        customer_match = {"kind": "new_customer", "customer_id": None, "candidates": [], "requires_confirmation": True, "message": "未匹配到现有客户；确认后将新建客户。"}
+
+    product_actions: list[dict[str, Any]] = []
+    for product in product_refs:
+        code = import_text(product.get("code")).upper()
+        existing = next((row for row in products if import_key(row.get("product_code")) == import_key(code)), None)
+        product_actions.append({"entity": "产品", "action": "更新" if existing else "新增", "label": f"{code} · {import_text(product.get('name')) or code}", "record_id": existing.get("id") if existing else None})
+
+    actions = [{"entity": "客户", "action": "更新" if customer_match["kind"] in ("email_exact", "company_manual_review") else "新增", "label": company_name or email}]
+    actions.extend(product_actions)
+    project = payload.get("project") if isinstance(payload.get("project"), dict) else {}
+    if import_text(project.get("name")):
+        project_action = "待确认"
+        if customer_match.get("customer_id"):
+            project_rows = await supabase(f"projects?customer_id=eq.{customer_match['customer_id']}&import_reverted=eq.false&select=id,project_name", token)
+            existing_project = next((row for row in project_rows if import_key(row.get("project_name")) == import_key(project.get("name"))), None)
+            project_action = "更新" if existing_project else "新增"
+        actions.append({"entity": "项目", "action": project_action, "label": import_text(project.get("name"))})
+    followup = payload.get("follow_up") if isinstance(payload.get("follow_up"), dict) else {}
+    if import_text(followup.get("content")):
+        actions.append({"entity": "跟进", "action": "新增", "label": import_text(followup.get("content"))[:100]})
+    task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+    if task.get("create") is True:
+        actions.append({"entity": "每日任务", "action": "新增", "label": import_text(task.get("title")) or "待补充任务标题"})
+    return {
+        "customer_match": customer_match, "actions": actions,
+        "requires_human_confirmation": bool(customer_match["requires_confirmation"] or (payload.get("review") or {}).get("requires_human_confirmation")),
+        "uncertain_fields": (payload.get("review") or {}).get("uncertain_fields") or [],
+    }
 
 async def record_timeline_event(
     token: str, *, title: str, event_type: Literal["task", "email", "crm", "project", "note"],
@@ -283,7 +384,7 @@ async def seed_demo(authorization: str | None = Header(default=None)):
 
 @app.get("/api/customers")
 async def list_customers(authorization: str | None = Header(default=None), limit: int = Query(100, le=100)):
-    return await supabase(f"customers?select=*&order=created_at.desc&limit={limit}", bearer(authorization))
+    return await supabase(f"customers?select=*&import_reverted=eq.false&order=created_at.desc&limit={limit}", bearer(authorization))
 
 @app.post("/api/customers", status_code=201)
 async def create_customer(customer: CustomerIn, authorization: str | None = Header(default=None)):
@@ -295,7 +396,7 @@ async def update_customer(customer_id: str, customer: CustomerIn, authorization:
 
 @app.get("/api/products")
 async def list_products(authorization: str | None = Header(default=None)):
-    return await supabase("products?select=*&order=product_name.asc", bearer(authorization))
+    return await supabase("products?select=*&import_reverted=eq.false&order=product_name.asc", bearer(authorization))
 
 @app.post("/api/products", status_code=201)
 async def create_product(product: ProductIn, authorization: str | None = Header(default=None)):
@@ -303,7 +404,7 @@ async def create_product(product: ProductIn, authorization: str | None = Header(
 
 @app.get("/api/product-customer-relations")
 async def list_product_customer_relations(authorization: str | None = Header(default=None)):
-    return await supabase("product_customer_relations?select=*&order=created_at.desc", bearer(authorization))
+    return await supabase("product_customer_relations?select=*&import_reverted=eq.false&order=created_at.desc", bearer(authorization))
 
 @app.post("/api/products/{product_id}/customers", status_code=201)
 async def link_product_to_customer(product_id: str, payload: ProductCustomerRelationIn, authorization: str | None = Header(default=None)):
@@ -312,7 +413,7 @@ async def link_product_to_customer(product_id: str, payload: ProductCustomerRela
     customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&select=id", token)
     if not product_rows or not customer_rows:
         raise HTTPException(404, "Product or customer not found")
-    existing = await supabase(f"product_customer_relations?product_id=eq.{product_id}&customer_id=eq.{payload.customer_id}&select=*", token)
+    existing = await supabase(f"product_customer_relations?product_id=eq.{product_id}&customer_id=eq.{payload.customer_id}&import_reverted=eq.false&select=*", token)
     if existing:
         return existing[0]
     rows = await supabase("product_customer_relations", token, "POST", {"product_id": product_id, "customer_id": payload.customer_id})
@@ -320,7 +421,7 @@ async def link_product_to_customer(product_id: str, payload: ProductCustomerRela
 
 @app.get("/api/followups")
 async def list_followups(authorization: str | None = Header(default=None)):
-    return await supabase("followups?select=*&order=date.desc", bearer(authorization))
+    return await supabase("followups?select=*&import_reverted=eq.false&order=date.desc", bearer(authorization))
 
 @app.post("/api/followups", status_code=201)
 async def create_followup(followup: FollowupIn, authorization: str | None = Header(default=None)):
@@ -331,7 +432,7 @@ async def create_followup(followup: FollowupIn, authorization: str | None = Head
 
 @app.get("/api/projects")
 async def list_projects(authorization: str | None = Header(default=None)):
-    return await supabase("projects?select=*&order=created_at.desc", bearer(authorization))
+    return await supabase("projects?select=*&import_reverted=eq.false&order=created_at.desc", bearer(authorization))
 
 @app.post("/api/projects", status_code=201)
 async def create_project(project: ProjectIn, authorization: str | None = Header(default=None)):
@@ -356,7 +457,7 @@ async def list_tasks(
     authorization: str | None = Header(default=None), task_date: str | None = None,
     from_date: str | None = Query(default=None), to_date: str | None = Query(default=None),
 ):
-    filters = ["select=*", "order=task_date.asc,start_time.asc"]
+    filters = ["select=*", "import_reverted=eq.false", "order=task_date.asc,start_time.asc"]
     if task_date:
         filters.append(f"task_date=eq.{task_date}")
     if from_date:
@@ -408,7 +509,7 @@ async def list_timeline(
     authorization: str | None = Header(default=None), event_date: str | None = None,
     from_date: str | None = Query(default=None), to_date: str | None = Query(default=None), limit: int = Query(300, le=500),
 ):
-    filters = ["select=*", "order=event_date.desc,event_time.desc", f"limit={limit}"]
+    filters = ["select=*", "import_reverted=eq.false", "order=event_date.desc,event_time.desc", f"limit={limit}"]
     if event_date:
         filters.append(f"event_date=eq.{event_date}")
     if from_date:
@@ -416,6 +517,184 @@ async def list_timeline(
     if to_date:
         filters.append(f"event_date=lte.{to_date}")
     return await supabase(f"timeline_events?{'&'.join(filters)}", bearer(authorization))
+
+@app.get("/api/imports")
+async def list_import_batches(authorization: str | None = Header(default=None), limit: int = Query(20, le=100)):
+    return await supabase(f"import_batches?select=id,schema_version,source_type,source_date,source_reference,preview,status,applied_at,reverted_at,created_at&order=created_at.desc&limit={limit}", bearer(authorization))
+
+@app.post("/api/imports/preview", status_code=201)
+async def preview_import(payload: ImportPreviewIn, authorization: str | None = Header(default=None)):
+    """Create a draft import batch. This endpoint never touches CRM business records."""
+    token = bearer(authorization)
+    preview = await build_import_preview(token, payload.payload)
+    source = payload.payload.get("source") or {}
+    rows = await supabase("import_batches", token, "POST", {
+        "schema_version": payload.payload["schema_version"],
+        "source_type": import_text(source.get("type")) or "chat_summary",
+        "source_date": import_date(source.get("date"), "source.date", required=True),
+        "source_reference": import_text(source.get("reference")),
+        "raw_payload": payload.payload, "preview": preview, "status": "draft",
+    })
+    return {"batch": rows[0], "preview": preview}
+
+@app.post("/api/imports/{batch_id}/apply")
+async def apply_import(batch_id: str, confirmation: ImportApplyIn, authorization: str | None = Header(default=None)):
+    """Apply one approved draft. Every created or changed row gets an import effect log."""
+    token = bearer(authorization)
+    batch_rows = await supabase(f"import_batches?id=eq.{batch_id}&select=*", token)
+    if not batch_rows:
+        raise HTTPException(404, "Import batch not found")
+    batch = batch_rows[0]
+    if batch.get("status") != "draft":
+        raise HTTPException(409, "Only a draft import can be applied")
+    payload = batch.get("raw_payload") or {}
+    preview = await build_import_preview(token, payload)
+    match = preview["customer_match"]
+    customer_data = payload.get("customer") or {}
+    source = payload.get("source") or {}
+    source_date = import_date(source.get("date"), "source.date", required=True) or str(date.today())
+    selected_customer_id = confirmation.selected_customer_id or match.get("customer_id")
+    if match["kind"] == "internal_forwarder" and not confirmation.selected_customer_id:
+        raise HTTPException(422, "内部同事转发邮件必须人工选择真实客户，不能自动创建客户")
+    if match["kind"] in ("company_manual_review", "company_ambiguous") and not (confirmation.confirm_company_match or confirmation.selected_customer_id):
+        raise HTTPException(422, "公司名称匹配必须人工确认后才能更新客户")
+    if match["kind"] == "company_ambiguous" and not confirmation.selected_customer_id:
+        raise HTTPException(422, "请从同名客户中选择一个目标客户")
+
+    active_customers = await supabase("customers?select=*&import_reverted=eq.false&limit=500", token)
+    if selected_customer_id:
+        customer_rows = [row for row in active_customers if row["id"] == selected_customer_id]
+        if not customer_rows:
+            raise HTTPException(422, "所选客户不存在或已撤销")
+        customer = customer_rows[0]
+        customer_values = import_nonempty({
+            "company_name": import_text(customer_data.get("company_name")), "country": import_text(customer_data.get("country")),
+            "contact_person": import_text(customer_data.get("contact_name")), "email": import_text(customer_data.get("email")).lower(),
+            "whatsapp": import_text(customer_data.get("wechat_or_whatsapp")), "industry": import_text(customer_data.get("industry")),
+            "customer_summary": import_text(customer_data.get("summary")), "customer_background": import_text(customer_data.get("background")),
+            "customer_need": import_text(customer_data.get("current_need")), "priority": {"high": "HIGH", "medium": "MEDIUM", "low": "MEDIUM"}.get(import_key(customer_data.get("priority")), import_text(customer_data.get("priority"))),
+            "customer_value": customer_data.get("customer_value") if isinstance(customer_data.get("customer_value"), int) else None,
+            "customer_stage": import_text(customer_data.get("stage")), "status_label": import_text(customer_data.get("status_text")),
+            "customer_tags": customer_data.get("tags") if isinstance(customer_data.get("tags"), list) else None,
+            "next_action": [import_text(customer_data.get("next_action"))] if import_text(customer_data.get("next_action")) else None,
+            "next_followup_date": import_date(customer_data.get("next_follow_up_date"), "customer.next_follow_up_date"),
+            "last_contact_date": source_date,
+        })
+        # A forwarded internal address may identify context, but it must never
+        # overwrite the real customer's CRM email.
+        if is_internal_mail_address(import_text(customer_data.get("email") or (payload.get("match") or {}).get("customer_email"))):
+            customer_values.pop("email", None)
+        before = {key: customer.get(key) for key in customer_values}
+        customer = (await supabase(f"customers?id=eq.{customer['id']}", token, "PATCH", customer_values))[0]
+        await add_import_effect(token, batch_id, entity_type="customer", action="updated", record_id=customer["id"], before_data=before, after_data=customer_values)
+        customer_action = "updated"
+    else:
+        company_name = import_text(customer_data.get("company_name") or (payload.get("match") or {}).get("company_name"))
+        email = import_text(customer_data.get("email") or (payload.get("match") or {}).get("customer_email")).lower()
+        if not company_name:
+            raise HTTPException(422, "新建客户必须提供 company_name")
+        if is_internal_mail_address(email):
+            raise HTTPException(422, "内部同事邮箱不能创建为客户")
+        customer_values = {
+            "company_name": company_name, "country": import_text(customer_data.get("country")) or "待确认",
+            "contact_person": import_text(customer_data.get("contact_name")) or "待确认", "email": email or "待确认",
+            "whatsapp": import_text(customer_data.get("wechat_or_whatsapp")) or None, "industry": import_text(customer_data.get("industry")) or None,
+            "customer_summary": import_text(customer_data.get("summary")) or None, "customer_background": import_text(customer_data.get("background")) or None,
+            "customer_need": import_text(customer_data.get("current_need")) or None,
+            "priority": {"high": "HIGH", "medium": "MEDIUM", "low": "MEDIUM"}.get(import_key(customer_data.get("priority")), "MEDIUM"),
+            "customer_value": customer_data.get("customer_value") if isinstance(customer_data.get("customer_value"), int) else 3,
+            "customer_stage": import_text(customer_data.get("stage")) or "New", "status_label": import_text(customer_data.get("status_text")) or None,
+            "customer_tags": customer_data.get("tags") if isinstance(customer_data.get("tags"), list) else [],
+            "next_action": [import_text(customer_data.get("next_action"))] if import_text(customer_data.get("next_action")) else [],
+            "next_followup_date": import_date(customer_data.get("next_follow_up_date"), "customer.next_follow_up_date"),
+            "last_contact_date": source_date, "import_batch_id": batch_id,
+        }
+        customer = (await supabase("customers", token, "POST", customer_values))[0]
+        await add_import_effect(token, batch_id, entity_type="customer", action="created", record_id=customer["id"], before_data=None, after_data=customer_values)
+        customer_action = "created"
+
+    product_refs = payload.get("product_refs") or []
+    product_records: list[dict[str, Any]] = []
+    active_products = await supabase("products?select=*&import_reverted=eq.false&limit=500", token)
+    for product_data in product_refs:
+        code = import_text(product_data.get("code")).upper()
+        existing = next((row for row in active_products if import_key(row.get("product_code")) == import_key(code)), None)
+        values = import_nonempty({"product_name": import_text(product_data.get("name")) or code, "product_code": code, "category": import_text(product_data.get("category")), "application": import_text(product_data.get("application"))})
+        if existing:
+            before = {key: existing.get(key) for key in values}
+            product = (await supabase(f"products?id=eq.{existing['id']}", token, "PATCH", values))[0]
+            await add_import_effect(token, batch_id, entity_type="product", action="updated", record_id=product["id"], before_data=before, after_data=values)
+        else:
+            product = (await supabase("products", token, "POST", {**values, "notes": "由 AI 导入暂存箱创建", "import_batch_id": batch_id}))[0]
+            await add_import_effect(token, batch_id, entity_type="product", action="created", record_id=product["id"], before_data=None, after_data=values)
+        product_records.append(product)
+        relation_rows = await supabase(f"product_customer_relations?product_id=eq.{product['id']}&customer_id=eq.{customer['id']}&select=*&limit=1", token)
+        if not relation_rows:
+            relation = (await supabase("product_customer_relations", token, "POST", {"product_id": product["id"], "customer_id": customer["id"], "import_batch_id": batch_id}))[0]
+            await add_import_effect(token, batch_id, entity_type="product_customer_relation", action="created", record_id=relation["id"], before_data=None, after_data={"product_id": product["id"], "customer_id": customer["id"]})
+
+    product = product_records[0] if product_records else None
+    project_data = payload.get("project") or {}
+    project = None
+    project_name = import_text(project_data.get("name"))
+    if project_name:
+        project_rows = await supabase(f"projects?customer_id=eq.{customer['id']}&import_reverted=eq.false&select=*", token)
+        existing_project = next((row for row in project_rows if import_key(row.get("project_name")) == import_key(project_name)), None)
+        project_values = import_nonempty({"project_name": project_name, "product_id": product.get("id") if product else None, "application": import_text(project_data.get("application")), "stage": import_text(project_data.get("stage")) or import_text(customer_data.get("stage")), "notes": import_text(project_data.get("notes"))})
+        if existing_project:
+            before = {key: existing_project.get(key) for key in project_values}
+            project = (await supabase(f"projects?id=eq.{existing_project['id']}", token, "PATCH", project_values))[0]
+            await add_import_effect(token, batch_id, entity_type="project", action="updated", record_id=project["id"], before_data=before, after_data=project_values)
+        else:
+            project = (await supabase("projects", token, "POST", {**project_values, "customer_id": customer["id"], "import_batch_id": batch_id}))[0]
+            await add_import_effect(token, batch_id, entity_type="project", action="created", record_id=project["id"], before_data=None, after_data=project_values)
+
+    followup_data = payload.get("follow_up") or {}
+    followup = None
+    if import_text(followup_data.get("content")):
+        followup_values = {"customer_id": customer["id"], "date": import_date(followup_data.get("date"), "follow_up.date") or source_date, "content": import_text(followup_data.get("content")), "next_action": import_text(followup_data.get("next_action")) or import_text(customer_data.get("next_action")) or "安排下一步行动", "status": import_text(followup_data.get("status")) or "Open", "import_batch_id": batch_id}
+        followup = (await supabase("followups", token, "POST", followup_values))[0]
+        await add_import_effect(token, batch_id, entity_type="followup", action="created", record_id=followup["id"], before_data=None, after_data=followup_values)
+
+    task_data = payload.get("task") or {}
+    task = None
+    if task_data.get("create") is True:
+        title = import_text(task_data.get("title"))
+        if not title:
+            raise HTTPException(422, "task.title is required when task.create is true")
+        task_values = {"title": title, "description": import_text(task_data.get("description")) or None, "category": import_text(task_data.get("category")) or "外贸", "priority": {"重要": "important", "普通": "normal", "低": "low"}.get(import_text(task_data.get("priority")), "normal"), "status": "Pending", "task_date": import_date(task_data.get("due_date"), "task.due_date") or source_date, "customer_id": customer["id"], "project_id": project.get("id") if project else None, "product_id": product.get("id") if product else None, "import_batch_id": batch_id}
+        task = (await supabase("tasks", token, "POST", task_values))[0]
+        await add_import_effect(token, batch_id, entity_type="task", action="created", record_id=task["id"], before_data=None, after_data=task_values)
+
+    timeline_values = {"event_date": source_date, "event_time": datetime.now().strftime("%H:%M:%S"), "title": f"AI 导入确认：{customer.get('company_name')} · {import_text(followup_data.get('content')) or import_text(customer_data.get('next_action')) or '更新客户资料'}", "event_type": "crm", "source": "ai_import", "related_id": followup.get("id") if followup else customer["id"], "customer_id": customer["id"], "project_id": project.get("id") if project else None, "product_id": product.get("id") if product else None, "import_batch_id": batch_id}
+    timeline = (await supabase("timeline_events", token, "POST", timeline_values))[0]
+    await add_import_effect(token, batch_id, entity_type="timeline", action="created", record_id=timeline["id"], before_data=None, after_data=timeline_values)
+    await supabase(f"import_batches?id=eq.{batch_id}", token, "PATCH", {"status": "applied", "applied_at": datetime.now().isoformat(), "preview": preview})
+    return {"batch_id": batch_id, "customer": customer, "customer_action": customer_action, "project": project, "products": product_records, "followup": followup, "task": task}
+
+@app.post("/api/imports/{batch_id}/revert")
+async def revert_import(batch_id: str, authorization: str | None = Header(default=None)):
+    """Reverse one batch without hard-deleting any business row."""
+    token = bearer(authorization)
+    batch_rows = await supabase(f"import_batches?id=eq.{batch_id}&select=*", token)
+    if not batch_rows:
+        raise HTTPException(404, "Import batch not found")
+    if batch_rows[0].get("status") != "applied":
+        raise HTTPException(409, "Only an applied import can be reverted")
+    effects = await supabase(f"import_effects?import_batch_id=eq.{batch_id}&reverted_at=is.null&select=*&order=created_at.desc", token)
+    table_by_entity = {"customer": "customers", "project": "projects", "product": "products", "product_customer_relation": "product_customer_relations", "followup": "followups", "task": "tasks", "timeline": "timeline_events"}
+    now = datetime.now().isoformat()
+    for effect in effects:
+        table = table_by_entity[effect["entity_type"]]
+        if effect["action"] == "updated":
+            before = effect.get("before_data") or {}
+            if before:
+                await supabase(f"{table}?id=eq.{effect['record_id']}", token, "PATCH", before)
+        else:
+            await supabase(f"{table}?id=eq.{effect['record_id']}", token, "PATCH", {"import_reverted": True})
+        await supabase(f"import_effects?id=eq.{effect['id']}", token, "PATCH", {"reverted_at": now})
+    await supabase(f"import_batches?id=eq.{batch_id}", token, "PATCH", {"status": "reverted", "reverted_at": now})
+    return {"batch_id": batch_id, "reverted_effects": len(effects), "message": "已撤销本次导入影响；业务记录未被硬删除。"}
 
 @app.get("/api/quotes")
 async def list_quotes(authorization: str | None = Header(default=None)):

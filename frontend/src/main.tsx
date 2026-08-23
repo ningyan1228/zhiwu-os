@@ -2,17 +2,17 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { createRoot } from 'react-dom/client'
 import {
   ArrowUpRight, Bell, CalendarDays, Check, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleHelp, ClipboardList, Clock3, Flame, Grid2X2,
-  Brain, Globe2, Home, Layers3, Mail, Menu, MoreHorizontal, Network, Package, Paperclip, Plus, RefreshCw, Search, Settings, Sparkles, Star, Users, X, type LucideIcon
+  Brain, Globe2, Home, Inbox, Layers3, Mail, Menu, MoreHorizontal, Network, Package, Paperclip, Plus, RefreshCw, Search, Settings, Sparkles, Star, Users, X, type LucideIcon
 } from 'lucide-react'
 import { customers as seedCustomers, followups as seedFollowups, products as seedProducts, projects as seedProjects, quotes as seedQuotes } from './data'
 import { api } from './api'
-import type { Customer, CustomerStage, DailyLog, EmailSync, Followup, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
+import type { Customer, CustomerStage, DailyLog, EmailSync, Followup, ImportBatch, ImportPreview, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
 import './styles.css'
 
-type View = 'dashboard' | 'crm' | 'mail' | 'products' | 'relationships' | 'projects' | 'tasks' | 'calendar'
+type View = 'dashboard' | 'crm' | 'mail' | 'products' | 'relationships' | 'projects' | 'tasks' | 'calendar' | 'imports'
 const nav: [string, string, LucideIcon][] = [
   ['dashboard', '总览', Grid2X2], ['crm', '外贸 CRM', Users], ['mail', '邮件中心', Mail], ['products', '产品中心', Package],
-  ['relationships', '产品关系', Network], ['quotes', '报价管理', ClipboardList], ['assets', 'AI 资产', Sparkles], ['tasks', '每日计划', ClipboardList], ['calendar', '工作日历', CalendarDays], ['projects', '项目管理', Layers3],
+  ['relationships', '产品关系', Network], ['quotes', '报价管理', ClipboardList], ['assets', 'AI 资产', Sparkles], ['imports', 'AI 导入暂存箱', Inbox], ['tasks', '每日计划', ClipboardList], ['calendar', '工作日历', CalendarDays], ['projects', '项目管理', Layers3],
 ]
 const stageLabels: Record<CustomerStage, string> = {
   New: '新线索', Inquiry: '询盘', Quoted: '已报价', Sample: '寄样中', Negotiation: '谈判中', Won: '已成交', Lost: '已流失',
@@ -20,7 +20,6 @@ const stageLabels: Record<CustomerStage, string> = {
   'Sample Payment': 'Sample Payment', 'Sample Payment Pending': 'Sample Payment Pending',
   'Technical Testing': 'Technical Testing', 'Technical Confirmation': 'Technical Confirmation', 'Maintain Relationship': 'Maintain Relationship',
 }
-
 function App() {
   const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('zhiwu-access-token')))
   const [view, setView] = useState<View>(() => window.location.hash.startsWith('#mail') ? 'mail' : 'dashboard')
@@ -219,15 +218,16 @@ function App() {
   return <div className="app-shell">
     <aside className={`sidebar ${sidebar ? 'is-open' : ''}`}>
       <div className="brand"><div className="brand-mark"><img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="干就是学工作站"/></div><div><strong>干就是学</strong><span>工作站</span></div><button className="mobile-close" onClick={() => setSidebar(false)}><X size={18}/></button></div>
-      <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'mail' || key === 'products' || key === 'relationships' || key === 'projects' || key === 'tasks' || key === 'calendar') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && <em>5</em>}</button>)}</nav>
+      <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'mail' || key === 'products' || key === 'relationships' || key === 'projects' || key === 'tasks' || key === 'calendar' || key === 'imports') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && <em>5</em>}</button>)}</nav>
       <div className="nav-bottom"><a href="https://notes.101921.xyz/" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开知识库"><CalendarDays size={18}/><span>知识库 ↗</span></a><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">Z</div><div><b>Zhiwu</b><small>Founder · 修改密码</small></div><ChevronRight size={16}/></button></div>
     </aside>
     <main>
-      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', mail: '邮件中心', products: '产品中心', relationships: '产品关系', tasks: '每日计划', calendar: '工作日历', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="avatar avatar-small">Z</div></div></header>
+      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', mail: '邮件中心', products: '产品中心', relationships: '产品关系', imports: 'AI 导入暂存箱', tasks: '每日计划', calendar: '工作日历', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="avatar avatar-small">Z</div></div></header>
       {globalQuery.trim() && <WorkspaceSearch query={globalQuery} customers={customers} products={products} projects={projects} emails={emails} close={() => setGlobalQuery('')} openCustomer={customer => { setView('crm'); setSelected(customer) }} openProduct={() => setView('products')} openProject={customer => { setView('projects'); setSelected(customer) }} openEmail={openEmail} />}
       {view === 'dashboard' && <Dashboard customers={customers} projects={projects} followups={followupRows} emails={emails} tasks={tasks} today={today} onOpenCRM={() => setView('crm')} onOpenMail={() => setView('mail')} onOpenTasks={() => setView('tasks')} onOpenProducts={() => setView('products')} openCustomer={setSelected} />}
       {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
       {view === 'mail' && <MailCenter emails={emails} sync={emailSync} customers={customers} projects={projects} products={products} open={openEmail} />}
+      {view === 'imports' && <ImportInbox customers={customers} afterApplied={async () => { const [customerRows, productRows, loadedFollowups, loadedProjects, taskRows, events] = await Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.tasks(), api.timeline()]); setCustomers(customerRows); setProducts(productRows); setFollowupRows(loadedFollowups); setProjects(loadedProjects); setTasks(taskRows); setTimelineEvents(events) }} />}
       {view === 'products' && <Products products={products} create={() => setModal('product')} />}
       {view === 'relationships' && <RelationshipMatrix products={products} customers={customers} projects={projects} relations={productCustomerRelations} openCustomer={setSelected} linkCustomer={setRelationProduct} />}
       {view === 'projects' && <ProjectManagement projects={projects} customers={customers} products={products} quotes={quotes} openCustomer={setSelected} />}
@@ -376,6 +376,55 @@ function ProjectManagement({ projects, customers, products, quotes, openCustomer
     })}</div>{!projects.length && <div className="empty">还没有项目，请先在 CRM 中创建客户和项目。</div>}</section>
 }
 
+function ImportInbox({ customers, afterApplied }: { customers: Customer[]; afterApplied: () => Promise<void> }) {
+  const [raw, setRaw] = useState('')
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
+  const [batch, setBatch] = useState<ImportBatch | null>(null)
+  const [batches, setBatches] = useState<ImportBatch[]>([])
+  const [selectedCustomerId, setSelectedCustomerId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const loadBatches = async () => setBatches(await api.imports())
+  useEffect(() => { void loadBatches().catch(reason => console.info('Import history is waiting for its database migration.', reason)) }, [])
+  const createPreview = async () => {
+    setError(''); setPreview(null); setBatch(null); setSelectedCustomerId('')
+    let payload: Record<string, unknown>
+    try { payload = JSON.parse(raw) as Record<string, unknown> } catch { setError('JSON 格式无效。请复制完整的数据包，不要带 Markdown 代码围栏。'); return }
+    setBusy(true)
+    try {
+      const result = await api.previewImport(payload)
+      setPreview(result.preview); setBatch(result.batch)
+      if (result.preview.customer_match.customer_id) setSelectedCustomerId(result.preview.customer_match.customer_id)
+      await loadBatches()
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '暂存校验失败，请检查 JSON。') } finally { setBusy(false) }
+  }
+  const apply = async () => {
+    if (!batch || !preview) return
+    const needsSelection = preview.customer_match.kind === 'internal_forwarder' || preview.customer_match.kind === 'company_ambiguous'
+    if (needsSelection && !selectedCustomerId) { setError('请先选择真实的海外客户；内部同事邮箱不会被建立为客户。'); return }
+    setBusy(true); setError('')
+    try {
+      await api.applyImport(batch.id, { confirm_company_match: preview.customer_match.requires_confirmation, selected_customer_id: selectedCustomerId || undefined })
+      await afterApplied(); await loadBatches()
+      setBatch(null); setPreview(null); setRaw('')
+      alert('已确认导入：CRM、跟进、时间线以及可选的每日任务均已更新。')
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '导入失败，请稍后重试。') } finally { setBusy(false) }
+  }
+  const revert = async (item: ImportBatch) => {
+    if (!confirm(`撤销 ${item.source_reference || '这次导入'} 的业务影响？不会硬删除业务数据。`)) return
+    setBusy(true); setError('')
+    try { const result = await api.revertImport(item.id); await afterApplied(); await loadBatches(); alert(result.message) } catch (reason) { setError(reason instanceof Error ? reason.message : '撤销失败，请稍后重试。') } finally { setBusy(false) }
+  }
+  const match = preview?.customer_match
+  const requiresCustomerChoice = match?.kind === 'internal_forwarder' || match?.kind === 'company_ambiguous'
+  return <section className="page import-page"><div className="page-heading"><div><p className="eyebrow"><Inbox size={13}/> AI IMPORT INBOX</p><h1>AI 导入暂存箱</h1><p>把 ChatGPT 整理出的标准 JSON 先放进暂存箱。只有你预览并确认后，才会写入 CRM。</p></div></div>
+    <div className="import-safety"><CircleHelp size={17}/><div><b>不自动猜测、不直接写入</b><span>邮箱精确匹配可更新；公司名匹配必须由你确认。Peter 等内部同事邮箱永远不能自动创建为客户。</span></div></div>
+    <div className="import-layout"><div className="import-editor panel"><div className="panel-title"><div><p className="eyebrow">STEP 1</p><h2>粘贴 JSON 数据包</h2></div></div><textarea value={raw} onChange={event => setRaw(event.target.value)} spellCheck={false} placeholder={'{\n  "schema_version": "zhiwu-os-import/v1",\n  "intent": "upsert_customer_and_followup",\n  ...\n}'} /><p>要求：产品编号必须以 <code>NL-</code> 开头；请使用既定导入结构。</p><button className="primary" disabled={busy || !raw.trim()} onClick={() => void createPreview()}><RefreshCw size={16}/> {busy ? '正在校验…' : '校验并生成预览'}</button>{error && <div className="login-error">{error}</div>}</div>
+      <div className="import-preview panel"><div className="panel-title"><div><p className="eyebrow">STEP 2</p><h2>预览差异</h2></div>{batch && <span className="draft-badge">暂存草稿</span>}</div>{!preview ? <div className="focus-empty"><Inbox size={23}/><b>等待导入数据</b><span>系统会先告诉你将新增或更新哪些业务记录。</span></div> : <><div className={`import-match ${match?.kind || ''}`}><b>客户匹配：{match?.kind === 'email_exact' ? '邮箱精确匹配' : match?.kind === 'company_manual_review' ? '公司名称待确认' : match?.kind === 'company_ambiguous' ? '公司名称存在歧义' : match?.kind === 'internal_forwarder' ? '内部同事转发' : '将新建客户'}</b><span>{match?.message}</span></div>{requiresCustomerChoice && <label className="import-select">选择真实客户<select value={selectedCustomerId} onChange={event => setSelectedCustomerId(event.target.value)}><option value="">请选择客户</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.company_name} · {customer.country} · {customer.contact_person}</option>)}</select></label>}{match?.kind === 'company_manual_review' && <label className="import-select">确认要更新的客户<select value={selectedCustomerId} onChange={event => setSelectedCustomerId(event.target.value)}>{match.candidates.map(customer => <option key={customer.id} value={customer.id}>{customer.company_name} · {customer.email || '无邮箱'}</option>)}</select></label>}<div className="import-actions">{preview.actions.map((action, index) => <div key={`${action.entity}-${index}`}><span className={action.action === '更新' ? 'update' : ''}>{action.action}</span><b>{action.entity}</b><p>{action.label}</p></div>)}</div>{preview.uncertain_fields.length > 0 && <p className="import-uncertain">待你确认：{preview.uncertain_fields.join('、')}</p>}<button className="primary" disabled={busy} onClick={() => void apply()}><Check size={16}/> 确认写入 CRM</button></>}</div></div>
+    <div className="panel import-history"><div className="panel-title"><div><p className="eyebrow">AUDIT LOG</p><h2>导入记录与撤销</h2></div><span>保留历史，不硬删除业务数据</span></div>{batches.length ? <div className="import-history-list">{batches.map(item => <div key={item.id}><div><b>{item.source_reference || '未命名导入'}</b><span>{item.source_date || item.created_at.slice(0, 10)} · {item.source_type || 'chat_summary'}</span></div><em className={`import-status ${item.status}`}>{item.status === 'draft' ? '草稿' : item.status === 'applied' ? '已导入' : item.status === 'reverted' ? '已撤销' : '失败'}</em>{item.status === 'applied' && <button disabled={busy} onClick={() => void revert(item)}>撤销本次影响</button>}</div>)}</div> : <p className="detail-empty">暂无导入记录。每次校验都会创建一份可追溯的暂存草稿。</p>}</div>
+  </section>
+}
+
 const mailCategoryLabels: Record<MailEmail['category'], string> = { customer_inquiry: '客户询盘', technical: '技术讨论', quotation: '报价相关', sample: '样品相关', payment: '付款相关', other: '其他' }
 const mailStatusLabels: Record<MailEmail['status'], string> = { unread: '待跟进', new_lead: '新线索', linked: '已关联', followup_created: '已创建跟进', completed: '已处理' }
 
@@ -506,7 +555,9 @@ function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
     try {
       const response = await fetch(`${import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) })
       if (!response.ok) throw new Error('邮箱或密码不正确，请检查后重试。')
-      const session = await response.json(); sessionStorage.setItem('zhiwu-access-token', session.access_token); onAuthenticated()
+      const session = await response.json()
+      sessionStorage.setItem('zhiwu-access-token', session.access_token)
+      onAuthenticated()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '暂时无法登录，请稍后重试。') } finally { setLoading(false) }
   }
   if (recoveryToken) return <LoginFrame><RecoveryPassword token={recoveryToken}/></LoginFrame>

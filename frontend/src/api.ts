@@ -1,4 +1,4 @@
-import type { Customer, DailyLog, EmailSync, Followup, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
+import type { Customer, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -20,7 +20,10 @@ async function request<T>(path: string, init: RequestInit = {}) {
     window.location.reload()
     throw new Error('登录会话已失效，请重新登录。')
   }
-  if (!response.ok) throw new Error('保存失败，请稍后重试。')
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { detail?: string } | null
+    throw new Error(body?.detail || '保存失败，请稍后重试。')
+  }
   return response.json() as Promise<T>
 }
 
@@ -77,4 +80,8 @@ export const api = {
     const params = new URLSearchParams(filters as Record<string, string>)
     return request<TimelineEvent[]>(`/api/timeline${params.size ? `?${params}` : ''}`)
   },
+  imports: () => request<ImportBatch[]>('/api/imports'),
+  previewImport: (payload: Record<string, unknown>) => request<ImportPreviewResult>('/api/imports/preview', { method: 'POST', body: JSON.stringify({ payload }) }),
+  applyImport: (id: string, payload: { confirm_company_match: boolean; selected_customer_id?: string }) => request<ImportApplyResult>(`/api/imports/${id}/apply`, { method: 'POST', body: JSON.stringify(payload) }).then(result => ({ ...result, customer: asCustomer(result.customer), project: result.project ? asProject(result.project) : null, products: result.products.map(asProduct), followup: result.followup ? asFollowup(result.followup) : null, task: result.task ? asTask(result.task) : null })),
+  revertImport: (id: string) => request<{ batch_id: string; reverted_effects: number; message: string }>(`/api/imports/${id}/revert`, { method: 'POST' }),
 }
