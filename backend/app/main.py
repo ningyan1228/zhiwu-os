@@ -120,6 +120,17 @@ class EmailLinkIn(BaseModel):
     customer_id: str
     contact_name: str | None = Field(default=None, max_length=200)
 
+class EmailCrmUpdateIn(BaseModel):
+    customer_id: str
+    project_id: str | None = None
+    product_id: str | None = None
+    customer_stage: str
+    next_action: str = Field(min_length=1, max_length=1000)
+    followup_date: str
+    notes: str = Field(min_length=1, max_length=5000)
+    create_task: bool = False
+    task_date: str | None = None
+
 class TaskIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
@@ -511,6 +522,74 @@ async def create_followup_from_email(email_id: str, payload: EmailFollowupIn, au
         pass
     await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {"status": "followup_created"})
     return record[0]
+
+@app.post("/api/emails/{email_id}/update-crm")
+async def update_crm_from_email(email_id: str, payload: EmailCrmUpdateIn, authorization: str | None = Header(default=None)):
+    """Turn one reviewed email into a complete CRM update without duplicate entry."""
+    token = bearer(authorization)
+    email_rows = await supabase(f"emails?id=eq.{email_id}&select=*", token)
+    if not email_rows:
+        raise HTTPException(404, "Email not found")
+    email = email_rows[0]
+    customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&select=*", token)
+    if not customer_rows:
+        raise HTTPException(404, "Customer not found")
+    customer = customer_rows[0]
+    project = None
+    if payload.project_id:
+        project_rows = await supabase(f"projects?id=eq.{payload.project_id}&customer_id=eq.{payload.customer_id}&select=*", token)
+        if not project_rows:
+            raise HTTPException(422, "Selected project does not belong to this customer")
+        project = (await supabase(f"projects?id=eq.{payload.project_id}", token, "PATCH", {
+            "product_id": payload.product_id,
+            "stage": payload.customer_stage,
+        }))[0]
+    if payload.product_id:
+        product_rows = await supabase(f"products?id=eq.{payload.product_id}&select=product_code", token)
+        if not product_rows:
+            raise HTTPException(404, "Product not found")
+        product_code = product_rows[0]["product_code"]
+    else:
+        product_code = customer.get("product_interest")
+    updated_customer = (await supabase(f"customers?id=eq.{payload.customer_id}", token, "PATCH", {
+        "customer_stage": payload.customer_stage,
+        "next_followup_date": payload.followup_date,
+        "next_action": [payload.next_action],
+        "status_label": payload.next_action,
+        "product_interest": product_code,
+    }))[0]
+    mapping_rows = await supabase(f"customer_email_mappings?email_address=eq.{quote(email['sender'], safe='')}&select=id", token)
+    mapping_payload = {"customer_id": payload.customer_id, "email_address": email["sender"], "contact_name": email.get("sender_name") or customer.get("contact_person")}
+    if mapping_rows:
+        await supabase(f"customer_email_mappings?id=eq.{mapping_rows[0]['id']}", token, "PATCH", mapping_payload)
+    else:
+        await supabase("customer_email_mappings", token, "POST", mapping_payload)
+    email_updated = (await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {
+        "customer_id": payload.customer_id, "project_id": payload.project_id,
+        "product_id": payload.product_id, "status": "followup_created",
+    }))[0]
+    followup = (await supabase("followups", token, "POST", {
+        "customer_id": payload.customer_id, "email_id": email_id, "date": payload.followup_date,
+        "content": payload.notes, "next_action": payload.next_action, "status": "Open",
+    }))[0]
+    await supabase("email_actions", token, "POST", {
+        "email_id": email_id, "customer_id": payload.customer_id, "action": "Update CRM",
+        "next_action": payload.next_action, "deadline": payload.followup_date, "status": "Pending",
+    })
+    await record_timeline_event(token, title=f"邮件更新 CRM：{email.get('subject', '(无主题)')[:120]}", event_type="crm", source="mail_crm_update", related_id=followup["id"], customer_id=payload.customer_id, project_id=payload.project_id, product_id=payload.product_id, event_date=payload.followup_date)
+    task = None
+    if payload.create_task:
+        try:
+            task = (await supabase("tasks", token, "POST", {
+                "title": payload.next_action, "description": payload.notes, "category": "外贸", "priority": "important", "status": "Pending",
+                "task_date": payload.task_date or payload.followup_date, "customer_id": payload.customer_id,
+                "project_id": payload.project_id, "product_id": payload.product_id,
+            }))[0]
+            await record_timeline_event(token, title=f"邮件转任务：{task['title']}", event_type="task", source="mail_crm_update", related_id=task["id"], customer_id=payload.customer_id, project_id=payload.project_id, product_id=payload.product_id, event_date=task["task_date"])
+        except HTTPException:
+            # Daily Focus tables may be introduced later; the CRM update remains valid.
+            task = None
+    return {"email": email_updated, "customer": updated_customer, "project": project, "followup": followup, "task": task}
 
 @app.get("/api/email-sync")
 async def get_email_sync(authorization: str | None = Header(default=None)):

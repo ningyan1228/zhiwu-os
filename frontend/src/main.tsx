@@ -149,11 +149,14 @@ function App() {
     }
     setCustomers(current => current.map(item => item.id === updated.id ? updated : item)); setSelected(updated); setModal(null)
   }
-  const createEmailFollowup = async (email: MailEmail) => {
-    const followup = await api.createFollowupFromEmail(email.id, {})
-    setFollowupRows(current => [followup, ...current])
-    setEmails(current => current.map(item => item.id === email.id ? { ...item, status: 'followup_created' } : item))
-    setSelectedEmail(current => current?.id === email.id ? { ...current, status: 'followup_created' } : current)
+  const updateCrmFromEmail = async (email: MailEmail, payload: { customer_id: string; project_id?: string; product_id?: string; customer_stage: CustomerStage; next_action: string; followup_date: string; notes: string; create_task: boolean; task_date?: string }) => {
+    const result = await api.updateCrmFromEmail(email.id, payload)
+    setCustomers(current => current.map(item => item.id === result.customer.id ? result.customer : item))
+    if (result.project) setProjects(current => current.map(item => item.id === result.project!.id ? result.project! : item))
+    setFollowupRows(current => [result.followup, ...current])
+    if (result.task) setTasks(current => [result.task!, ...current])
+    setEmails(current => current.map(item => item.id === email.id ? result.email : item))
+    setSelectedEmail(current => current?.id === email.id ? result.email : current)
   }
   const linkEmail = async (email: MailEmail, customer: Customer) => {
     const linked = await api.linkEmail(email.id, { customer_id: customer.id, contact_name: customer.contact_person })
@@ -220,7 +223,7 @@ function App() {
       {view === 'calendar' && <CalendarView tasks={tasks} events={timelineEvents} customers={customers} focusDate={focusDate} setFocusDate={setFocusDate} onOpenTasks={() => setView('tasks')} />}
     </main>
     {selected && <CustomerDrawer customer={selected} projects={projects} quotes={quotes} followups={followupRows} products={products} emails={emails} tasks={tasks} close={() => setSelected(null)} addFollowup={() => setModal('followup')} addQuote={() => setModal('quote')} updateStage={updateStage} editCustomer={() => setModal('customer-edit')} openEmail={openEmail} />}
-    {selectedEmail && <MailDetail email={selectedEmail} customers={customers} projects={projects} products={products} close={() => { window.history.replaceState(null, '', `${window.location.pathname}#mail`); setSelectedEmail(null) }} createFollowup={createEmailFollowup} linkEmail={linkEmail} updateStatus={updateEmailStatus} openCustomer={setSelected} />}
+    {selectedEmail && <MailDetail email={selectedEmail} customers={customers} projects={projects} products={products} close={() => { window.history.replaceState(null, '', `${window.location.pathname}#mail`); setSelectedEmail(null) }} updateCrm={updateCrmFromEmail} linkEmail={linkEmail} updateStatus={updateEmailStatus} openCustomer={setSelected} />}
     {modal === 'customer' && <CustomerForm close={() => setModal(null)} submit={addCustomer} />}
     {modal === 'customer-edit' && selected && <CustomerEditForm customer={selected} products={products} projects={projects.filter(project => project.customer_id === selected.id)} close={() => setModal(null)} submit={editCustomer} />}
     {modal === 'product' && <ProductForm close={() => setModal(null)} submit={addProduct} />}
@@ -385,21 +388,36 @@ function MailCenter({ emails, sync, customers, projects, products, open }: { ema
   </section>
 }
 
-function MailDetail({ email, customers, projects, products, close, createFollowup, linkEmail, updateStatus, openCustomer }: { email: MailEmail; customers: Customer[]; projects: Project[]; products: Product[]; close: () => void; createFollowup: (email: MailEmail) => Promise<void>; linkEmail: (email: MailEmail, customer: Customer) => Promise<void>; updateStatus: (email: MailEmail, status: MailEmail['status']) => Promise<void>; openCustomer: (customer: Customer) => void }) {
-  const [creating, setCreating] = useState(false)
+function MailDetail({ email, customers, projects, products, close, updateCrm, linkEmail, updateStatus, openCustomer }: { email: MailEmail; customers: Customer[]; projects: Project[]; products: Product[]; close: () => void; updateCrm: (email: MailEmail, payload: { customer_id: string; project_id?: string; product_id?: string; customer_stage: CustomerStage; next_action: string; followup_date: string; notes: string; create_task: boolean; task_date?: string }) => Promise<void>; linkEmail: (email: MailEmail, customer: Customer) => Promise<void>; updateStatus: (email: MailEmail, status: MailEmail['status']) => Promise<void>; openCustomer: (customer: Customer) => void }) {
   const [linking, setLinking] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [crmOpen, setCrmOpen] = useState(false)
+  const [crmSaving, setCrmSaving] = useState(false)
+  const [crmError, setCrmError] = useState('')
+  const [crmCustomerId, setCrmCustomerId] = useState(email.customer_id || '')
+  const [crmProjectId, setCrmProjectId] = useState(email.project_id || '')
+  const [crmProductId, setCrmProductId] = useState(email.product_id || '')
   const [query, setQuery] = useState('')
   const customer = customers.find(item => item.id === email.customer_id)
   const project = projects.find(item => item.id === email.project_id || item.customer_id === email.customer_id)
   const product = products.find(item => item.id === email.product_id || item.id === project?.product_id || item.product_code === customer?.product_interest)
+  const crmCustomer = customers.find(item => item.id === crmCustomerId)
+  const crmProjects = projects.filter(item => item.customer_id === crmCustomerId)
   const candidates = customers.filter(item => `${item.company_name} ${item.country} ${item.contact_person} ${item.email}`.toLowerCase().includes(query.toLowerCase()))
-  const create = async () => { setCreating(true); try { await createFollowup(email) } finally { setCreating(false) } }
   const link = async (target: Customer) => { setLinking(true); try { await linkEmail(email, target); setPickerOpen(false) } finally { setLinking(false) } }
+  const saveCrm = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>
+    setCrmSaving(true); setCrmError('')
+    try {
+      await updateCrm(email, { customer_id: values.customer_id, project_id: values.project_id || undefined, product_id: values.product_id || undefined, customer_stage: values.customer_stage as CustomerStage, next_action: values.next_action, followup_date: values.followup_date, notes: values.notes, create_task: values.create_task === 'on', task_date: values.task_date || undefined })
+      setCrmOpen(false)
+    } catch (error) { setCrmError(error instanceof Error ? error.message : '保存失败，请稍后重试。') } finally { setCrmSaving(false) }
+  }
   return <div className="drawer-layer" onMouseDown={close}><aside className="drawer mail-detail" onMouseDown={event => event.stopPropagation()}><button className="close" onClick={close}><X size={20}/></button><p className="eyebrow">MAIL DETAIL · {mailCategoryLabels[email.category]}</p><h2>{email.subject}</h2><div className="mail-detail-meta"><span>{email.sender_name || email.sender}</span><span>{email.sender}</span><time>{new Date(email.received_at).toLocaleString('zh-CN')}</time></div><div className="mail-content">{email.content_text || email.content_preview || '邮件正文不可用。'}</div>{email.attachment_count > 0 && <div className="mail-attachments"><Paperclip size={15}/>{email.attachment_count} 个附件（当前只记录数量，不下载或修改附件）</div>}
     <DetailSection title="Business Context"><div className="mail-link-card"><span>关联客户</span><b>{customer?.company_name ?? '未自动匹配'}</b><span>国家 / 联系人</span><b>{customer ? `${customer.country} · ${customer.contact_person}` : '待确认'}</b><span>项目</span><b>{project?.project_name ?? '待关联项目'}</b><span>产品</span><b>{product?.product_code ?? customer?.product_interest ?? '待确认'}</b><span>当前阶段</span><b>{customer ? stageLabels[customer.customer_stage] : '新线索'}</b><span>下一步</span><b>{customer?.next_action?.[0] ?? customer?.status_label ?? '确认邮件业务动作'}</b><span>状态</span><b>{mailStatusLabels[email.status]}</b></div>{customer && <div className="mail-customer-intel"><Brain size={15}/><span>{customer.customer_summary}</span></div>}{customer ? <button className="mail-open-customer" onClick={() => { close(); openCustomer(customer) }}>打开客户详情 <ChevronRight size={15}/></button> : <button className="mail-open-customer" onClick={() => setPickerOpen(true)}>关联客户 <ChevronRight size={15}/></button>}</DetailSection>
     {pickerOpen && <section className="mail-link-picker"><div><b>关联客户</b><button className="close" onClick={() => setPickerOpen(false)}><X size={16}/></button></div><label><Search size={15}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索公司、联系人或邮箱" /></label><div className="mail-customer-options">{candidates.map(item => <button key={item.id} disabled={linking} onClick={() => void link(item)}><span>{item.company_name}</span><small>{item.country} · {item.contact_person}</small><ChevronRight size={15}/></button>)}</div></section>}
-    <div className="mail-detail-actions">{!customer && <button onClick={() => setPickerOpen(true)}>关联客户</button>}<button className="primary" disabled={!customer || creating || email.status === 'followup_created'} onClick={create}>{creating ? '正在创建…' : email.status === 'followup_created' ? '已创建跟进' : '+ 创建跟进'}</button><button disabled={email.status === 'completed'} onClick={() => void updateStatus(email, 'completed')}>{email.status === 'completed' ? '已处理' : '标记已处理'}</button></div></aside></div>
+    {crmOpen && <section className="mail-crm-editor"><div className="mail-crm-editor-head"><div><b>更新 CRM</b><span>保存一次，同时写入客户、跟进和时间线。</span></div><button className="close" type="button" onClick={() => setCrmOpen(false)}><X size={16}/></button></div><form onSubmit={saveCrm}><div className="form-grid"><label>客户 *<select name="customer_id" value={crmCustomerId} required onChange={event => { const id = event.target.value; const firstProject = projects.find(item => item.customer_id === id); setCrmCustomerId(id); setCrmProjectId(firstProject?.id || ''); setCrmProductId(firstProject?.product_id || '') }}><option value="">选择客户</option>{customers.map(item => <option key={item.id} value={item.id}>{item.company_name} · {item.contact_person}</option>)}</select></label><label>项目<select name="project_id" value={crmProjectId} onChange={event => { const id = event.target.value; const selectedProject = projects.find(item => item.id === id); setCrmProjectId(id); if (selectedProject?.product_id) setCrmProductId(selectedProject.product_id) }}><option value="">暂不关联项目</option>{crmProjects.map(item => <option key={item.id} value={item.id}>{item.project_name}</option>)}</select></label><label>产品<select name="product_id" value={crmProductId} onChange={event => setCrmProductId(event.target.value)}><option value="">暂不关联产品</option>{products.map(item => <option key={item.id} value={item.id}>{item.product_code} · {item.product_name}</option>)}</select></label><label>当前阶段 *<select name="customer_stage" defaultValue={crmCustomer?.customer_stage || customer?.customer_stage || 'New Inquiry'}>{Object.entries(stageLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><Field label="下一步行动 *" name="next_action" required defaultValue={crmCustomer?.next_action?.[0] || customer?.next_action?.[0] || ''}/><label>跟进日期 *<input name="followup_date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} required/></label><label className="wide">备注 / 跟进内容 *<textarea name="notes" required defaultValue={`邮件：${email.subject}\n`} placeholder="记录客户反馈、判断和本次处理结论"/></label><label className="mail-task-check wide"><input type="checkbox" name="create_task"/><span>同时生成每日任务</span><input type="date" name="task_date" defaultValue={new Date().toISOString().slice(0, 10)} aria-label="任务日期"/></label></div>{crmError && <div className="login-error">{crmError}</div>}<div className="form-actions"><button type="button" onClick={() => setCrmOpen(false)}>取消</button><button className="primary" disabled={crmSaving}>{crmSaving ? '正在保存…' : '保存并更新 CRM'}</button></div></form></section>}
+    <div className="mail-detail-actions">{!customer && <button onClick={() => setPickerOpen(true)}>关联客户</button>}<button className="primary" onClick={() => setCrmOpen(true)}>更新 CRM</button><button disabled={email.status === 'completed'} onClick={() => void updateStatus(email, 'completed')}>{email.status === 'completed' ? '已处理' : '标记已处理'}</button></div></aside></div>
 }
 
 function CustomerDrawer({customer,projects,quotes,followups,products,emails,tasks,close,addFollowup,addQuote,updateStage,editCustomer,openEmail}:{customer:Customer;projects:Project[];quotes:Quote[];followups:Followup[];products:Product[];emails:MailEmail[];tasks:Task[];close:()=>void;addFollowup:()=>void;addQuote:()=>void;updateStage:(customer:Customer,stage:CustomerStage)=>Promise<void>;editCustomer:()=>void;openEmail:(email:MailEmail)=>void}) {
