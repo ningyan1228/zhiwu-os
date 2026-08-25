@@ -2,3 +2,22 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-public-anon-key
 SUPABASE_SERVICE_ROLE_KEY=server-only-secret
 ALLOWED_ORIGINS=https://your-github-user.github.io,http://localhost:5173
+
+# Team Mail Center. These variables live only on the server; never commit a real password.
+# The mailbox_key values are created by v1_8_team_mailboxes.sql.
+# Zhiwu keeps the existing MAIL_* variables as a backward-compatible fallback.
+MAILBOX_ZHIWU_HOST=imap.qiye.aliyun.com
+MAILBOX_ZHIWU_PORT=993
+MAILBOX_ZHIWU_USERNAME=zhiwu@your-company.com
+MAILBOX_ZHIWU_PASSWORD=server-only-third-party-client-password
+MAILBOX_ZHIWU_FOLDER=INBOX
+
+# Add Peter's values only after he creates a third-party client security password.
+MAILBOX_PETER_HOST=imap.qiye.aliyun.com
+MAILBOX_PETER_PORT=993
+MAILBOX_PETER_USERNAME=peter@neonliontech.com
+MAILBOX_PETER_PASSWORD=server-only-third-party-client-password
+MAILBOX_PETER_FOLDER=INBOX
+
+# Every listed address is an internal colleague, never an auto-created CRM customer.
+MAIL_INTERNAL_ADDRESSES=gjsxning@163.com,peter@neonliontech.com

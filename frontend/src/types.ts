@@ -27,6 +27,7 @@ export type MailEmail = {
   category: 'customer_inquiry' | 'technical' | 'quotation' | 'sample' | 'payment' | 'other'; created_at: string
 }
 export type EmailSync = { status: string; total_synced: number; last_sync_time?: string | null; last_error?: string | null }
+export type MailboxAccount = { id?: string; mailbox_key?: string; label: string; email_address?: string | null; is_active: boolean; configured: boolean }
 export type TaskCategory = '外贸' | '网站' | '设计' | '学习' | '生活' | '其他'
 export type TaskPriority = 'important' | 'normal' | 'low'
 export type TaskStatus = 'Pending' | 'Completed'

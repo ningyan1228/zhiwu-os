@@ -884,3 +884,16 @@ async def update_crm_from_email(email_id: str, payload: EmailCrmUpdateIn, author
 async def get_email_sync(authorization: str | None = Header(default=None)):
     rows = await supabase("email_sync?select=*&limit=1", bearer(authorization))
     return rows[0] if rows else {"status": "Not configured", "total_synced": 0, "last_sync_time": None}
+
+@app.get("/api/mailbox")
+async def get_current_mailbox(authorization: str | None = Header(default=None)):
+    """Return only the signed-in member's safe mailbox label, never IMAP secrets."""
+    token = bearer(authorization)
+    try:
+        rows = await supabase("mailbox_accounts?select=id,mailbox_key,label,email_address,is_active&limit=1", token)
+    except HTTPException:
+        # Keeps the existing single-mailbox release usable until the V1.8 SQL migration is run.
+        return {"configured": False, "label": "当前邮件中心", "email_address": None, "is_active": False}
+    if not rows:
+        return {"configured": False, "label": "当前邮件中心", "email_address": None, "is_active": False}
+    return {**rows[0], "configured": True}

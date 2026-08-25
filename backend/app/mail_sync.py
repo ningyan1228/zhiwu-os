@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
@@ -22,6 +23,21 @@ from app.main import is_internal_mail_address, settings
 
 logger = logging.getLogger("zhiwu.mail_sync")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+
+
+@dataclass(frozen=True)
+class MailboxRuntime:
+    """A mailbox identity from Supabase paired with server-only IMAP variables."""
+    id: str | None
+    owner_user_id: str
+    key: str
+    label: str
+    email_address: str | None
+    host: str | None
+    port: int
+    username: str | None
+    password: str | None
+    folder: str
 
 
 def _text(message: Any) -> str:
@@ -103,15 +119,13 @@ class MailStore:
         response.raise_for_status()
         return response.json() if response.content else None
 
-    def update_sync(self, status: str, total_synced: int = 0, error: str | None = None) -> None:
-        owner = self.cfg.mail_owner_user_id
-        if not owner:
-            return
+    def update_sync(self, mailbox: MailboxRuntime, status: str, total_synced: int = 0, error: str | None = None) -> None:
         self.request(
             "POST",
             "email_sync?on_conflict=user_id",
             {
-                "user_id": owner,
+                "user_id": mailbox.owner_user_id,
+                "mailbox_id": mailbox.id,
                 "last_sync_time": datetime.now(timezone.utc).isoformat(),
                 "total_synced": total_synced,
                 "status": status,
@@ -123,9 +137,11 @@ class MailStore:
 
 
 def _customer_lookup(store: MailStore, owner_id: str) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, str | None]], dict[str, str]]:
-    customers = store.request("GET", f"customers?user_id=eq.{owner_id}&select=id,email,contact_person") or []
+    # CRM is a shared workspace. Mail itself remains private because every email
+    # record is stored under the mailbox owner's user_id.
+    customers = store.request("GET", "customers?import_reverted=eq.false&select=id,email,contact_person") or []
     mappings = store.request("GET", f"customer_email_mappings?user_id=eq.{owner_id}&select=customer_id,email_address,contact_name") or []
-    projects = store.request("GET", f"projects?user_id=eq.{owner_id}&select=id,customer_id,product_id&order=created_at.desc") or []
+    projects = store.request("GET", "projects?import_reverted=eq.false&select=id,customer_id,product_id&order=created_at.desc") or []
     customer_by_email = {str(row.get("email", "")).lower(): row["id"] for row in customers if row.get("email")}
     customer_by_email.update({str(row.get("email_address", "")).lower(): row["customer_id"] for row in mappings if row.get("email_address")})
     customer_by_contact: dict[str, str] = {}
@@ -177,26 +193,61 @@ def _reconcile_existing_links(
     return linked
 
 
-def sync_once() -> dict[str, int]:
+def _mailbox_value(key: str, field: str, legacy: str | int | None = None) -> str | int | None:
+    """Read dynamic per-member variables without keeping credentials in the database."""
+    value = os.getenv(f"MAILBOX_{key.upper()}_{field}")
+    return value if value not in (None, "") else legacy
+
+
+def _configured_mailboxes(store: MailStore) -> list[MailboxRuntime]:
     cfg = settings()
-    required = (cfg.mail_host, cfg.mail_username, cfg.mail_password, cfg.mail_owner_user_id)
-    if not all(required):
-        logger.warning("IMAP sync is not configured; waiting for server-only MAIL_* variables")
-        return {"processed": 0, "saved": 0}
-
-    store = MailStore()
-    store.update_sync("Running")
     try:
-        customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer = _customer_lookup(store, cfg.mail_owner_user_id)
-        recovered = _reconcile_existing_links(store, cfg.mail_owner_user_id, customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer)
+        accounts = store.request("GET", "mailbox_accounts?is_active=eq.true&select=id,user_id,mailbox_key,label,email_address") or []
+    except Exception:
+        accounts = []
+    result: list[MailboxRuntime] = []
+    for account in accounts:
+        key = str(account["mailbox_key"])
+        host = _mailbox_value(key, "HOST", cfg.mail_host if key == "zhiwu" else None)
+        port_value = _mailbox_value(key, "PORT", cfg.mail_port if key == "zhiwu" else 993)
+        username = _mailbox_value(key, "USERNAME", cfg.mail_username if key == "zhiwu" else None)
+        password = _mailbox_value(key, "PASSWORD", cfg.mail_password if key == "zhiwu" else None)
+        folder = str(_mailbox_value(key, "FOLDER", cfg.mail_folder if key == "zhiwu" else "INBOX"))
+        result.append(MailboxRuntime(
+            id=account["id"], owner_user_id=account["user_id"], key=key, label=account["label"],
+            email_address=account.get("email_address"), host=str(host) if host else None,
+            port=int(port_value or 993), username=str(username) if username else None,
+            password=str(password) if password else None, folder=folder,
+        ))
+    # Backward compatibility keeps Zhiwu's already deployed single-mailbox sync
+    # working before the database migration creates mailbox_accounts.
+    if not result and all((cfg.mail_host, cfg.mail_username, cfg.mail_password, cfg.mail_owner_user_id)):
+        result.append(MailboxRuntime(
+            id=None, owner_user_id=cfg.mail_owner_user_id or "", key="zhiwu", label="Zhiwu 的邮件中心",
+            email_address=cfg.mail_username, host=cfg.mail_host, port=cfg.mail_port, username=cfg.mail_username,
+            password=cfg.mail_password, folder=cfg.mail_folder,
+        ))
+    return result
 
-        with imaplib.IMAP4_SSL(cfg.mail_host, cfg.mail_port) as mailbox:
-            mailbox.login(cfg.mail_username, cfg.mail_password)
-            mailbox.select(cfg.mail_folder, readonly=True)
+
+def _sync_mailbox(store: MailStore, mailbox_config: MailboxRuntime) -> dict[str, int]:
+    required = (mailbox_config.host, mailbox_config.username, mailbox_config.password, mailbox_config.owner_user_id)
+    if not all(required):
+        store.update_sync(mailbox_config, "Not configured")
+        logger.info("Mailbox %s is awaiting server-only IMAP credentials", mailbox_config.key)
+        return {"processed": 0, "saved": 0, "linked": 0}
+    store.update_sync(mailbox_config, "Running")
+    try:
+        customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer = _customer_lookup(store, mailbox_config.owner_user_id)
+        recovered = _reconcile_existing_links(store, mailbox_config.owner_user_id, customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer)
+
+        with imaplib.IMAP4_SSL(mailbox_config.host, mailbox_config.port) as mailbox:
+            mailbox.login(mailbox_config.username, mailbox_config.password)
+            mailbox.select(mailbox_config.folder, readonly=True)
             result, data = mailbox.uid("search", None, "ALL")
             if result != "OK":
                 raise RuntimeError("Unable to list IMAP messages")
-            uids = data[0].split()[-cfg.mail_sync_max_messages :]
+            uids = data[0].split()[-settings().mail_sync_max_messages :]
             saved = 0
             for uid in reversed(uids):
                 result, parts = mailbox.uid("fetch", uid, "(RFC822)")
@@ -215,7 +266,8 @@ def sync_once() -> dict[str, int]:
                 project = project_by_customer.get(customer_id or "", {})
                 message_id = message.get("Message-ID") or f"imap-{uid.decode(errors='ignore')}"
                 payload = {
-                    "user_id": cfg.mail_owner_user_id,
+                    "user_id": mailbox_config.owner_user_id,
+                    "mailbox_id": mailbox_config.id,
                     "message_id": message_id,
                     "sender": sender or message.get("From", "未知发件人"),
                     "receiver": message.get("To", ""),
@@ -233,15 +285,29 @@ def sync_once() -> dict[str, int]:
                 }
                 created = store.request("POST", "emails?on_conflict=user_id,message_id", payload, "resolution=ignore-duplicates,return=representation") or []
                 if customer_id:
-                    _remember_mapping(store, cfg.mail_owner_user_id, sender, customer_id, contact_name_by_customer.get(customer_id))
+                    _remember_mapping(store, mailbox_config.owner_user_id, sender, customer_id, contact_name_by_customer.get(customer_id))
                 saved += len(created)
-        store.update_sync("Success", saved)
-        logger.info("Mail sync finished: processed=%s saved=%s linked=%s", len(uids), saved, recovered)
+        store.update_sync(mailbox_config, "Success", saved)
+        logger.info("Mailbox %s sync finished: processed=%s saved=%s linked=%s", mailbox_config.key, len(uids), saved, recovered)
         return {"processed": len(uids), "saved": saved, "linked": recovered}
     except Exception as exc:
-        logger.exception("Mail sync failed")
-        store.update_sync("Error", 0, str(exc)[:500])
-        raise
+        logger.exception("Mailbox %s sync failed", mailbox_config.key)
+        store.update_sync(mailbox_config, "Error", 0, str(exc)[:500])
+        return {"processed": 0, "saved": 0, "linked": 0}
+
+
+def sync_once() -> dict[str, int]:
+    store = MailStore()
+    mailboxes = _configured_mailboxes(store)
+    if not mailboxes:
+        logger.warning("IMAP sync is not configured; waiting for server-only MAILBOX_* variables")
+        return {"processed": 0, "saved": 0, "linked": 0}
+    totals = {"processed": 0, "saved": 0, "linked": 0}
+    for mailbox_config in mailboxes:
+        result = _sync_mailbox(store, mailbox_config)
+        for key in totals:
+            totals[key] += result[key]
+    return totals
 
 
 def main() -> None:

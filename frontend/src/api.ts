@@ -1,4 +1,4 @@
-import type { Customer, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
+import type { Customer, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -62,6 +62,7 @@ export const api = {
     : request<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', body: JSON.stringify({ password }) }),
   requestPasswordRecovery: (email: string) => publicRequest<{ sent: boolean }>('/api/auth/recover', { method: 'POST', body: JSON.stringify({ email }) }),
   emails: () => request<MailEmail[]>('/api/emails').then(rows => rows.map(asMailEmail)),
+  mailbox: () => request<MailboxAccount>('/api/mailbox'),
   unlinkedEmails: () => request<MailEmail[]>('/api/emails/unlinked').then(rows => rows.map(asMailEmail)),
   emailSync: () => request<EmailSync>('/api/email-sync'),
   createFollowupFromEmail: (id: string, payload: { content?: string; next_action?: string }) => request<Followup>(`/api/emails/${id}/followups`, { method: 'POST', body: JSON.stringify(payload) }).then(asFollowup),

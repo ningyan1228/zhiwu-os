@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { customers as seedCustomers, followups as seedFollowups, products as seedProducts, projects as seedProjects, quotes as seedQuotes } from './data'
 import { api } from './api'
-import type { Customer, CustomerStage, DailyLog, EmailSync, Followup, ImportBatch, ImportPreview, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
+import type { Customer, CustomerStage, DailyLog, EmailSync, Followup, ImportBatch, ImportPreview, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
 import './styles.css'
 
 type View = 'dashboard' | 'crm' | 'mail' | 'products' | 'relationships' | 'projects' | 'tasks' | 'calendar' | 'imports'
@@ -32,6 +32,7 @@ function App() {
   const [productCustomerRelations, setProductCustomerRelations] = useState<ProductCustomerRelation[]>([])
   const [emails, setEmails] = useState<MailEmail[]>([])
   const [emailSync, setEmailSync] = useState<EmailSync>({ status: 'Not configured', total_synced: 0, last_sync_time: null })
+  const [mailbox, setMailbox] = useState<MailboxAccount>({ label: '当前邮件中心', email_address: null, is_active: false, configured: false })
   const [tasks, setTasks] = useState<Task[]>([])
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([])
   const [dailyLog, setDailyLog] = useState<DailyLog | null>(null)
@@ -58,8 +59,8 @@ function App() {
       setCustomers(customerRows.length ? customerRows : seedCustomers); setProducts(productRows.length ? productRows : seedProducts)
       setFollowupRows(loadedFollowups.length ? loadedFollowups : seedFollowups); setProjects(loadedProjects.length ? loadedProjects : seedProjects); setQuotes(loadedQuotes.length ? loadedQuotes : seedQuotes)
       try {
-        const [mailRows, syncRow] = await Promise.all([api.emails(), api.emailSync()])
-        setEmails(mailRows); setEmailSync(syncRow)
+        const [mailRows, syncRow, mailboxRow] = await Promise.all([api.emails(), api.emailSync(), api.mailbox()])
+        setEmails(mailRows); setEmailSync(syncRow); setMailbox(mailboxRow)
       } catch (error) {
         console.info('Mail Center is waiting for the V1.2 database migration.', error)
       }
@@ -226,7 +227,7 @@ function App() {
       {globalQuery.trim() && <WorkspaceSearch query={globalQuery} customers={customers} products={products} projects={projects} emails={emails} close={() => setGlobalQuery('')} openCustomer={customer => { setView('crm'); setSelected(customer) }} openProduct={() => setView('products')} openProject={customer => { setView('projects'); setSelected(customer) }} openEmail={openEmail} />}
       {view === 'dashboard' && <Dashboard customers={customers} projects={projects} followups={followupRows} emails={emails} tasks={tasks} today={today} onOpenCRM={() => setView('crm')} onOpenMail={() => setView('mail')} onOpenTasks={() => setView('tasks')} onOpenProducts={() => setView('products')} openCustomer={setSelected} />}
       {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
-      {view === 'mail' && <MailCenter emails={emails} sync={emailSync} customers={customers} projects={projects} products={products} open={openEmail} />}
+      {view === 'mail' && <MailCenter emails={emails} sync={emailSync} mailbox={mailbox} customers={customers} projects={projects} products={products} open={openEmail} />}
       {view === 'imports' && <ImportInbox customers={customers} afterApplied={async () => { const [customerRows, productRows, loadedFollowups, loadedProjects, taskRows, events] = await Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.tasks(), api.timeline()]); setCustomers(customerRows); setProducts(productRows); setFollowupRows(loadedFollowups); setProjects(loadedProjects); setTasks(taskRows); setTimelineEvents(events) }} />}
       {view === 'products' && <Products products={products} create={() => setModal('product')} />}
       {view === 'relationships' && <RelationshipMatrix products={products} customers={customers} projects={projects} relations={productCustomerRelations} openCustomer={setSelected} linkCustomer={setRelationProduct} />}
@@ -428,7 +429,7 @@ function ImportInbox({ customers, afterApplied }: { customers: Customer[]; after
 const mailCategoryLabels: Record<MailEmail['category'], string> = { customer_inquiry: '客户询盘', technical: '技术讨论', quotation: '报价相关', sample: '样品相关', payment: '付款相关', other: '其他' }
 const mailStatusLabels: Record<MailEmail['status'], string> = { unread: '待跟进', new_lead: '新线索', linked: '已关联', followup_created: '已创建跟进', completed: '已处理' }
 
-function MailCenter({ emails, sync, customers, projects, products, open }: { emails: MailEmail[]; sync: EmailSync; customers: Customer[]; projects: Project[]; products: Product[]; open: (email: MailEmail) => void }) {
+function MailCenter({ emails, sync, mailbox, customers, projects, products, open }: { emails: MailEmail[]; sync: EmailSync; mailbox: MailboxAccount; customers: Customer[]; projects: Project[]; products: Product[]; open: (email: MailEmail) => void }) {
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<'all' | MailEmail['category'] | 'unlinked'>(() => window.location.hash === '#mail/unlinked' ? 'unlinked' : 'all')
   const today = new Date().toISOString().slice(0, 10)
@@ -446,7 +447,8 @@ function MailCenter({ emails, sync, customers, projects, products, open }: { ema
   const todayCount = emails.filter(email => email.received_at.slice(0, 10) === today).length
   const filters: [typeof category, string][] = [['all', '全部'], ['customer_inquiry', '客户询盘'], ['technical', '技术讨论'], ['quotation', '报价相关'], ['sample', '样品相关'], ['payment', '付款相关'], ['unlinked', `未关联邮件 ${emails.filter(email => !email.customer_id).length}`]]
   const selectFilter = (value: typeof category) => { window.history.replaceState(null, '', `${window.location.pathname}${value === 'unlinked' ? '#mail/unlinked' : '#mail'}`); setCategory(value) }
-  return <section className="page mail-page"><div className="page-heading"><div><p className="eyebrow">MAIL CENTER · BUSINESS INBOX</p><h1>外贸邮件中心</h1><p>每一封客户来信都可关联到客户、项目、产品和下一步行动。</p></div><div className="sync-indicator"><RefreshCw size={15}/><span>{sync.status === 'Success' ? '已同步' : sync.status === 'Not configured' ? '等待邮箱配置' : sync.status}</span></div></div>
+  const syncLabel = !mailbox.configured || !mailbox.is_active || sync.status === 'Not configured' || sync.status === 'Idle' ? '等待邮箱配置' : sync.status === 'Success' ? '已同步' : sync.status
+  return <section className="page mail-page"><div className="page-heading"><div><p className="eyebrow">MAIL CENTER · BUSINESS INBOX</p><h1>外贸邮件中心</h1><p>每一封客户来信都可关联到客户、项目、产品和下一步行动。</p></div><div className="mailbox-status"><span><Users size={15}/>{mailbox.label}{mailbox.email_address ? ` · ${mailbox.email_address}` : ''}</span><div className="sync-indicator"><RefreshCw size={15}/><span>{syncLabel}</span></div></div></div>
     <div className="mail-metrics"><Metric label="今日邮件" value={String(todayCount)} delta="当天接收" icon={<Mail/>}/><Metric label="待跟进" value={String(unprocessed)} delta="待转为业务动作" icon={<CircleHelp/>}/><Metric label="客户邮件" value={String(customerEmails)} delta="已关联 CRM" icon={<Users/>}/><Metric label="附件" value={String(attachments)} delta="仅统计，不下载" icon={<Paperclip/>}/></div>
     <section className="mail-list-panel"><div className="table-tools mail-tools"><label><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索客户、邮箱、产品、主题或关键词" /></label><span className="mail-sync-time">{sync.last_sync_time ? `上次同步 ${new Date(sync.last_sync_time).toLocaleString('zh-CN')}` : 'IMAP 每 10 分钟同步一次'}</span></div><div className="mail-filters">{filters.map(([value, label]) => <button key={value} className={category === value ? 'active' : ''} onClick={() => selectFilter(value)}>{label}</button>)}</div><div className="mail-list">{visible.map(email => {
       const customer = customers.find(item => item.id === email.customer_id)
