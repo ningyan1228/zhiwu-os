@@ -76,16 +76,22 @@ create policy "own mailbox account" on public.mailbox_accounts for select using 
 
 -- Shared business CRM: only approved workspace members can read or change it.
 drop policy if exists "own customers" on public.customers;
+drop policy if exists "workspace customers" on public.customers;
 create policy "workspace customers" on public.customers for all using (public.is_workspace_member()) with check (public.is_workspace_member());
 drop policy if exists "own products" on public.products;
+drop policy if exists "workspace products" on public.products;
 create policy "workspace products" on public.products for all using (public.is_workspace_member()) with check (public.is_workspace_member());
 drop policy if exists "own followups" on public.followups;
+drop policy if exists "workspace followups" on public.followups;
 create policy "workspace followups" on public.followups for all using (public.is_workspace_member()) with check (public.is_workspace_member());
 drop policy if exists "own projects" on public.projects;
+drop policy if exists "workspace projects" on public.projects;
 create policy "workspace projects" on public.projects for all using (public.is_workspace_member()) with check (public.is_workspace_member());
 drop policy if exists "own quotes" on public.quotes;
+drop policy if exists "workspace quotes" on public.quotes;
 create policy "workspace quotes" on public.quotes for all using (public.is_workspace_member()) with check (public.is_workspace_member());
 drop policy if exists "own product customer relations" on public.product_customer_relations;
+drop policy if exists "workspace product customer relations" on public.product_customer_relations;
 create policy "workspace product customer relations" on public.product_customer_relations for all using (public.is_workspace_member()) with check (public.is_workspace_member());
 
 -- CRM timeline items are shared only when they are linked to a customer; personal task notes remain private.
@@ -101,5 +107,6 @@ create policy "workspace customer timeline update" on public.timeline_events for
 drop policy if exists "workspace customer timeline delete" on public.timeline_events;
 create policy "workspace customer timeline delete" on public.timeline_events for delete using (auth.uid() = user_id);
 
--- Prevent a member from creating a second product record with the same code.
-create unique index if not exists products_workspace_code_unique on public.products (lower(product_code));
+-- Existing installations can contain historical demo duplicates (for example NL-007),
+-- so V1.8 intentionally does not add a global product-code unique index. Import
+-- and linking flows continue to match product codes case-insensitively.
