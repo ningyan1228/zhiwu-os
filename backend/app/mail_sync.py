@@ -101,6 +101,37 @@ def _resolve_customer(
     return None
 
 
+def _resolve_internal_forward_customer(
+    receiver: str | None, subject: str | None, content: str | None,
+    customer_by_email: dict[str, str], customer_by_contact: dict[str, str],
+) -> str | None:
+    """Resolve a colleague-forwarded message from the customer evidence it carries.
+
+    A message sent by Zhiwu to Peter must not associate the address of either
+    colleague with a customer.  It can, however, safely be linked when the
+    forwarded message contains exactly one known customer email, contact name,
+    or full company name.  Ambiguous messages intentionally remain unlinked.
+    """
+    value = " ".join(part for part in (receiver, subject, content) if part)
+    email_hits = {
+        customer_by_email[address.lower()]
+        for address in re.findall(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", value, flags=re.IGNORECASE)
+        if address.lower() in customer_by_email
+    }
+    if len(email_hits) == 1:
+        return next(iter(email_hits))
+    if len(email_hits) > 1:
+        return None
+
+    normalized_value = _normalized(value)
+    contact_hits = {
+        customer_id
+        for alias, customer_id in customer_by_contact.items()
+        if len(alias) >= 4 and alias in normalized_value
+    }
+    return next(iter(contact_hits)) if len(contact_hits) == 1 else None
+
+
 class MailStore:
     def __init__(self) -> None:
         self.cfg = settings()
@@ -139,8 +170,11 @@ class MailStore:
 def _customer_lookup(store: MailStore, owner_id: str) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, str | None]], dict[str, str]]:
     # CRM is a shared workspace. Mail itself remains private because every email
     # record is stored under the mailbox owner's user_id.
-    customers = store.request("GET", "customers?import_reverted=eq.false&archived_at=is.null&select=id,email,contact_person") or []
-    mappings = store.request("GET", f"customer_email_mappings?user_id=eq.{owner_id}&select=customer_id,email_address,contact_name") or []
+    customers = store.request("GET", "customers?import_reverted=eq.false&archived_at=is.null&select=id,email,contact_person,company_name") or []
+    # A customer may be owned by Zhiwu while Peter receives a forwarded thread.
+    # The synchroniser runs server-side, so it can safely use workspace mappings
+    # to identify that shared customer; it still never exposes another mailbox.
+    mappings = store.request("GET", "customer_email_mappings?select=customer_id,email_address,contact_name") or []
     projects = store.request("GET", "projects?import_reverted=eq.false&archived_at=is.null&select=id,customer_id,product_id&order=created_at.desc") or []
     customer_by_email = {str(row.get("email", "")).lower(): row["id"] for row in customers if row.get("email")}
     customer_by_email.update({str(row.get("email_address", "")).lower(): row["customer_id"] for row in mappings if row.get("email_address")})
@@ -154,6 +188,10 @@ def _customer_lookup(store: MailStore, owner_id: str) -> tuple[dict[str, str], d
             for token in re.findall(r"[a-z0-9]+", str(row.get("contact_person") or row.get("contact_name") or "").lower()):
                 if len(token) >= 4:
                     customer_by_contact.setdefault(token, row["id"] if row.get("id") else row["customer_id"])
+    for row in customers:
+        company = _normalized(row.get("company_name"))
+        if company:
+            customer_by_contact.setdefault(company, row["id"])
     project_by_customer: dict[str, dict[str, str | None]] = {}
     for project in projects:
         project_by_customer.setdefault(project["customer_id"], {"id": project["id"], "product_id": project.get("product_id")})
@@ -174,13 +212,18 @@ def _reconcile_existing_links(
     project_by_customer: dict[str, dict[str, str | None]], contact_name_by_customer: dict[str, str],
 ) -> int:
     """Backfill older synchronised mail after a customer mapping is added."""
-    rows = store.request("GET", f"emails?user_id=eq.{owner_id}&customer_id=is.null&select=id,sender,sender_name,status&limit=500") or []
+    rows = store.request("GET", f"emails?user_id=eq.{owner_id}&customer_id=is.null&select=id,sender,sender_name,receiver,subject,content_text,content_preview,status&limit=500") or []
     linked = 0
     for row in rows:
         sender = str(row.get("sender") or "")
-        if is_internal_mail_address(sender):
-            continue
-        customer_id = _resolve_customer(sender, row.get("sender_name"), customer_by_email, customer_by_contact)
+        customer_id = (
+            _resolve_internal_forward_customer(
+                row.get("receiver"), row.get("subject"), row.get("content_text") or row.get("content_preview"),
+                customer_by_email, customer_by_contact,
+            )
+            if is_internal_mail_address(sender)
+            else _resolve_customer(sender, row.get("sender_name"), customer_by_email, customer_by_contact)
+        )
         if not customer_id:
             continue
         project = project_by_customer.get(customer_id, {})
@@ -188,7 +231,8 @@ def _reconcile_existing_links(
             "customer_id": customer_id, "project_id": project.get("id"), "product_id": project.get("product_id"),
             "status": "linked" if row.get("status") in ("new_lead", "unread", None) else row.get("status"),
         })
-        _remember_mapping(store, owner_id, str(row.get("sender") or ""), customer_id, contact_name_by_customer.get(customer_id))
+        if not is_internal_mail_address(sender):
+            _remember_mapping(store, owner_id, sender, customer_id, contact_name_by_customer.get(customer_id))
         linked += 1
     return linked
 
@@ -259,10 +303,18 @@ def _sync_mailbox(store: MailStore, mailbox_config: MailboxRuntime) -> dict[str,
                 message = BytesParser(policy=policy.default).parsebytes(raw)
                 sender_name, sender = parseaddr(message.get("From", ""))
                 sender = sender.lower()
-                # A message forwarded by an internal colleague is business context,
-                # not proof that the colleague is the overseas customer.
-                customer_id = None if is_internal_mail_address(sender) else _resolve_customer(sender, sender_name, customer_by_email, customer_by_contact)
                 content = _text(message)
+                # A colleague's address is never treated as a customer address.
+                # For forwarded threads, use the actual customer evidence inside
+                # the message only when it identifies one customer uniquely.
+                customer_id = (
+                    _resolve_internal_forward_customer(
+                        message.get("To", ""), message.get("Subject", ""), content,
+                        customer_by_email, customer_by_contact,
+                    )
+                    if is_internal_mail_address(sender)
+                    else _resolve_customer(sender, sender_name, customer_by_email, customer_by_contact)
+                )
                 project = project_by_customer.get(customer_id or "", {})
                 message_id = message.get("Message-ID") or f"imap-{uid.decode(errors='ignore')}"
                 payload = {
