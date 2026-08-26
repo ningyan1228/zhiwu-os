@@ -9,6 +9,16 @@
 
 begin;
 
+-- Supabase's web SQL runner can release temporary tables between statements.
+-- These short-lived staging tables therefore live in public for this migration
+-- and are explicitly removed at the end (and before a safe rerun).
+drop table if exists public.crm_relation_collision;
+drop table if exists public.crm_quote_merge_map;
+drop table if exists public.crm_followup_merge_map;
+drop table if exists public.crm_project_merge_map;
+drop table if exists public.crm_product_merge_map;
+drop table if exists public.crm_customer_merge_map;
+
 -- Archive metadata is deliberately separate from AI-import reversal metadata.
 alter table public.customers add column if not exists archived_at timestamptz;
 alter table public.customers add column if not exists merged_into_customer_id uuid references public.customers(id) on delete set null;
@@ -57,10 +67,10 @@ create policy "workspace customer merge log" on public.customer_merge_log for se
 
 -- Fixed IDs make the migration auditable and idempotent. The left side is the
 -- Zhiwu-created master record; the right side is the Peter-created duplicate.
-create temporary table crm_customer_merge_map (
+create table public.crm_customer_merge_map (
   master_customer_id uuid primary key,
   source_customer_id uuid unique not null
-) on commit drop;
+);
 
 insert into crm_customer_merge_map (master_customer_id, source_customer_id) values
   ('85a38500-a3b6-4c5a-b085-b47eb31f0ed7', 'd5096fbc-88c1-4c8f-9448-afca609cef01'), -- Uflex
@@ -72,7 +82,7 @@ insert into crm_customer_merge_map (master_customer_id, source_customer_id) valu
 
 -- Archive Peter's duplicate product seeds and repoint dependent records to the
 -- Zhiwu product of the same public product code.
-create temporary table crm_product_merge_map on commit drop as
+create table public.crm_product_merge_map as
 select source.id as source_product_id, master.id as master_product_id
 from public.products source
 join public.products master
@@ -100,7 +110,7 @@ from crm_product_merge_map map
 where target.id = map.source_product_id and target.archived_at is null;
 
 -- Find Peter's duplicate project records before moving source customer IDs.
-create temporary table crm_project_merge_map on commit drop as
+create table public.crm_project_merge_map as
 select source.id as source_project_id, master.id as master_project_id
 from public.projects source
 join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.customer_id
@@ -145,7 +155,7 @@ from crm_customer_merge_map customer_map where target.customer_id = customer_map
 
 -- Identical copied follow-ups and quotes are archived; unique historical rows
 -- are retained and moved to the customer master record.
-create temporary table crm_followup_merge_map on commit drop as
+create table public.crm_followup_merge_map as
 select source.id as source_followup_id, master.id as master_followup_id
 from public.followups source
 join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.customer_id
@@ -171,7 +181,7 @@ where source.customer_id = customer_map.source_customer_id
   )
   and source.archived_at is null;
 
-create temporary table crm_quote_merge_map on commit drop as
+create table public.crm_quote_merge_map as
 select source.id as source_quote_id, master.id as master_quote_id
 from public.quotes source
 join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.customer_id
@@ -208,7 +218,7 @@ where lower(email_address) = 'peter@neonliontech.com';
 
 -- Product/customer relations are business links, not customer records. Move
 -- non-duplicate links and archive only exact collisions.
-create temporary table crm_relation_collision on commit drop as
+create table public.crm_relation_collision as
 select source.id as source_relation_id
 from public.product_customer_relations source
 join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.customer_id
@@ -372,5 +382,12 @@ where lower(product.product_code) = 'nl-410lm' and product.archived_at is null
     where relation.product_id = product.id and relation.customer_id = 'e88f5708-b28b-4f63-bca1-2e8fc0b0846a'
       and relation.archived_at is null
   );
+
+drop table if exists public.crm_relation_collision;
+drop table if exists public.crm_quote_merge_map;
+drop table if exists public.crm_followup_merge_map;
+drop table if exists public.crm_project_merge_map;
+drop table if exists public.crm_product_merge_map;
+drop table if exists public.crm_customer_merge_map;
 
 commit;
