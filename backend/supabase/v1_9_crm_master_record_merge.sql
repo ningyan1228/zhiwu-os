@@ -9,16 +9,6 @@
 
 begin;
 
--- Supabase's web SQL runner can release temporary tables between statements.
--- These short-lived staging tables therefore live in public for this migration
--- and are explicitly removed at the end (and before a safe rerun).
-drop table if exists public.crm_relation_collision;
-drop table if exists public.crm_quote_merge_map;
-drop table if exists public.crm_followup_merge_map;
-drop table if exists public.crm_project_merge_map;
-drop table if exists public.crm_product_merge_map;
-drop table if exists public.crm_customer_merge_map;
-
 -- Archive metadata is deliberately separate from AI-import reversal metadata.
 alter table public.customers add column if not exists archived_at timestamptz;
 alter table public.customers add column if not exists merged_into_customer_id uuid references public.customers(id) on delete set null;
@@ -65,208 +55,146 @@ drop policy if exists "workspace customer merge log" on public.customer_merge_lo
 create policy "workspace customer merge log" on public.customer_merge_log for select
   using (public.is_workspace_member());
 
--- Fixed IDs make the migration auditable and idempotent. The left side is the
--- Zhiwu-created master record; the right side is the Peter-created duplicate.
-create table public.crm_customer_merge_map (
-  master_customer_id uuid primary key,
-  source_customer_id uuid unique not null
-);
+-- Fixed IDs make the migration auditable and idempotent.  Store the target
+-- directly on the six duplicate rows: this avoids relying on session-scoped
+-- staging tables in the Supabase SQL editor.
+update public.customers source set merged_into_customer_id = case source.id
+  when 'd5096fbc-88c1-4c8f-9448-afca609cef01' then '85a38500-a3b6-4c5a-b085-b47eb31f0ed7'::uuid -- Uflex
+  when '60912070-590e-4f52-837b-35e4bb6a5880' then 'c25c35f9-ae08-4df2-820d-a6cadc830a50'::uuid -- Agrileaf
+  when '6ef2e1d3-7058-4d74-8040-dd4c005d0e8d' then 'e88f5708-b28b-4f63-bca1-2e8fc0b0846a'::uuid -- Flexo
+  when 'c6d6ac5f-1197-4451-bcca-013b13c8c795' then 'cd24f346-4f95-45be-8d52-5dc7e63956eb'::uuid -- FLEX/design
+  when '09ac615e-b44c-4504-9fc5-bac6ad4f5385' then '3dc314ce-e352-4e52-b904-c6e22e008694'::uuid -- ATSajan
+  when '79e60567-5076-40cd-a11b-d26e993d7f13' then '1a21538a-5630-4a90-84c8-4ec6c2181d91'::uuid -- Inkofix
+end
+where source.id in (
+  'd5096fbc-88c1-4c8f-9448-afca609cef01', '60912070-590e-4f52-837b-35e4bb6a5880',
+  '6ef2e1d3-7058-4d74-8040-dd4c005d0e8d', 'c6d6ac5f-1197-4451-bcca-013b13c8c795',
+  '09ac615e-b44c-4504-9fc5-bac6ad4f5385', '79e60567-5076-40cd-a11b-d26e993d7f13'
+) and source.archived_at is null;
 
-insert into crm_customer_merge_map (master_customer_id, source_customer_id) values
-  ('85a38500-a3b6-4c5a-b085-b47eb31f0ed7', 'd5096fbc-88c1-4c8f-9448-afca609cef01'), -- Uflex
-  ('c25c35f9-ae08-4df2-820d-a6cadc830a50', '60912070-590e-4f52-837b-35e4bb6a5880'), -- Agrileaf
-  ('e88f5708-b28b-4f63-bca1-2e8fc0b0846a', '6ef2e1d3-7058-4d74-8040-dd4c005d0e8d'), -- Flexo
-  ('cd24f346-4f95-45be-8d52-5dc7e63956eb', 'c6d6ac5f-1197-4451-bcca-013b13c8c795'), -- FLEX/design
-  ('3dc314ce-e352-4e52-b904-c6e22e008694', '09ac615e-b44c-4504-9fc5-bac6ad4f5385'), -- ATSajan
-  ('1a21538a-5630-4a90-84c8-4ec6c2181d91', '79e60567-5076-40cd-a11b-d26e993d7f13'); -- Inkofix
-
--- Archive Peter's duplicate product seeds and repoint dependent records to the
--- Zhiwu product of the same public product code.
-create table public.crm_product_merge_map as
-select source.id as source_product_id, master.id as master_product_id
-from public.products source
-join public.products master
+-- Repoint Peter's duplicate products to the Zhiwu product with the same public code.
+update public.projects target set product_id = master.id
+from public.products source join public.products master
   on lower(master.product_code) = lower(source.product_code)
  and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
-where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98'
-  and source.archived_at is null;
-
-update public.projects target set product_id = map.master_product_id
-from crm_product_merge_map map where target.product_id = map.source_product_id;
-update public.quotes target set product_id = map.master_product_id
-from crm_product_merge_map map where target.product_id = map.source_product_id;
-update public.emails target set product_id = map.master_product_id
-from crm_product_merge_map map where target.product_id = map.source_product_id;
-update public.tasks target set product_id = map.master_product_id
-from crm_product_merge_map map where target.product_id = map.source_product_id;
-update public.timeline_events target set product_id = map.master_product_id
-from crm_product_merge_map map where target.product_id = map.source_product_id;
-update public.product_customer_relations target set product_id = map.master_product_id
-from crm_product_merge_map map where target.product_id = map.source_product_id;
-update public.products target
-set archived_at = now(), merged_into_product_id = map.master_product_id,
+where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null
+  and target.product_id = source.id;
+update public.quotes target set product_id = master.id
+from public.products source join public.products master on lower(master.product_code) = lower(source.product_code) and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
+where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null and target.product_id = source.id;
+update public.emails target set product_id = master.id
+from public.products source join public.products master on lower(master.product_code) = lower(source.product_code) and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
+where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null and target.product_id = source.id;
+update public.tasks target set product_id = master.id
+from public.products source join public.products master on lower(master.product_code) = lower(source.product_code) and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
+where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null and target.product_id = source.id;
+update public.timeline_events target set product_id = master.id
+from public.products source join public.products master on lower(master.product_code) = lower(source.product_code) and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
+where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null and target.product_id = source.id;
+update public.product_customer_relations target set product_id = master.id
+from public.products source join public.products master on lower(master.product_code) = lower(source.product_code) and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
+where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null and target.product_id = source.id;
+update public.products source set archived_at = now(), merged_into_product_id = master.id,
     archive_reason = 'Merged duplicate demo product into Zhiwu master product'
-from crm_product_merge_map map
-where target.id = map.source_product_id and target.archived_at is null;
+from public.products master
+where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null
+  and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
+  and lower(master.product_code) = lower(source.product_code);
 
--- Find Peter's duplicate project records before moving source customer IDs.
-create table public.crm_project_merge_map as
-select source.id as source_project_id, master.id as master_project_id
-from public.projects source
-join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.customer_id
-join public.projects master
-  on master.customer_id = customer_map.master_customer_id
- and lower(master.project_name) = lower(source.project_name)
+-- Mark exact copied projects, then repoint their dependent activity and archive them.
+update public.projects source set merged_into_project_id = master.id
+from public.customers source_customer join public.projects master
+  on master.customer_id = source_customer.merged_into_customer_id
  and master.archived_at is null
-where source.archived_at is null;
-
--- Keep any genuinely distinct project, but archive the exact copied project.
-update public.projects source
-set archived_at = now(), merged_into_project_id = project_map.master_project_id,
-    archive_reason = 'Merged duplicate demo project into master project'
-from crm_project_merge_map project_map
-where source.id = project_map.source_project_id and source.archived_at is null;
-
-update public.projects source set customer_id = customer_map.master_customer_id
-from crm_customer_merge_map customer_map
-where source.customer_id = customer_map.source_customer_id
-  and not exists (
-    select 1 from crm_project_merge_map project_map
-    where project_map.source_project_id = source.id
-  )
+where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
+  and lower(master.project_name) = lower(source.project_name)
   and source.archived_at is null;
+update public.emails target set project_id = source.merged_into_project_id
+from public.projects source where target.project_id = source.id and source.merged_into_project_id is not null;
+update public.tasks target set project_id = source.merged_into_project_id
+from public.projects source where target.project_id = source.id and source.merged_into_project_id is not null;
+update public.timeline_events target set project_id = source.merged_into_project_id
+from public.projects source where target.project_id = source.id and source.merged_into_project_id is not null;
+update public.projects source set archived_at = now(), archive_reason = 'Merged duplicate demo project into master project'
+where source.merged_into_project_id is not null and source.archived_at is null;
+update public.projects source set customer_id = source_customer.merged_into_customer_id
+from public.customers source_customer
+where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
+  and source.merged_into_project_id is null and source.archived_at is null;
 
-update public.emails target set project_id = project_map.master_project_id
-from crm_project_merge_map project_map where target.project_id = project_map.source_project_id;
-update public.tasks target set project_id = project_map.master_project_id
-from crm_project_merge_map project_map where target.project_id = project_map.source_project_id;
-update public.timeline_events target set project_id = project_map.master_project_id
-from crm_project_merge_map project_map where target.project_id = project_map.source_project_id;
+-- Move actual mailbox history, tasks and customer mappings to the shared master.
+update public.emails target set customer_id = source_customer.merged_into_customer_id
+from public.customers source_customer where target.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null;
+update public.email_actions target set customer_id = source_customer.merged_into_customer_id
+from public.customers source_customer where target.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null;
+update public.tasks target set customer_id = source_customer.merged_into_customer_id
+from public.customers source_customer where target.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null;
+update public.timeline_events target set customer_id = source_customer.merged_into_customer_id
+from public.customers source_customer where target.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null;
+update public.customer_email_mappings target set customer_id = source_customer.merged_into_customer_id
+from public.customers source_customer where target.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null;
+delete from public.customer_email_mappings where lower(email_address) = 'peter@neonliontech.com';
 
--- Move actual mailbox history and unique operational records to the master.
-update public.emails target set customer_id = customer_map.master_customer_id
-from crm_customer_merge_map customer_map where target.customer_id = customer_map.source_customer_id;
-update public.email_actions target set customer_id = customer_map.master_customer_id
-from crm_customer_merge_map customer_map where target.customer_id = customer_map.source_customer_id;
-update public.tasks target set customer_id = customer_map.master_customer_id
-from crm_customer_merge_map customer_map where target.customer_id = customer_map.source_customer_id;
-update public.timeline_events target set customer_id = customer_map.master_customer_id
-from crm_customer_merge_map customer_map where target.customer_id = customer_map.source_customer_id;
-
--- Identical copied follow-ups and quotes are archived; unique historical rows
--- are retained and moved to the customer master record.
-create table public.crm_followup_merge_map as
-select source.id as source_followup_id, master.id as master_followup_id
-from public.followups source
-join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.customer_id
-join public.followups master
-  on master.customer_id = customer_map.master_customer_id
- and master.date = source.date
- and master.content = source.content
- and coalesce(master.next_action, '') = coalesce(source.next_action, '')
- and master.archived_at is null
-where source.archived_at is null;
-
-update public.followups source
-set archived_at = now(), merged_into_followup_id = followup_map.master_followup_id,
-    archive_reason = 'Merged duplicate demo follow-up into master follow-up'
-from crm_followup_merge_map followup_map
-where source.id = followup_map.source_followup_id and source.archived_at is null;
-update public.followups source set customer_id = customer_map.master_customer_id
-from crm_customer_merge_map customer_map
-where source.customer_id = customer_map.source_customer_id
-  and not exists (
-    select 1 from crm_followup_merge_map followup_map
-    where followup_map.source_followup_id = source.id
-  )
+-- Archive exact copied follow-ups/quotes but retain any genuinely distinct history.
+update public.followups source set merged_into_followup_id = master.id
+from public.customers source_customer join public.followups master
+  on master.customer_id = source_customer.merged_into_customer_id and master.archived_at is null
+where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
+  and master.date = source.date and master.content = source.content
+  and coalesce(master.next_action, '') = coalesce(source.next_action, '')
   and source.archived_at is null;
+update public.followups source set archived_at = now(), archive_reason = 'Merged duplicate demo follow-up into master follow-up'
+where source.merged_into_followup_id is not null and source.archived_at is null;
+update public.followups source set customer_id = source_customer.merged_into_customer_id
+from public.customers source_customer
+where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
+  and source.merged_into_followup_id is null and source.archived_at is null;
 
-create table public.crm_quote_merge_map as
-select source.id as source_quote_id, master.id as master_quote_id
-from public.quotes source
-join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.customer_id
-join public.quotes master
-  on master.customer_id = customer_map.master_customer_id
- and master.product_id is not distinct from source.product_id
- and master.quantity = source.quantity
- and master.amount is not distinct from source.amount
- and master.currency = source.currency
- and coalesce(master.trade_term, '') = coalesce(source.trade_term, '')
- and master.archived_at is null
-where source.archived_at is null;
-
-update public.quotes source
-set archived_at = now(), merged_into_quote_id = quote_map.master_quote_id,
-    archive_reason = 'Merged duplicate demo quotation into master quotation'
-from crm_quote_merge_map quote_map
-where source.id = quote_map.source_quote_id and source.archived_at is null;
-update public.quotes source set customer_id = customer_map.master_customer_id
-from crm_customer_merge_map customer_map
-where source.customer_id = customer_map.source_customer_id
-  and not exists (
-    select 1 from crm_quote_merge_map quote_map
-    where quote_map.source_quote_id = source.id
-  )
+update public.quotes source set merged_into_quote_id = master.id
+from public.customers source_customer join public.quotes master
+  on master.customer_id = source_customer.merged_into_customer_id and master.archived_at is null
+where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
+  and master.product_id is not distinct from source.product_id and master.quantity = source.quantity
+  and master.amount is not distinct from source.amount and master.currency = source.currency
+  and coalesce(master.trade_term, '') = coalesce(source.trade_term, '')
   and source.archived_at is null;
+update public.quotes source set archived_at = now(), archive_reason = 'Merged duplicate demo quotation into master quotation'
+where source.merged_into_quote_id is not null and source.archived_at is null;
+update public.quotes source set customer_id = source_customer.merged_into_customer_id
+from public.customers source_customer
+where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
+  and source.merged_into_quote_id is null and source.archived_at is null;
 
--- A mailbox mapping belongs to its mailbox owner but now targets the shared
--- customer master. Peter's own address is explicitly not a customer mapping.
-update public.customer_email_mappings target set customer_id = customer_map.master_customer_id
-from crm_customer_merge_map customer_map where target.customer_id = customer_map.source_customer_id;
-delete from public.customer_email_mappings
-where lower(email_address) = 'peter@neonliontech.com';
-
--- Product/customer relations are business links, not customer records. Move
--- non-duplicate links and archive only exact collisions.
-create table public.crm_relation_collision as
-select source.id as source_relation_id
-from public.product_customer_relations source
-join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.customer_id
-where source.archived_at is null
-  and exists (
+-- Preserve relation history; only archive links already represented on the master.
+update public.product_customer_relations source set archived_at = now(), archive_reason = 'Merged duplicate product/customer relation'
+from public.customers source_customer
+where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
+  and source.archived_at is null and exists (
     select 1 from public.product_customer_relations master
-    where master.user_id = source.user_id
-      and master.product_id = source.product_id
-      and master.customer_id = customer_map.master_customer_id
-      and master.id <> source.id
-      and master.archived_at is null
+    where master.product_id = source.product_id and master.customer_id = source_customer.merged_into_customer_id
+      and master.id <> source.id and master.archived_at is null
   );
-update public.product_customer_relations source
-set archived_at = now(), archive_reason = 'Merged duplicate product/customer relation'
-from crm_relation_collision collision
-where source.id = collision.source_relation_id and source.archived_at is null;
-update public.product_customer_relations source set customer_id = customer_map.master_customer_id
-from crm_customer_merge_map customer_map
-where source.customer_id = customer_map.source_customer_id
-  and not exists (
-    select 1 from crm_relation_collision collision
-    where collision.source_relation_id = source.id
-  )
+update public.product_customer_relations source set customer_id = source_customer.merged_into_customer_id
+from public.customers source_customer
+where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
   and source.archived_at is null;
 
--- Preserve an immutable customer snapshot before archiving each duplicate.
+-- Preserve an immutable duplicate snapshot and a shared CRM timeline entry.
 insert into public.customer_merge_log (source_customer_id, master_customer_id, source_snapshot, reason, merged_by)
-select source.id, customer_map.master_customer_id, to_jsonb(source),
+select source.id, source.merged_into_customer_id, to_jsonb(source),
        'Peter-created duplicate CRM master record merged into Zhiwu-created master record', auth.uid()
 from public.customers source
-join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.id
-where source.archived_at is null
+where source.merged_into_customer_id is not null and source.archived_at is null
 on conflict (source_customer_id) do nothing;
-
 insert into public.timeline_events (user_id, event_date, event_time, title, event_type, source, related_id, customer_id)
 select master.user_id, current_date, localtime,
-       '已合并重复客户档案：' || source.company_name || '（保留历史快照）',
-       'crm', 'customer_merge', source.id, master.id
-from public.customers source
-join crm_customer_merge_map customer_map on customer_map.source_customer_id = source.id
-join public.customers master on master.id = customer_map.master_customer_id
-where source.archived_at is null;
-
-update public.customers source
-set archived_at = now(), merged_into_customer_id = customer_map.master_customer_id,
+       '已合并重复客户档案：' || duplicate.company_name || '（保留历史快照）',
+       'crm', 'customer_merge', duplicate.id, master.id
+from public.customers duplicate join public.customers master on master.id = duplicate.merged_into_customer_id
+where duplicate.archived_at is null;
+update public.customers source set archived_at = now(),
     archive_reason = 'Peter-created duplicate CRM master record merged into Zhiwu master record'
-from crm_customer_merge_map customer_map
-where source.id = customer_map.source_customer_id and source.archived_at is null;
+where source.merged_into_customer_id is not null and source.archived_at is null;
 
 -- Canonical company identities and the current business truth supplied by Zhiwu.
 update public.customers set
@@ -382,12 +310,5 @@ where lower(product.product_code) = 'nl-410lm' and product.archived_at is null
     where relation.product_id = product.id and relation.customer_id = 'e88f5708-b28b-4f63-bca1-2e8fc0b0846a'
       and relation.archived_at is null
   );
-
-drop table if exists public.crm_relation_collision;
-drop table if exists public.crm_quote_merge_map;
-drop table if exists public.crm_followup_merge_map;
-drop table if exists public.crm_project_merge_map;
-drop table if exists public.crm_product_merge_map;
-drop table if exists public.crm_customer_merge_map;
 
 commit;
