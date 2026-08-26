@@ -119,9 +119,11 @@ where source.id = project_map.source_project_id and source.archived_at is null;
 
 update public.projects source set customer_id = customer_map.master_customer_id
 from crm_customer_merge_map customer_map
-left join crm_project_merge_map project_map on project_map.source_project_id = source.id
 where source.customer_id = customer_map.source_customer_id
-  and project_map.source_project_id is null
+  and not exists (
+    select 1 from crm_project_merge_map project_map
+    where project_map.source_project_id = source.id
+  )
   and source.archived_at is null;
 
 update public.emails target set project_id = project_map.master_project_id
@@ -162,9 +164,11 @@ from crm_followup_merge_map followup_map
 where source.id = followup_map.source_followup_id and source.archived_at is null;
 update public.followups source set customer_id = customer_map.master_customer_id
 from crm_customer_merge_map customer_map
-left join crm_followup_merge_map followup_map on followup_map.source_followup_id = source.id
 where source.customer_id = customer_map.source_customer_id
-  and followup_map.source_followup_id is null
+  and not exists (
+    select 1 from crm_followup_merge_map followup_map
+    where followup_map.source_followup_id = source.id
+  )
   and source.archived_at is null;
 
 create temporary table crm_quote_merge_map on commit drop as
@@ -188,9 +192,11 @@ from crm_quote_merge_map quote_map
 where source.id = quote_map.source_quote_id and source.archived_at is null;
 update public.quotes source set customer_id = customer_map.master_customer_id
 from crm_customer_merge_map customer_map
-left join crm_quote_merge_map quote_map on quote_map.source_quote_id = source.id
 where source.customer_id = customer_map.source_customer_id
-  and quote_map.source_quote_id is null
+  and not exists (
+    select 1 from crm_quote_merge_map quote_map
+    where quote_map.source_quote_id = source.id
+  )
   and source.archived_at is null;
 
 -- A mailbox mapping belongs to its mailbox owner but now targets the shared
@@ -221,9 +227,11 @@ from crm_relation_collision collision
 where source.id = collision.source_relation_id and source.archived_at is null;
 update public.product_customer_relations source set customer_id = customer_map.master_customer_id
 from crm_customer_merge_map customer_map
-left join crm_relation_collision collision on collision.source_relation_id = source.id
 where source.customer_id = customer_map.source_customer_id
-  and collision.source_relation_id is null
+  and not exists (
+    select 1 from crm_relation_collision collision
+    where collision.source_relation_id = source.id
+  )
   and source.archived_at is null;
 
 -- Preserve an immutable customer snapshot before archiving each duplicate.
