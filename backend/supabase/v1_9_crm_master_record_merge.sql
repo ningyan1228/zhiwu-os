@@ -41,6 +41,18 @@ create index if not exists customers_operational_idx on public.customers(archive
 create index if not exists products_operational_idx on public.products(archived_at) where archived_at is null;
 create index if not exists projects_operational_idx on public.projects(archived_at) where archived_at is null;
 
+-- Audit snapshots make every archived duplicate traceable.  Access policies
+-- already established for the shared CRM remain unchanged by this migration.
+create table if not exists public.customer_merge_log (
+  id uuid primary key default gen_random_uuid(),
+  source_customer_id uuid not null unique references public.customers(id) on delete restrict,
+  master_customer_id uuid not null references public.customers(id) on delete restrict,
+  source_snapshot jsonb not null,
+  reason text not null,
+  merged_by uuid references auth.users(id) on delete set null,
+  merged_at timestamptz not null default now()
+);
+
 -- Fixed IDs make the migration auditable and idempotent.  Store the target
 -- directly on the six duplicate rows: this avoids relying on session-scoped
 -- staging tables in the Supabase SQL editor.
@@ -165,8 +177,14 @@ from public.customers source_customer
 where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
   and source.archived_at is null;
 
--- The archived duplicate remains in the database with merge metadata, and the
--- shared customer timeline documents the merge without deleting historical data.
+-- The archived duplicate remains in the database and is also captured as an
+-- immutable audit snapshot before it leaves the normal CRM list.
+insert into public.customer_merge_log (source_customer_id, master_customer_id, source_snapshot, reason, merged_by)
+select source.id, source.merged_into_customer_id, to_jsonb(source),
+       'Internal duplicate CRM master record merged into retained master record', auth.uid()
+from public.customers source
+where source.merged_into_customer_id is not null and source.archived_at is null
+on conflict (source_customer_id) do nothing;
 insert into public.timeline_events (user_id, event_date, event_time, title, event_type, source, related_id, customer_id)
 select master.user_id, current_date, localtime,
        '已合并重复客户档案：' || duplicate.company_name || '（保留历史快照）',
