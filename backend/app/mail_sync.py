@@ -139,9 +139,9 @@ class MailStore:
 def _customer_lookup(store: MailStore, owner_id: str) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, str | None]], dict[str, str]]:
     # CRM is a shared workspace. Mail itself remains private because every email
     # record is stored under the mailbox owner's user_id.
-    customers = store.request("GET", "customers?import_reverted=eq.false&select=id,email,contact_person") or []
+    customers = store.request("GET", "customers?import_reverted=eq.false&archived_at=is.null&select=id,email,contact_person") or []
     mappings = store.request("GET", f"customer_email_mappings?user_id=eq.{owner_id}&select=customer_id,email_address,contact_name") or []
-    projects = store.request("GET", "projects?import_reverted=eq.false&select=id,customer_id,product_id&order=created_at.desc") or []
+    projects = store.request("GET", "projects?import_reverted=eq.false&archived_at=is.null&select=id,customer_id,product_id&order=created_at.desc") or []
     customer_by_email = {str(row.get("email", "")).lower(): row["id"] for row in customers if row.get("email")}
     customer_by_email.update({str(row.get("email_address", "")).lower(): row["customer_id"] for row in mappings if row.get("email_address")})
     customer_by_contact: dict[str, str] = {}

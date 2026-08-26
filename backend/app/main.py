@@ -229,8 +229,8 @@ async def build_import_preview(token: str, payload: dict[str, Any]) -> dict[str,
         if not isinstance(product, dict) or not import_text(product.get("code")).upper().startswith("NL-"):
             raise HTTPException(422, f"product_refs[{index}].code must start with NL-")
 
-    customers = await supabase("customers?select=*&import_reverted=eq.false&limit=500", token)
-    products = await supabase("products?select=*&import_reverted=eq.false&limit=500", token)
+    customers = await supabase("customers?select=*&import_reverted=eq.false&archived_at=is.null&limit=500", token)
+    products = await supabase("products?select=*&import_reverted=eq.false&archived_at=is.null&limit=500", token)
     email_matches = [row for row in customers if email and import_key(row.get("email")) == email]
     company_matches = [row for row in customers if company_name and import_key(row.get("company_name")) == import_key(company_name)]
     internal = is_internal_mail_address(email)
@@ -258,7 +258,7 @@ async def build_import_preview(token: str, payload: dict[str, Any]) -> dict[str,
     if import_text(project.get("name")):
         project_action = "待确认"
         if customer_match.get("customer_id"):
-            project_rows = await supabase(f"projects?customer_id=eq.{customer_match['customer_id']}&import_reverted=eq.false&select=id,project_name", token)
+            project_rows = await supabase(f"projects?customer_id=eq.{customer_match['customer_id']}&import_reverted=eq.false&archived_at=is.null&select=id,project_name", token)
             existing_project = next((row for row in project_rows if import_key(row.get("project_name")) == import_key(project.get("name"))), None)
             project_action = "更新" if existing_project else "新增"
         actions.append({"entity": "项目", "action": project_action, "label": import_text(project.get("name"))})
@@ -356,7 +356,7 @@ def health(): return {"status": "ok"}
 async def seed_demo(authorization: str | None = Header(default=None)):
     """Initialize one authenticated workspace with the V1.1 trade CRM demo dataset."""
     token = bearer(authorization)
-    existing = await supabase("customers?select=id&limit=1", token)
+    existing = await supabase("customers?archived_at=is.null&select=id&limit=1", token)
     if existing:
         return {"seeded": False, "reason": "workspace already has customers"}
     product_rows = await supabase("products", token, "POST", DEMO_PRODUCTS)
@@ -384,7 +384,7 @@ async def seed_demo(authorization: str | None = Header(default=None)):
 
 @app.get("/api/customers")
 async def list_customers(authorization: str | None = Header(default=None), limit: int = Query(100, le=100)):
-    return await supabase(f"customers?select=*&import_reverted=eq.false&order=created_at.desc&limit={limit}", bearer(authorization))
+    return await supabase(f"customers?select=*&import_reverted=eq.false&archived_at=is.null&order=created_at.desc&limit={limit}", bearer(authorization))
 
 @app.post("/api/customers", status_code=201)
 async def create_customer(customer: CustomerIn, authorization: str | None = Header(default=None)):
@@ -392,11 +392,11 @@ async def create_customer(customer: CustomerIn, authorization: str | None = Head
 
 @app.patch("/api/customers/{customer_id}")
 async def update_customer(customer_id: str, customer: CustomerIn, authorization: str | None = Header(default=None)):
-    return await supabase(f"customers?id=eq.{customer_id}", bearer(authorization), "PATCH", customer.model_dump(exclude_none=True))
+    return await supabase(f"customers?id=eq.{customer_id}&archived_at=is.null", bearer(authorization), "PATCH", customer.model_dump(exclude_none=True))
 
 @app.get("/api/products")
 async def list_products(authorization: str | None = Header(default=None)):
-    return await supabase("products?select=*&import_reverted=eq.false&order=product_name.asc", bearer(authorization))
+    return await supabase("products?select=*&import_reverted=eq.false&archived_at=is.null&order=product_name.asc", bearer(authorization))
 
 @app.post("/api/products", status_code=201)
 async def create_product(product: ProductIn, authorization: str | None = Header(default=None)):
@@ -404,16 +404,16 @@ async def create_product(product: ProductIn, authorization: str | None = Header(
 
 @app.get("/api/product-customer-relations")
 async def list_product_customer_relations(authorization: str | None = Header(default=None)):
-    return await supabase("product_customer_relations?select=*&import_reverted=eq.false&order=created_at.desc", bearer(authorization))
+    return await supabase("product_customer_relations?select=*&import_reverted=eq.false&archived_at=is.null&order=created_at.desc", bearer(authorization))
 
 @app.post("/api/products/{product_id}/customers", status_code=201)
 async def link_product_to_customer(product_id: str, payload: ProductCustomerRelationIn, authorization: str | None = Header(default=None)):
     token = bearer(authorization)
-    product_rows = await supabase(f"products?id=eq.{product_id}&select=id", token)
-    customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&select=id", token)
+    product_rows = await supabase(f"products?id=eq.{product_id}&archived_at=is.null&select=id", token)
+    customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&archived_at=is.null&select=id", token)
     if not product_rows or not customer_rows:
         raise HTTPException(404, "Product or customer not found")
-    existing = await supabase(f"product_customer_relations?product_id=eq.{product_id}&customer_id=eq.{payload.customer_id}&import_reverted=eq.false&select=*", token)
+    existing = await supabase(f"product_customer_relations?product_id=eq.{product_id}&customer_id=eq.{payload.customer_id}&import_reverted=eq.false&archived_at=is.null&select=*", token)
     if existing:
         return existing[0]
     rows = await supabase("product_customer_relations", token, "POST", {"product_id": product_id, "customer_id": payload.customer_id})
@@ -421,7 +421,7 @@ async def link_product_to_customer(product_id: str, payload: ProductCustomerRela
 
 @app.get("/api/followups")
 async def list_followups(authorization: str | None = Header(default=None)):
-    return await supabase("followups?select=*&import_reverted=eq.false&order=date.desc", bearer(authorization))
+    return await supabase("followups?select=*&import_reverted=eq.false&archived_at=is.null&order=date.desc", bearer(authorization))
 
 @app.post("/api/followups", status_code=201)
 async def create_followup(followup: FollowupIn, authorization: str | None = Header(default=None)):
@@ -432,7 +432,7 @@ async def create_followup(followup: FollowupIn, authorization: str | None = Head
 
 @app.get("/api/projects")
 async def list_projects(authorization: str | None = Header(default=None)):
-    return await supabase("projects?select=*&import_reverted=eq.false&order=created_at.desc", bearer(authorization))
+    return await supabase("projects?select=*&import_reverted=eq.false&archived_at=is.null&order=created_at.desc", bearer(authorization))
 
 @app.post("/api/projects", status_code=201)
 async def create_project(project: ProjectIn, authorization: str | None = Header(default=None)):
@@ -444,7 +444,7 @@ async def create_project(project: ProjectIn, authorization: str | None = Header(
 @app.patch("/api/projects/{project_id}")
 async def update_project(project_id: str, project: ProjectUpdateIn, authorization: str | None = Header(default=None)):
     token = bearer(authorization)
-    existing = await supabase(f"projects?id=eq.{project_id}&select=id,customer_id", token)
+    existing = await supabase(f"projects?id=eq.{project_id}&archived_at=is.null&select=id,customer_id", token)
     if not existing:
         raise HTTPException(404, "Project not found")
     rows = await supabase(f"projects?id=eq.{project_id}", token, "PATCH", project.model_dump(exclude_none=True))
@@ -457,7 +457,7 @@ async def list_tasks(
     authorization: str | None = Header(default=None), task_date: str | None = None,
     from_date: str | None = Query(default=None), to_date: str | None = Query(default=None),
 ):
-    filters = ["select=*", "import_reverted=eq.false", "order=task_date.asc,start_time.asc"]
+    filters = ["select=*", "import_reverted=eq.false", "archived_at=is.null", "order=task_date.asc,start_time.asc"]
     if task_date:
         filters.append(f"task_date=eq.{task_date}")
     if from_date:
@@ -477,7 +477,7 @@ async def create_task(task: TaskIn, authorization: str | None = Header(default=N
 @app.patch("/api/tasks/{task_id}")
 async def update_task_status(task_id: str, payload: TaskStatusIn, authorization: str | None = Header(default=None)):
     token = bearer(authorization)
-    existing = await supabase(f"tasks?id=eq.{task_id}&select=*", token)
+    existing = await supabase(f"tasks?id=eq.{task_id}&archived_at=is.null&select=*", token)
     if not existing:
         raise HTTPException(404, "Task not found")
     task = existing[0]
@@ -509,7 +509,7 @@ async def list_timeline(
     authorization: str | None = Header(default=None), event_date: str | None = None,
     from_date: str | None = Query(default=None), to_date: str | None = Query(default=None), limit: int = Query(300, le=500),
 ):
-    filters = ["select=*", "import_reverted=eq.false", "order=event_date.desc,event_time.desc", f"limit={limit}"]
+    filters = ["select=*", "import_reverted=eq.false", "archived_at=is.null", "order=event_date.desc,event_time.desc", f"limit={limit}"]
     if event_date:
         filters.append(f"event_date=eq.{event_date}")
     if from_date:
@@ -561,7 +561,7 @@ async def apply_import(batch_id: str, confirmation: ImportApplyIn, authorization
     if match["kind"] == "company_ambiguous" and not confirmation.selected_customer_id:
         raise HTTPException(422, "请从同名客户中选择一个目标客户")
 
-    active_customers = await supabase("customers?select=*&import_reverted=eq.false&limit=500", token)
+    active_customers = await supabase("customers?select=*&import_reverted=eq.false&archived_at=is.null&limit=500", token)
     if selected_customer_id:
         customer_rows = [row for row in active_customers if row["id"] == selected_customer_id]
         if not customer_rows:
@@ -615,7 +615,7 @@ async def apply_import(batch_id: str, confirmation: ImportApplyIn, authorization
 
     product_refs = payload.get("product_refs") or []
     product_records: list[dict[str, Any]] = []
-    active_products = await supabase("products?select=*&import_reverted=eq.false&limit=500", token)
+    active_products = await supabase("products?select=*&import_reverted=eq.false&archived_at=is.null&limit=500", token)
     for product_data in product_refs:
         code = import_text(product_data.get("code")).upper()
         existing = next((row for row in active_products if import_key(row.get("product_code")) == import_key(code)), None)
@@ -638,7 +638,7 @@ async def apply_import(batch_id: str, confirmation: ImportApplyIn, authorization
     project = None
     project_name = import_text(project_data.get("name"))
     if project_name:
-        project_rows = await supabase(f"projects?customer_id=eq.{customer['id']}&import_reverted=eq.false&select=*", token)
+        project_rows = await supabase(f"projects?customer_id=eq.{customer['id']}&import_reverted=eq.false&archived_at=is.null&select=*", token)
         existing_project = next((row for row in project_rows if import_key(row.get("project_name")) == import_key(project_name)), None)
         project_values = import_nonempty({"project_name": project_name, "product_id": product.get("id") if product else None, "application": import_text(project_data.get("application")), "stage": import_text(project_data.get("stage")) or import_text(customer_data.get("stage")), "notes": import_text(project_data.get("notes"))})
         if existing_project:
@@ -698,7 +698,7 @@ async def revert_import(batch_id: str, authorization: str | None = Header(defaul
 
 @app.get("/api/quotes")
 async def list_quotes(authorization: str | None = Header(default=None)):
-    return await supabase("quotes?select=*&order=created_at.desc", bearer(authorization))
+    return await supabase("quotes?select=*&archived_at=is.null&order=created_at.desc", bearer(authorization))
 
 @app.post("/api/quotes", status_code=201)
 async def create_quote(quote: QuoteIn, authorization: str | None = Header(default=None)):
@@ -746,10 +746,10 @@ async def link_email_to_customer(email_id: str, payload: EmailLinkIn, authorizat
     rows = await supabase(f"emails?id=eq.{email_id}&select=*", token)
     if not rows:
         raise HTTPException(404, "Email not found")
-    customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&select=id,contact_person", token)
+    customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&archived_at=is.null&select=id,contact_person", token)
     if not customer_rows:
         raise HTTPException(404, "Customer not found")
-    projects = await supabase(f"projects?customer_id=eq.{payload.customer_id}&select=id,product_id&order=created_at.desc&limit=1", token)
+    projects = await supabase(f"projects?customer_id=eq.{payload.customer_id}&archived_at=is.null&select=id,product_id&order=created_at.desc&limit=1", token)
     project = projects[0] if projects else {}
     email = rows[0]
     if not is_internal_mail_address(email.get("sender")):
@@ -784,7 +784,7 @@ async def create_followup_from_email(email_id: str, payload: EmailFollowupIn, au
         "next_action": payload.next_action or "阅读邮件并确认下一步行动",
         "status": "Open",
     })
-    customer_rows = await supabase(f"customers?id=eq.{email['customer_id']}&select=next_followup_date", token)
+    customer_rows = await supabase(f"customers?id=eq.{email['customer_id']}&archived_at=is.null&select=next_followup_date", token)
     await supabase("email_actions", token, "POST", {
         "email_id": email_id,
         "customer_id": email["customer_id"],
@@ -819,27 +819,27 @@ async def update_crm_from_email(email_id: str, payload: EmailCrmUpdateIn, author
     if not email_rows:
         raise HTTPException(404, "Email not found")
     email = email_rows[0]
-    customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&select=*", token)
+    customer_rows = await supabase(f"customers?id=eq.{payload.customer_id}&archived_at=is.null&select=*", token)
     if not customer_rows:
         raise HTTPException(404, "Customer not found")
     customer = customer_rows[0]
     project = None
     if payload.project_id:
-        project_rows = await supabase(f"projects?id=eq.{payload.project_id}&customer_id=eq.{payload.customer_id}&select=*", token)
+        project_rows = await supabase(f"projects?id=eq.{payload.project_id}&customer_id=eq.{payload.customer_id}&archived_at=is.null&select=*", token)
         if not project_rows:
             raise HTTPException(422, "Selected project does not belong to this customer")
-        project = (await supabase(f"projects?id=eq.{payload.project_id}", token, "PATCH", {
+        project = (await supabase(f"projects?id=eq.{payload.project_id}&archived_at=is.null", token, "PATCH", {
             "product_id": payload.product_id,
             "stage": payload.customer_stage,
         }))[0]
     if payload.product_id:
-        product_rows = await supabase(f"products?id=eq.{payload.product_id}&select=product_code", token)
+        product_rows = await supabase(f"products?id=eq.{payload.product_id}&archived_at=is.null&select=product_code", token)
         if not product_rows:
             raise HTTPException(404, "Product not found")
         product_code = product_rows[0]["product_code"]
     else:
         product_code = customer.get("product_interest")
-    updated_customer = (await supabase(f"customers?id=eq.{payload.customer_id}", token, "PATCH", {
+    updated_customer = (await supabase(f"customers?id=eq.{payload.customer_id}&archived_at=is.null", token, "PATCH", {
         "customer_stage": payload.customer_stage,
         "next_followup_date": payload.followup_date,
         "next_action": [payload.next_action],
