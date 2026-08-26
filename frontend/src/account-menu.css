@@ -6,3 +6,6 @@
 .account-popover small{font-size:10px;color:#7c8985;margin:4px 0 10px;overflow:hidden;text-overflow:ellipsis}
 .account-popover button{width:100%;border:0;border-top:1px solid #edf0eb;background:transparent;color:#a55d52;font:500 12px inherit;padding:9px 0 0;display:flex;align-items:center;gap:7px;cursor:pointer}
 .account-popover button:hover{color:#793e36}
+.mail-page .mail-metrics{grid-template-columns:repeat(5,1fr)}
+@media(max-width:1050px){.mail-page .mail-metrics{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:760px){.mail-page .mail-metrics{grid-template-columns:repeat(2,1fr)}}
