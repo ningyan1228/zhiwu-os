@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
-  ArrowUpRight, Bell, CalendarDays, Check, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleHelp, ClipboardList, Clock3, Flame, Grid2X2,
+  ArrowUpRight, Bell, CalendarDays, Check, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleHelp, ClipboardList, Clock3, Flame, Grid2X2, LogOut,
   Brain, Globe2, Home, Inbox, Layers3, Mail, Menu, MoreHorizontal, Network, Package, Paperclip, Plus, RefreshCw, Search, Settings, Sparkles, Star, Users, X, type LucideIcon
 } from 'lucide-react'
 import { customers as seedCustomers, followups as seedFollowups, products as seedProducts, projects as seedProjects, quotes as seedQuotes } from './data'
 import { api } from './api'
 import type { Customer, CustomerStage, DailyLog, EmailSync, Followup, ImportBatch, ImportPreview, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
 import './styles.css'
+import './account-menu.css'
 
 type View = 'dashboard' | 'crm' | 'mail' | 'products' | 'relationships' | 'projects' | 'tasks' | 'calendar' | 'imports'
 const nav: [string, string, LucideIcon][] = [
@@ -20,6 +21,26 @@ const stageLabels: Record<CustomerStage, string> = {
   'Sample Payment': 'Sample Payment', 'Sample Payment Pending': 'Sample Payment Pending',
   'Technical Testing': 'Technical Testing', 'Technical Confirmation': 'Technical Confirmation', 'Maintain Relationship': 'Maintain Relationship',
 }
+
+function currentAccount() {
+  let email = sessionStorage.getItem('zhiwu-account-email') || ''
+  if (!email) {
+    try {
+      const token = sessionStorage.getItem('zhiwu-access-token') || ''
+      const payload = token.split('.')[1]
+      email = payload ? JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))?.email || '' : ''
+    } catch { email = '' }
+  }
+  email = email.toLowerCase()
+  const isPeter = email === 'peter@neonliontech.com'
+  return {
+    email,
+    initial: isPeter ? 'P' : 'Z',
+    name: isPeter ? 'Peter' : 'Zhiwu',
+    role: isPeter ? 'Member' : 'Founder',
+  }
+}
+
 function App() {
   const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('zhiwu-access-token')))
   const [view, setView] = useState<View>(() => window.location.hash.startsWith('#mail') ? 'mail' : 'dashboard')
@@ -44,6 +65,8 @@ function App() {
   const [query, setQuery] = useState('')
   const [globalQuery, setGlobalQuery] = useState('')
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+  const account = useMemo(() => currentAccount(), [authenticated])
   const today = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${focusDate}T12:00:00`))
   const visibleCustomers = useMemo(() => customers.filter(c => `${c.company_name} ${c.country} ${c.contact_person} ${c.product_interest} ${c.application || ''} ${c.customer_summary || ''} ${c.customer_need || ''} ${(c.customer_tags || []).join(' ')}`.toLowerCase().includes(query.toLowerCase())), [customers, query])
   const alertDate = new Date().toISOString().slice(0, 10)
@@ -221,15 +244,23 @@ function App() {
     setNotificationsOpen(false)
     openEmail(email)
   }
+  const signOut = () => {
+    sessionStorage.removeItem('zhiwu-access-token')
+    sessionStorage.removeItem('zhiwu-account-email')
+    window.history.replaceState(null, '', window.location.pathname)
+    setAccountMenuOpen(false)
+    setNotificationsOpen(false)
+    setAuthenticated(false)
+  }
   if (!authenticated) return <Login onAuthenticated={() => setAuthenticated(true)} />
   return <div className="app-shell">
     <aside className={`sidebar ${sidebar ? 'is-open' : ''}`}>
       <div className="brand"><div className="brand-mark"><img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="干就是学工作站"/></div><div><strong>干就是学</strong><span>工作站</span></div><button className="mobile-close" onClick={() => setSidebar(false)}><X size={18}/></button></div>
       <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'mail' || key === 'products' || key === 'relationships' || key === 'projects' || key === 'tasks' || key === 'calendar' || key === 'imports') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && <em>5</em>}</button>)}</nav>
-      <div className="nav-bottom"><a href="https://notes.101921.xyz/" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开知识库"><CalendarDays size={18}/><span>知识库 ↗</span></a><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">Z</div><div><b>Zhiwu</b><small>Founder · 修改密码</small></div><ChevronRight size={16}/></button></div>
+      <div className="nav-bottom"><a href="https://notes.101921.xyz/" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开知识库"><CalendarDays size={18}/><span>知识库 ↗</span></a><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">{account.initial}</div><div><b>{account.name}</b><small>{account.role} · 修改密码</small></div><ChevronRight size={16}/></button></div>
     </aside>
     <main>
-      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', mail: '邮件中心', products: '产品中心', relationships: '产品关系', imports: 'AI 导入暂存箱', tasks: '每日计划', calendar: '工作日历', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="avatar avatar-small">Z</div></div></header>
+      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', mail: '邮件中心', products: '产品中心', relationships: '产品关系', imports: 'AI 导入暂存箱', tasks: '每日计划', calendar: '工作日历', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="account-menu"><button className="avatar avatar-small account-trigger" aria-label="打开账号菜单" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen(current => !current)}>{account.initial}</button>{accountMenuOpen && <div className="account-popover"><b>{account.name}</b><small>{account.email || '当前登录账号'}</small><button onClick={signOut}><LogOut size={15}/>退出登录</button></div>}</div></div></header>
       {globalQuery.trim() && <WorkspaceSearch query={globalQuery} customers={customers} products={products} projects={projects} emails={emails} close={() => setGlobalQuery('')} openCustomer={customer => { setView('crm'); setSelected(customer) }} openProduct={() => setView('products')} openProject={customer => { setView('projects'); setSelected(customer) }} openEmail={openEmail} />}
       {view === 'dashboard' && <Dashboard customers={customers} projects={projects} followups={followupRows} emails={emails} tasks={tasks} today={today} onOpenCRM={() => setView('crm')} onOpenMail={() => setView('mail')} onOpenTasks={() => setView('tasks')} onOpenProducts={() => setView('products')} openCustomer={setSelected} />}
       {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
@@ -578,6 +609,7 @@ function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
       if (!response.ok) throw new Error('邮箱或密码不正确，请检查后重试。')
       const session = await response.json()
       sessionStorage.setItem('zhiwu-access-token', session.access_token)
+      sessionStorage.setItem('zhiwu-account-email', String(values.email || '').trim().toLowerCase())
       onAuthenticated()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '暂时无法登录，请稍后重试。') } finally { setLoading(false) }
   }

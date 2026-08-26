@@ -1,0 +1,8 @@
+.account-menu{position:relative}
+.account-trigger{border:0;cursor:pointer}
+.account-popover{position:absolute;right:0;top:calc(100% + 10px);width:200px;padding:12px;background:#fffefa;border:1px solid #dfe5dd;border-radius:9px;box-shadow:0 10px 25px #10243620;z-index:25}
+.account-popover b,.account-popover small{display:block}
+.account-popover b{font-size:12px;color:#253b41}
+.account-popover small{font-size:10px;color:#7c8985;margin:4px 0 10px;overflow:hidden;text-overflow:ellipsis}
+.account-popover button{width:100%;border:0;border-top:1px solid #edf0eb;background:transparent;color:#a55d52;font:500 12px inherit;padding:9px 0 0;display:flex;align-items:center;gap:7px;cursor:pointer}
+.account-popover button:hover{color:#793e36}
