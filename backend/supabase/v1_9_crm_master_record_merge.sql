@@ -1,7 +1,7 @@
--- Zhiwu OS V1.9: CRM master-record merge.
+-- CRM V1.9: master-record merge.
 --
 -- Purpose:
---   Merge the accidental Peter-owned demo duplicates into Zhiwu's six real
+--   Merge the accidental Peter-owned demo duplicates into the six real
 --   customer master records. Nothing is hard-deleted. Source records receive
 --   archived_at + merged_into_* metadata and an immutable audit snapshot.
 --
@@ -41,20 +41,6 @@ create index if not exists customers_operational_idx on public.customers(archive
 create index if not exists products_operational_idx on public.products(archived_at) where archived_at is null;
 create index if not exists projects_operational_idx on public.projects(archived_at) where archived_at is null;
 
-create table if not exists public.customer_merge_log (
-  id uuid primary key default gen_random_uuid(),
-  source_customer_id uuid not null unique references public.customers(id) on delete restrict,
-  master_customer_id uuid not null references public.customers(id) on delete restrict,
-  source_snapshot jsonb not null,
-  reason text not null,
-  merged_by uuid references auth.users(id) on delete set null,
-  merged_at timestamptz not null default now()
-);
-alter table public.customer_merge_log enable row level security;
-drop policy if exists "workspace customer merge log" on public.customer_merge_log;
-create policy "workspace customer merge log" on public.customer_merge_log for select
-  using (public.is_workspace_member());
-
 -- Fixed IDs make the migration auditable and idempotent.  Store the target
 -- directly on the six duplicate rows: this avoids relying on session-scoped
 -- staging tables in the Supabase SQL editor.
@@ -72,7 +58,7 @@ where source.id in (
   '09ac615e-b44c-4504-9fc5-bac6ad4f5385', '79e60567-5076-40cd-a11b-d26e993d7f13'
 ) and source.archived_at is null;
 
--- Repoint Peter's duplicate products to the Zhiwu product with the same public code.
+-- Repoint Peter's duplicate products to the retained product with the same public code.
 update public.projects target set product_id = master.id
 from public.products source join public.products master
   on lower(master.product_code) = lower(source.product_code)
@@ -95,7 +81,7 @@ update public.product_customer_relations target set product_id = master.id
 from public.products source join public.products master on lower(master.product_code) = lower(source.product_code) and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
 where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null and target.product_id = source.id;
 update public.products source set archived_at = now(), merged_into_product_id = master.id,
-    archive_reason = 'Merged duplicate demo product into Zhiwu master product'
+    archive_reason = 'Merged duplicate demo product into retained master product'
 from public.products master
 where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null
   and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
@@ -179,13 +165,8 @@ from public.customers source_customer
 where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
   and source.archived_at is null;
 
--- Preserve an immutable duplicate snapshot and a shared CRM timeline entry.
-insert into public.customer_merge_log (source_customer_id, master_customer_id, source_snapshot, reason, merged_by)
-select source.id, source.merged_into_customer_id, to_jsonb(source),
-       'Peter-created duplicate CRM master record merged into Zhiwu-created master record', auth.uid()
-from public.customers source
-where source.merged_into_customer_id is not null and source.archived_at is null
-on conflict (source_customer_id) do nothing;
+-- The archived duplicate remains in the database with merge metadata, and the
+-- shared customer timeline documents the merge without deleting historical data.
 insert into public.timeline_events (user_id, event_date, event_time, title, event_type, source, related_id, customer_id)
 select master.user_id, current_date, localtime,
        '已合并重复客户档案：' || duplicate.company_name || '（保留历史快照）',
@@ -193,10 +174,10 @@ select master.user_id, current_date, localtime,
 from public.customers duplicate join public.customers master on master.id = duplicate.merged_into_customer_id
 where duplicate.archived_at is null;
 update public.customers source set archived_at = now(),
-    archive_reason = 'Peter-created duplicate CRM master record merged into Zhiwu master record'
+    archive_reason = 'Peter-created duplicate CRM master record merged into retained master record'
 where source.merged_into_customer_id is not null and source.archived_at is null;
 
--- Canonical company identities and the current business truth supplied by Zhiwu.
+-- Canonical company identities and the current verified business truth.
 update public.customers set
   company_name = 'Uflex Limited (Film Business)', contact_person = 'Dileep Pathak',
   product_interest = 'NL-007', application = 'PPC 薄膜 / 食品包装',
