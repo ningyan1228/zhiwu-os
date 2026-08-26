@@ -1,15 +1,5 @@
--- CRM V1.9: master-record merge.
---
--- Purpose:
---   Merge the accidental Peter-owned demo duplicates into the six real
---   customer master records. Nothing is hard-deleted. Source records receive
---   archived_at + merged_into_* metadata and an immutable audit snapshot.
---
--- Run once in Supabase SQL Editor after v1_8_team_mailboxes.sql.
-
 begin;
 
--- Archive metadata is deliberately separate from AI-import reversal metadata.
 alter table public.customers add column if not exists archived_at timestamptz;
 alter table public.customers add column if not exists merged_into_customer_id uuid references public.customers(id) on delete set null;
 alter table public.customers add column if not exists archive_reason text;
@@ -41,8 +31,6 @@ create index if not exists customers_operational_idx on public.customers(archive
 create index if not exists products_operational_idx on public.products(archived_at) where archived_at is null;
 create index if not exists projects_operational_idx on public.projects(archived_at) where archived_at is null;
 
--- Audit snapshots make every archived duplicate traceable.  Access policies
--- already established for the shared CRM remain unchanged by this migration.
 create table if not exists public.customer_merge_log (
   id uuid primary key default gen_random_uuid(),
   source_customer_id uuid not null unique references public.customers(id) on delete restrict,
@@ -53,16 +41,13 @@ create table if not exists public.customer_merge_log (
   merged_at timestamptz not null default now()
 );
 
--- Fixed IDs make the migration auditable and idempotent.  Store the target
--- directly on the six duplicate rows: this avoids relying on session-scoped
--- staging tables in the Supabase SQL editor.
 update public.customers source set merged_into_customer_id = case source.id
-  when 'd5096fbc-88c1-4c8f-9448-afca609cef01' then '85a38500-a3b6-4c5a-b085-b47eb31f0ed7'::uuid -- Uflex
-  when '60912070-590e-4f52-837b-35e4bb6a5880' then 'c25c35f9-ae08-4df2-820d-a6cadc830a50'::uuid -- Agrileaf
-  when '6ef2e1d3-7058-4d74-8040-dd4c005d0e8d' then 'e88f5708-b28b-4f63-bca1-2e8fc0b0846a'::uuid -- Flexo
-  when 'c6d6ac5f-1197-4451-bcca-013b13c8c795' then 'cd24f346-4f95-45be-8d52-5dc7e63956eb'::uuid -- FLEX/design
-  when '09ac615e-b44c-4504-9fc5-bac6ad4f5385' then '3dc314ce-e352-4e52-b904-c6e22e008694'::uuid -- ATSajan
-  when '79e60567-5076-40cd-a11b-d26e993d7f13' then '1a21538a-5630-4a90-84c8-4ec6c2181d91'::uuid -- Inkofix
+  when 'd5096fbc-88c1-4c8f-9448-afca609cef01' then '85a38500-a3b6-4c5a-b085-b47eb31f0ed7'::uuid
+  when '60912070-590e-4f52-837b-35e4bb6a5880' then 'c25c35f9-ae08-4df2-820d-a6cadc830a50'::uuid
+  when '6ef2e1d3-7058-4d74-8040-dd4c005d0e8d' then 'e88f5708-b28b-4f63-bca1-2e8fc0b0846a'::uuid
+  when 'c6d6ac5f-1197-4451-bcca-013b13c8c795' then 'cd24f346-4f95-45be-8d52-5dc7e63956eb'::uuid
+  when '09ac615e-b44c-4504-9fc5-bac6ad4f5385' then '3dc314ce-e352-4e52-b904-c6e22e008694'::uuid
+  when '79e60567-5076-40cd-a11b-d26e993d7f13' then '1a21538a-5630-4a90-84c8-4ec6c2181d91'::uuid
 end
 where source.id in (
   'd5096fbc-88c1-4c8f-9448-afca609cef01', '60912070-590e-4f52-837b-35e4bb6a5880',
@@ -70,7 +55,6 @@ where source.id in (
   '09ac615e-b44c-4504-9fc5-bac6ad4f5385', '79e60567-5076-40cd-a11b-d26e993d7f13'
 ) and source.archived_at is null;
 
--- Repoint Peter's duplicate products to the retained product with the same public code.
 update public.projects target set product_id = master.id
 from public.products source join public.products master
   on lower(master.product_code) = lower(source.product_code)
@@ -93,13 +77,12 @@ update public.product_customer_relations target set product_id = master.id
 from public.products source join public.products master on lower(master.product_code) = lower(source.product_code) and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
 where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null and target.product_id = source.id;
 update public.products source set archived_at = now(), merged_into_product_id = master.id,
-    archive_reason = 'Merged duplicate demo product into retained master product'
+    archive_reason = 'crm_duplicate_merge'
 from public.products master
 where source.user_id = 'e2f5ee6c-75ca-448d-a854-83f5ca5c6a98' and source.archived_at is null
   and master.user_id = 'e91acccf-12de-4a1b-aa50-770d43e77914'
   and lower(master.product_code) = lower(source.product_code);
 
--- Mark exact copied projects, then repoint their dependent activity and archive them.
 update public.projects source set merged_into_project_id = master.id
 from public.customers source_customer join public.projects master
   on master.customer_id = source_customer.merged_into_customer_id
@@ -113,14 +96,13 @@ update public.tasks target set project_id = source.merged_into_project_id
 from public.projects source where target.project_id = source.id and source.merged_into_project_id is not null;
 update public.timeline_events target set project_id = source.merged_into_project_id
 from public.projects source where target.project_id = source.id and source.merged_into_project_id is not null;
-update public.projects source set archived_at = now(), archive_reason = 'Merged duplicate demo project into master project'
+update public.projects source set archived_at = now(), archive_reason = 'crm_duplicate_merge'
 where source.merged_into_project_id is not null and source.archived_at is null;
 update public.projects source set customer_id = source_customer.merged_into_customer_id
 from public.customers source_customer
 where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
   and source.merged_into_project_id is null and source.archived_at is null;
 
--- Move actual mailbox history, tasks and customer mappings to the shared master.
 update public.emails target set customer_id = source_customer.merged_into_customer_id
 from public.customers source_customer where target.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null;
 update public.email_actions target set customer_id = source_customer.merged_into_customer_id
@@ -133,7 +115,6 @@ update public.customer_email_mappings target set customer_id = source_customer.m
 from public.customers source_customer where target.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null;
 delete from public.customer_email_mappings where lower(email_address) = 'peter@neonliontech.com';
 
--- Archive exact copied follow-ups/quotes but retain any genuinely distinct history.
 update public.followups source set merged_into_followup_id = master.id
 from public.customers source_customer join public.followups master
   on master.customer_id = source_customer.merged_into_customer_id and master.archived_at is null
@@ -141,7 +122,7 @@ where source.customer_id = source_customer.id and source_customer.merged_into_cu
   and master.date = source.date and master.content = source.content
   and coalesce(master.next_action, '') = coalesce(source.next_action, '')
   and source.archived_at is null;
-update public.followups source set archived_at = now(), archive_reason = 'Merged duplicate demo follow-up into master follow-up'
+update public.followups source set archived_at = now(), archive_reason = 'crm_duplicate_merge'
 where source.merged_into_followup_id is not null and source.archived_at is null;
 update public.followups source set customer_id = source_customer.merged_into_customer_id
 from public.customers source_customer
@@ -156,15 +137,14 @@ where source.customer_id = source_customer.id and source_customer.merged_into_cu
   and master.amount is not distinct from source.amount and master.currency = source.currency
   and coalesce(master.trade_term, '') = coalesce(source.trade_term, '')
   and source.archived_at is null;
-update public.quotes source set archived_at = now(), archive_reason = 'Merged duplicate demo quotation into master quotation'
+update public.quotes source set archived_at = now(), archive_reason = 'crm_duplicate_merge'
 where source.merged_into_quote_id is not null and source.archived_at is null;
 update public.quotes source set customer_id = source_customer.merged_into_customer_id
 from public.customers source_customer
 where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
   and source.merged_into_quote_id is null and source.archived_at is null;
 
--- Preserve relation history; only archive links already represented on the master.
-update public.product_customer_relations source set archived_at = now(), archive_reason = 'Merged duplicate product/customer relation'
+update public.product_customer_relations source set archived_at = now(), archive_reason = 'crm_duplicate_merge'
 from public.customers source_customer
 where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
   and source.archived_at is null and exists (
@@ -177,11 +157,9 @@ from public.customers source_customer
 where source.customer_id = source_customer.id and source_customer.merged_into_customer_id is not null
   and source.archived_at is null;
 
--- The archived duplicate remains in the database and is also captured as an
--- immutable audit snapshot before it leaves the normal CRM list.
 insert into public.customer_merge_log (source_customer_id, master_customer_id, source_snapshot, reason, merged_by)
 select source.id, source.merged_into_customer_id, to_jsonb(source),
-       'Internal duplicate CRM master record merged into retained master record', auth.uid()
+       'crm_duplicate_merge', auth.uid()
 from public.customers source
 where source.merged_into_customer_id is not null and source.archived_at is null
 on conflict (source_customer_id) do nothing;
@@ -192,10 +170,9 @@ select master.user_id, current_date, localtime,
 from public.customers duplicate join public.customers master on master.id = duplicate.merged_into_customer_id
 where duplicate.archived_at is null;
 update public.customers source set archived_at = now(),
-    archive_reason = 'Peter-created duplicate CRM master record merged into retained master record'
+    archive_reason = 'crm_duplicate_merge'
 where source.merged_into_customer_id is not null and source.archived_at is null;
 
--- Canonical company identities and the current verified business truth.
 update public.customers set
   company_name = 'Uflex Limited (Film Business)', contact_person = 'Dileep Pathak',
   product_interest = 'NL-007', application = 'PPC 薄膜 / 食品包装',
@@ -262,7 +239,6 @@ update public.customers set
   customer_tags = array['Price Sensitive','Quotation','Heat Seal','Water-based Coating']::text[]
 where id = '1a21538a-5630-4a90-84c8-4ec6c2181d91';
 
--- Public product codes shown to customers use the NL- prefix.
 update public.products set product_name = 'NL-MCPP', product_code = 'NL-MCPP',
   notes = '对外牌号 NL-MCPP；原 MCPP 仅保留在项目说明中。'
 where id = '40634d2e-3545-460e-a9f1-26f3bd3f528d' and archived_at is null;
