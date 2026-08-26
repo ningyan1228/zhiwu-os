@@ -167,10 +167,10 @@ class MailStore:
         )
 
 
-def _customer_lookup(store: MailStore, owner_id: str) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, str | None]], dict[str, str]]:
+def _customer_lookup(store: MailStore, owner_id: str) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, str | None]], dict[str, str], dict[str, str]]:
     # CRM is a shared workspace. Mail itself remains private because every email
     # record is stored under the mailbox owner's user_id.
-    customers = store.request("GET", "customers?import_reverted=eq.false&archived_at=is.null&select=id,email,contact_person,company_name") or []
+    customers = store.request("GET", "customers?import_reverted=eq.false&archived_at=is.null&select=id,email,contact_person,company_name,last_contact_date") or []
     # A customer may be owned by Zhiwu while Peter receives a forwarded thread.
     # The synchroniser runs server-side, so it can safely use workspace mappings
     # to identify that shared customer; it still never exposes another mailbox.
@@ -196,7 +196,8 @@ def _customer_lookup(store: MailStore, owner_id: str) -> tuple[dict[str, str], d
     for project in projects:
         project_by_customer.setdefault(project["customer_id"], {"id": project["id"], "product_id": project.get("product_id")})
     contact_name_by_customer = {row["id"]: str(row.get("contact_person") or "") for row in customers}
-    return customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer
+    last_contact_by_customer = {row["id"]: str(row.get("last_contact_date") or "") for row in customers}
+    return customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer, last_contact_by_customer
 
 
 def _remember_mapping(store: MailStore, owner_id: str, sender: str, customer_id: str, contact_name: str | None) -> None:
@@ -207,12 +208,66 @@ def _remember_mapping(store: MailStore, owner_id: str, sender: str, customer_id:
     }, "resolution=merge-duplicates,return=minimal")
 
 
+def _record_linked_email_activity(
+    store: MailStore, owner_id: str, email: dict[str, Any], customer_id: str,
+    last_contact_by_customer: dict[str, str],
+) -> bool:
+    """Safely make a linked email visible in the customer's CRM history.
+
+    The email id is the idempotency key: an IMAP sync can run repeatedly
+    without creating duplicate followups.  This deliberately does not infer
+    or overwrite sales stage, product, or next action from raw email text.
+    """
+    email_id = str(email.get("id") or "")
+    if not email_id:
+        return False
+    received_date = str(email.get("received_at") or "")[:10]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", received_date):
+        received_date = datetime.now(timezone.utc).date().isoformat()
+    existing = store.request("GET", f"followups?email_id=eq.{email_id}&select=id&limit=1") or []
+    created = False
+    if not existing:
+        subject = str(email.get("subject") or "(无主题)")
+        preview = str(email.get("content_preview") or "").strip()
+        store.request("POST", "followups", {
+            "user_id": owner_id,
+            "customer_id": customer_id,
+            "email_id": email_id,
+            "date": received_date,
+            "content": f"邮件自动归档：{subject}" + (f"\n{preview}" if preview else ""),
+            "next_action": "已自动归档，按需人工跟进",
+            "status": "Done",
+        }, "return=minimal")
+        created = True
+    previous_date = last_contact_by_customer.get(customer_id, "")
+    if not previous_date or received_date > previous_date:
+        store.request("PATCH", f"customers?id=eq.{customer_id}", {"last_contact_date": received_date}, "return=minimal")
+        last_contact_by_customer[customer_id] = received_date
+    return created
+
+
+def _reconcile_linked_email_activity(
+    store: MailStore, owner_id: str, last_contact_by_customer: dict[str, str],
+) -> int:
+    """Backfill CRM history for emails that were linked before this feature."""
+    rows = store.request(
+        "GET",
+        f"emails?user_id=eq.{owner_id}&customer_id=not.is.null&select=id,customer_id,received_at,subject,content_preview&limit=500",
+    ) or []
+    return sum(
+        _record_linked_email_activity(store, owner_id, row, str(row["customer_id"]), last_contact_by_customer)
+        for row in rows
+        if row.get("customer_id")
+    )
+
+
 def _reconcile_existing_links(
     store: MailStore, owner_id: str, customer_by_email: dict[str, str], customer_by_contact: dict[str, str],
     project_by_customer: dict[str, dict[str, str | None]], contact_name_by_customer: dict[str, str],
+    last_contact_by_customer: dict[str, str],
 ) -> int:
     """Backfill older synchronised mail after a customer mapping is added."""
-    rows = store.request("GET", f"emails?user_id=eq.{owner_id}&customer_id=is.null&select=id,sender,sender_name,receiver,subject,content_text,content_preview,status&limit=500") or []
+    rows = store.request("GET", f"emails?user_id=eq.{owner_id}&customer_id=is.null&select=id,sender,sender_name,receiver,subject,content_text,content_preview,received_at,status&limit=500") or []
     linked = 0
     for row in rows:
         sender = str(row.get("sender") or "")
@@ -233,6 +288,7 @@ def _reconcile_existing_links(
         })
         if not is_internal_mail_address(sender):
             _remember_mapping(store, owner_id, sender, customer_id, contact_name_by_customer.get(customer_id))
+        _record_linked_email_activity(store, owner_id, row, customer_id, last_contact_by_customer)
         linked += 1
     return linked
 
@@ -282,8 +338,12 @@ def _sync_mailbox(store: MailStore, mailbox_config: MailboxRuntime) -> dict[str,
         return {"processed": 0, "saved": 0, "linked": 0}
     store.update_sync(mailbox_config, "Running")
     try:
-        customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer = _customer_lookup(store, mailbox_config.owner_user_id)
-        recovered = _reconcile_existing_links(store, mailbox_config.owner_user_id, customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer)
+        customer_by_email, customer_by_contact, project_by_customer, contact_name_by_customer, last_contact_by_customer = _customer_lookup(store, mailbox_config.owner_user_id)
+        recovered = _reconcile_existing_links(
+            store, mailbox_config.owner_user_id, customer_by_email, customer_by_contact,
+            project_by_customer, contact_name_by_customer, last_contact_by_customer,
+        )
+        activity_backfilled = _reconcile_linked_email_activity(store, mailbox_config.owner_user_id, last_contact_by_customer)
 
         with imaplib.IMAP4_SSL(mailbox_config.host, mailbox_config.port) as mailbox:
             mailbox.login(mailbox_config.username, mailbox_config.password)
@@ -336,11 +396,13 @@ def _sync_mailbox(store: MailStore, mailbox_config: MailboxRuntime) -> dict[str,
                     "status": "linked" if customer_id else "new_lead",
                 }
                 created = store.request("POST", "emails?on_conflict=user_id,message_id", payload, "resolution=ignore-duplicates,return=representation") or []
+                if customer_id and created:
+                    _record_linked_email_activity(store, mailbox_config.owner_user_id, created[0], customer_id, last_contact_by_customer)
                 if customer_id:
                     _remember_mapping(store, mailbox_config.owner_user_id, sender, customer_id, contact_name_by_customer.get(customer_id))
                 saved += len(created)
         store.update_sync(mailbox_config, "Success", saved)
-        logger.info("Mailbox %s sync finished: processed=%s saved=%s linked=%s", mailbox_config.key, len(uids), saved, recovered)
+        logger.info("Mailbox %s sync finished: processed=%s saved=%s linked=%s crm_history=%s", mailbox_config.key, len(uids), saved, recovered, activity_backfilled)
         return {"processed": len(uids), "saved": saved, "linked": recovered}
     except Exception as exc:
         logger.exception("Mailbox %s sync failed", mailbox_config.key)
