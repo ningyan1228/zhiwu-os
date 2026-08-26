@@ -121,6 +121,10 @@ class EmailLinkIn(BaseModel):
     customer_id: str
     contact_name: str | None = Field(default=None, max_length=200)
 
+class EmailCustomerCreateIn(CustomerIn):
+    """Create a current-user customer from one reviewed mailbox message."""
+    pass
+
 class EmailCrmUpdateIn(BaseModel):
     customer_id: str
     project_id: str | None = None
@@ -766,6 +770,48 @@ async def link_email_to_customer(email_id: str, payload: EmailLinkIn, authorizat
         "status": "linked",
     })
     return {**updated[0], "is_internal_sender": is_internal_mail_address(updated[0].get("sender"))}
+
+@app.post("/api/emails/{email_id}/customers", status_code=201)
+async def create_customer_from_email(email_id: str, payload: EmailCustomerCreateIn, authorization: str | None = Header(default=None)):
+    """Create a customer owned by the signed-in member and link the reviewed email."""
+    token = bearer(authorization)
+    email_rows = await supabase(f"emails?id=eq.{email_id}&select=*", token)
+    if not email_rows:
+        raise HTTPException(404, "Email not found")
+    email = email_rows[0]
+    if is_internal_mail_address(email.get("sender")):
+        raise HTTPException(422, "Internal colleague mail cannot create a customer")
+
+    address = payload.email.strip().lower()
+    existing = await supabase(
+        f"customers?email=eq.{quote(address, safe='')}&archived_at=is.null&import_reverted=eq.false&select=id,company_name&limit=1",
+        token,
+    )
+    if existing:
+        raise HTTPException(409, f"Customer email already exists: {existing[0]['company_name']}. Link the email to that customer instead.")
+
+    company_name = payload.company_name.strip()
+    existing_company = await supabase(
+        f"customers?company_name=ilike.{quote(company_name, safe='')}&archived_at=is.null&import_reverted=eq.false&select=id,company_name&limit=1",
+        token,
+    )
+    if existing_company:
+        raise HTTPException(409, f"Customer company already exists: {existing_company[0]['company_name']}. Link the email to that customer instead.")
+
+    customer = (await supabase("customers", token, "POST", payload.model_dump(exclude_none=True)))[0]
+    await supabase("customer_email_mappings", token, "POST", {
+        "customer_id": customer["id"], "email_address": email.get("sender") or address,
+        "contact_name": email.get("sender_name") or payload.contact_person,
+    })
+    updated = (await supabase(f"emails?id=eq.{email_id}", token, "PATCH", {
+        "customer_id": customer["id"], "status": "linked",
+    }))[0]
+    await record_timeline_event(
+        token, title=f"从邮件创建客户：{customer['company_name']}", event_type="crm",
+        source="mail_new_lead", related_id=email_id, customer_id=customer["id"],
+        event_date=str(email.get("received_at") or date.today())[:10],
+    )
+    return {"customer": customer, "email": {**updated, "is_internal_sender": is_internal_mail_address(updated.get("sender"))}}
 
 @app.post("/api/emails/{email_id}/followups", status_code=201)
 async def create_followup_from_email(email_id: str, payload: EmailFollowupIn, authorization: str | None = Header(default=None)):
