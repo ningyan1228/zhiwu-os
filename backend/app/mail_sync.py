@@ -246,6 +246,75 @@ def _record_linked_email_activity(
     return created
 
 
+_SYSTEM_SENDER_NAMES = {"alimail", "mail delivery subsystem", "mailer daemon", "postmaster", "system", "notification"}
+_SYSTEM_LOCAL_PARTS = ("no-reply", "noreply", "do-not-reply", "mailer-daemon", "postmaster", "notification", "notice")
+_PERSONAL_OR_SYSTEM_DOMAINS = {"gmail.com", "qq.com", "163.com", "126.com", "outlook.com", "hotmail.com", "mail.aliyun.com"}
+
+
+def _looks_like_customer_lead(sender: str, sender_name: str | None, subject: str | None, content: str | None) -> bool:
+    """Keep only credible business senders for automatic *pending* CRM records."""
+    address = sender.strip().lower()
+    if "@" not in address or is_internal_mail_address(address):
+        return False
+    local_part, domain = address.rsplit("@", 1)
+    if local_part.startswith(_SYSTEM_LOCAL_PARTS) or _normalized(sender_name) in {_normalized(name) for name in _SYSTEM_SENDER_NAMES}:
+        return False
+    business_words = re.search(r"\b(inquiry|enquiry|quotation|quote|price|sample|tds|coa|product|order|payment|invoice|shipment|technical|coating)\b", f"{subject or ''} {content or ''}".lower())
+    # A named sender from a company domain is a reasonable pending lead even
+    # where the email is just an initial greeting.  Free-mail/system domains
+    # require explicit business context.
+    return bool(business_words) or (domain not in _PERSONAL_OR_SYSTEM_DOMAINS and bool(_normalized(sender_name)))
+
+
+def _pending_company_name(sender: str) -> str:
+    domain = sender.rsplit("@", 1)[-1].lower()
+    return f"待确认 · {domain}"
+
+
+def _create_pending_customer_from_email(
+    store: MailStore, owner_id: str, email: dict[str, Any],
+    customer_by_email: dict[str, str], customer_by_contact: dict[str, str],
+) -> str | None:
+    """Create a review-only customer from a credible, unmatched email sender."""
+    sender = str(email.get("sender") or "").strip().lower()
+    sender_name = str(email.get("sender_name") or "").strip()
+    if not _looks_like_customer_lead(sender, sender_name, email.get("subject"), email.get("content_text") or email.get("content_preview")):
+        return None
+    if sender in customer_by_email:
+        return customer_by_email[sender]
+    company_name = _pending_company_name(sender)
+    existing_company = customer_by_contact.get(_normalized(company_name))
+    if existing_company:
+        customer_by_email[sender] = existing_company
+        return existing_company
+    local_part = sender.split("@", 1)[0].replace(".", " ").replace("_", " ").strip()
+    customer_rows = store.request("POST", "customers", {
+        "user_id": owner_id,
+        "company_name": company_name,
+        "country": "待确认",
+        "contact_person": sender_name or local_part or "待确认",
+        "email": sender,
+        "customer_stage": "New",
+        "priority": "MEDIUM",
+        "status_label": "待确认客户（邮件自动建档）",
+        "status_tone": "attention",
+        "customer_tags": ["待确认客户", "邮件自动建档"],
+        "customer_summary": f"由邮件自动筛选，待确认公司名称与业务价值。来源：{sender}",
+        "notes": f"自动建档来源邮件：{email.get('subject') or '(无主题)'}",
+    }) or []
+    if not customer_rows:
+        return None
+    customer_id = str(customer_rows[0]["id"])
+    customer_by_email[sender] = customer_id
+    customer_by_contact[_normalized(company_name)] = customer_id
+    if sender_name:
+        normalized_name = _normalized(sender_name)
+        if normalized_name:
+            customer_by_contact[normalized_name] = customer_id
+    _remember_mapping(store, owner_id, sender, customer_id, sender_name or None)
+    return customer_id
+
+
 def _reconcile_linked_email_activity(
     store: MailStore, owner_id: str, last_contact_by_customer: dict[str, str],
 ) -> int:
@@ -279,6 +348,8 @@ def _reconcile_existing_links(
             if is_internal_mail_address(sender)
             else _resolve_customer(sender, row.get("sender_name"), customer_by_email, customer_by_contact)
         )
+        if not customer_id:
+            customer_id = _create_pending_customer_from_email(store, owner_id, row, customer_by_email, customer_by_contact)
         if not customer_id:
             continue
         project = project_by_customer.get(customer_id, {})
@@ -375,6 +446,12 @@ def _sync_mailbox(store: MailStore, mailbox_config: MailboxRuntime) -> dict[str,
                     if is_internal_mail_address(sender)
                     else _resolve_customer(sender, sender_name, customer_by_email, customer_by_contact)
                 )
+                if not customer_id:
+                    customer_id = _create_pending_customer_from_email(
+                        store, mailbox_config.owner_user_id,
+                        {"sender": sender, "sender_name": sender_name, "subject": message.get("Subject", ""), "content_text": content},
+                        customer_by_email, customer_by_contact,
+                    )
                 project = project_by_customer.get(customer_id or "", {})
                 message_id = message.get("Message-ID") or f"imap-{uid.decode(errors='ignore')}"
                 payload = {
