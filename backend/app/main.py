@@ -710,7 +710,7 @@ async def create_quote(quote: QuoteIn, authorization: str | None = Header(defaul
 
 @app.get("/api/emails")
 async def list_emails(
-    authorization: str | None = Header(default=None), limit: int = Query(100, le=200),
+    authorization: str | None = Header(default=None), limit: int = Query(500, le=500),
     category: Literal["customer_inquiry", "technical", "quotation", "sample", "payment", "other"] | None = None,
     status: Literal["unread", "new_lead", "linked", "followup_created", "completed"] | None = None,
     unlinked: bool = False,

@@ -61,7 +61,9 @@ export const api = {
     ? publicRequest<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', headers: { Authorization: `Bearer ${recoveryToken}` }, body: JSON.stringify({ password }) })
     : request<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', body: JSON.stringify({ password }) }),
   requestPasswordRecovery: (email: string) => publicRequest<{ sent: boolean }>('/api/auth/recover', { method: 'POST', body: JSON.stringify({ email }) }),
-  emails: () => request<MailEmail[]>('/api/emails').then(rows => rows.map(asMailEmail)),
+  // The Mail Center metrics must reflect the full mailbox rather than the
+  // API's old first-page default of 100 records.
+  emails: () => request<MailEmail[]>('/api/emails?limit=500').then(rows => rows.map(asMailEmail)),
   mailbox: () => request<MailboxAccount>('/api/mailbox'),
   unlinkedEmails: () => request<MailEmail[]>('/api/emails/unlinked').then(rows => rows.map(asMailEmail)),
   emailSync: () => request<EmailSync>('/api/email-sync'),
