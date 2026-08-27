@@ -67,6 +67,19 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const account = useMemo(() => currentAccount(), [authenticated])
+  const workbench = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    const customerItem = (customer: Customer) => ({ id: customer.id, title: customer.company_name, date: customer.next_followup_date })
+    const emailItem = (email: MailEmail) => ({ id: email.id, title: email.subject || email.sender_name || email.sender, date: email.received_at })
+    return {
+      overdue_followups: customers.filter(customer => customer.next_followup_date && customer.next_followup_date < today).map(customerItem),
+      quotation: customers.filter(customer => ['Quotation', 'Quoted'].includes(customer.customer_stage)).map(customerItem),
+      sample: customers.filter(customer => ['Sample', 'Sample Payment', 'Sample Payment Pending', 'Technical Testing'].includes(customer.customer_stage)).map(customerItem),
+      waiting_reply: emails.filter(email => ['unread', 'linked', 'followup_created'].includes(email.status)).map(emailItem),
+      new_leads: emails.filter(email => email.status === 'new_lead' && !email.customer_id).map(emailItem),
+      tasks: tasks.filter(task => task.status !== 'Completed').map(task => ({ id: task.id, title: task.title, date: task.task_date, priority: task.priority })),
+    }
+  }, [customers, emails, tasks])
   const today = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${focusDate}T12:00:00`))
   const visibleCustomers = useMemo(() => customers.filter(c => `${c.company_name} ${c.country} ${c.contact_person} ${c.product_interest} ${c.application || ''} ${c.customer_summary || ''} ${c.customer_need || ''} ${(c.customer_tags || []).join(' ')}`.toLowerCase().includes(query.toLowerCase())), [customers, query])
   const alertDate = new Date().toISOString().slice(0, 10)
@@ -269,7 +282,7 @@ function App() {
       {view === 'products' && <Products products={products} create={() => setModal('product')} />}
       {view === 'relationships' && <RelationshipMatrix products={products} customers={customers} projects={projects} relations={productCustomerRelations} openCustomer={setSelected} linkCustomer={setRelationProduct} />}
       {view === 'projects' && <ProjectManagement projects={projects} customers={customers} products={products} quotes={quotes} openCustomer={setSelected} />}
-      {view === 'tasks' && <DailyFocus tasks={tasks} customers={customers} projects={projects} products={products} focusDate={focusDate} today={today} dailyLog={dailyLog} setFocusDate={setFocusDate} create={() => setModal('task')} complete={toggleTask} review={() => setModal('review')} />}
+      {view === 'tasks' && <><Workbench queue={workbench} openMail={() => setView('mail')} /><DailyFocus tasks={tasks} customers={customers} projects={projects} products={products} focusDate={focusDate} today={today} dailyLog={dailyLog} setFocusDate={setFocusDate} create={() => setModal('task')} complete={toggleTask} review={() => setModal('review')} /></>}
       {view === 'calendar' && <CalendarView tasks={tasks} events={timelineEvents} customers={customers} focusDate={focusDate} setFocusDate={setFocusDate} onOpenTasks={() => setView('tasks')} />}
     </main>
     {selected && <CustomerDrawer customer={selected} projects={projects} quotes={quotes} followups={followupRows} products={products} emails={emails} tasks={tasks} close={() => setSelected(null)} addFollowup={() => setModal('followup')} addQuote={() => setModal('quote')} updateStage={updateStage} editCustomer={() => setModal('customer-edit')} openEmail={openEmail} />}
@@ -341,6 +354,12 @@ const dateLabel = (iso: string) => new Intl.DateTimeFormat('zh-CN', { month: 'lo
 const timeLabel = (value?: string | null) => value ? value.slice(0, 5) : '全天'
 const taskPriorityLabel: Record<Task['priority'], string> = { important: '🔥 重要', normal: '⭐ 普通', low: '○ 低' }
 const timelineIcon: Record<TimelineEvent['event_type'], ReactNode> = { task: <Check size={15}/>, email: <Mail size={15}/>, crm: <Users size={15}/>, project: <Layers3 size={15}/>, note: <ClipboardList size={15}/> }
+
+function Workbench({ queue, openMail }: { queue: Record<string, unknown> | null; openMail: () => void }) {
+  const groups: [string, string, string][] = [['quotation', '待报价', 'Quotation'], ['sample', '待寄样 / 测试', 'Sample'], ['waiting_reply', '待客户回复', 'Reply'], ['overdue_followups', '超期跟进', 'Overdue'], ['new_leads', '待确认新线索', 'Lead']]
+  if (!queue) return null
+  return <section className="page workbench-page"><div className="page-heading"><div><p className="eyebrow"><Flame size={13}/> ACTION WORKBENCH</p><h1>业务待办工作台</h1><p>按邮件和 CRM 的真实状态汇总；先处理最影响推进的事项。</p></div><button className="secondary" onClick={openMail}>打开邮件中心 <ChevronRight size={15}/></button></div><div className="workbench-grid">{groups.map(([key, label, tone]) => { const items = Array.isArray(queue[key]) ? queue[key] as { id: string; title: string; date?: string }[] : []; return <article className={`workbench-card ${tone.toLowerCase()}`} key={key}><div><b>{label}</b><span>{items.length}</span></div>{items.length ? items.slice(0, 4).map(item => <p key={item.id}><strong>{item.title}</strong><small>{item.date ? String(item.date).slice(0, 10) : '待确认日期'}</small></p>) : <em>暂无</em>}</article> })}</div></section>
+}
 
 function DailyFocus({ tasks, customers, projects, products, focusDate, today, dailyLog, setFocusDate, create, complete, review }: { tasks: Task[]; customers: Customer[]; projects: Project[]; products: Product[]; focusDate: string; today: string; dailyLog: DailyLog | null; setFocusDate: (date: string) => void; create: () => void; complete: (task: Task) => Promise<void>; review: () => void }) {
   const dailyTasks = tasks.filter(task => task.task_date === focusDate).sort((a, b) => `${a.start_time || ''}${a.title}`.localeCompare(`${b.start_time || ''}${b.title}`))
