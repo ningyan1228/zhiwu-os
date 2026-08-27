@@ -94,6 +94,10 @@ function App() {
       return true
     })
   }, [customers, query, crmFilter])
+  const crmActionCount = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return customers.filter(customer => isCustomerIncomplete(customer) || Boolean(customer.next_followup_date && customer.next_followup_date < today)).length
+  }, [customers])
   const alertDate = new Date().toISOString().slice(0, 10)
   const hasNotifications = tasks.some(task => task.task_date === alertDate && task.status !== 'Completed') || emails.some(email => ['unread', 'new_lead'].includes(email.status))
   useEffect(() => {
@@ -282,7 +286,7 @@ function App() {
   return <div className="app-shell">
     <aside className={`sidebar ${sidebar ? 'is-open' : ''}`}>
       <div className="brand"><div className="brand-mark"><img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="干就是学工作站"/></div><div><strong>干就是学</strong><span>工作站</span></div><button className="mobile-close" onClick={() => setSidebar(false)}><X size={18}/></button></div>
-      <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'mail' || key === 'products' || key === 'relationships' || key === 'projects' || key === 'tasks' || key === 'calendar' || key === 'imports') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && <em>5</em>}</button>)}</nav>
+      <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'mail' || key === 'products' || key === 'relationships' || key === 'projects' || key === 'tasks' || key === 'calendar' || key === 'imports') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && crmActionCount > 0 && <em title="待补资料或逾期跟进的客户">{crmActionCount}</em>}</button>)}</nav>
       <div className="nav-bottom"><a href="https://notes.101921.xyz/" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开知识库"><CalendarDays size={18}/><span>知识库 ↗</span></a><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">{account.initial}</div><div><b>{account.name}</b><small>{account.role} · 修改密码</small></div><ChevronRight size={16}/></button></div>
     </aside>
     <main>
