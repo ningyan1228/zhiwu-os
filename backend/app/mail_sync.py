@@ -259,11 +259,12 @@ def _looks_like_customer_lead(sender: str, sender_name: str | None, subject: str
     local_part, domain = address.rsplit("@", 1)
     if local_part.startswith(_SYSTEM_LOCAL_PARTS) or _normalized(sender_name) in {_normalized(name) for name in _SYSTEM_SENDER_NAMES}:
         return False
-    business_words = re.search(r"\b(inquiry|enquiry|quotation|quote|price|sample|tds|coa|product|order|payment|invoice|shipment|technical|coating)\b", f"{subject or ''} {content or ''}".lower())
-    # A named sender from a company domain is a reasonable pending lead even
-    # where the email is just an initial greeting.  Free-mail/system domains
-    # require explicit business context.
-    return bool(business_words) or (domain not in _PERSONAL_OR_SYSTEM_DOMAINS and bool(_normalized(sender_name)))
+    value = f"{subject or ''} {content or ''}".lower()
+    business_words = re.search(r"\b(inquiry|enquiry|quotation|quote|price|sample|tds|coa|product|order|technical|coating|material|resin|yarn|fiber|film)\b", value)
+    purchase_intent = re.search(r"\b(we (?:are|would|need|look)|looking to source|interested in|request for|please (?:quote|send|provide|advise)|could you (?:please )?(?:send|provide|advise)|would like to (?:buy|import)|need (?:a |an )?(?:quote|price|sample))\b", value)
+    # New customers are created only from an identifiable business inquiry.
+    # A corporate-looking domain alone is not evidence of a prospective buyer.
+    return bool(business_words and purchase_intent and _normalized(sender_name))
 
 
 def _pending_company_name(sender: str) -> str:

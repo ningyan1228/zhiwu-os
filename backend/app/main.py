@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     mail_folder: str = "INBOX"
     mail_owner_user_id: str | None = None
     mail_internal_addresses: str = ""
+    mail_internal_domains: str = ""
     mail_sync_interval_seconds: int = 600
     mail_sync_max_messages: int = 100
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -181,8 +182,10 @@ def bearer(authorization: str | None) -> str:
 
 def is_internal_mail_address(address: str | None) -> bool:
     """Keep colleague-forwarded mail out of customer auto-matching."""
+    value = (address or "").strip().lower()
     internal_addresses = {item.strip().lower() for item in settings().mail_internal_addresses.split(",") if item.strip()}
-    return (address or "").strip().lower() in internal_addresses
+    internal_domains = {item.strip().lower() for item in settings().mail_internal_domains.split(",") if item.strip()}
+    return value in internal_addresses or ("@" in value and value.rsplit("@", 1)[1] in internal_domains)
 
 def import_text(value: Any) -> str:
     return str(value or "").strip()
