@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { customers as seedCustomers, followups as seedFollowups, products as seedProducts, projects as seedProjects, quotes as seedQuotes } from './data'
 import { api } from './api'
-import type { Customer, CustomerStage, DailyLog, EmailSync, Followup, ImportBatch, ImportPreview, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
+import type { Customer, CustomerStage, DailyLog, EmailSync, Followup, ImportBatch, ImportPreview, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent, WorkspaceMember } from './types'
 import './styles.css'
 import './account-menu.css'
 
@@ -47,6 +47,7 @@ function App() {
   const [sidebar, setSidebar] = useState(false)
   const [customers, setCustomers] = useState(seedCustomers)
   const [products, setProducts] = useState(seedProducts)
+  const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [followupRows, setFollowupRows] = useState(seedFollowups)
   const [projects, setProjects] = useState(seedProjects)
   const [quotes, setQuotes] = useState(seedQuotes)
@@ -105,6 +106,7 @@ function App() {
       } catch (error) {
         console.info('Product relationships are waiting for the V1.5 database migration.', error)
       }
+      try { setMembers(await api.workspaceMembers()) } catch (error) { console.info('Workspace member labels are waiting for the V1.8 database migration.', error) }
       try {
         const [taskRows, events, log] = await Promise.all([api.tasks(), api.timeline(), api.dailyLog(focusDate)])
         setTasks(taskRows); setTimelineEvents(events); setDailyLog(log)
@@ -276,7 +278,7 @@ function App() {
       <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', mail: '邮件中心', products: '产品中心', relationships: '产品关系', imports: 'AI 导入暂存箱', tasks: '每日计划', calendar: '工作日历', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="account-menu"><button className="avatar avatar-small account-trigger" aria-label="打开账号菜单" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen(current => !current)}>{account.initial}</button>{accountMenuOpen && <div className="account-popover"><b>{account.name}</b><small>{account.email || '当前登录账号'}</small><button onClick={signOut}><LogOut size={15}/>退出登录</button></div>}</div></div></header>
       {globalQuery.trim() && <WorkspaceSearch query={globalQuery} customers={customers} products={products} projects={projects} emails={emails} close={() => setGlobalQuery('')} openCustomer={customer => { setView('crm'); setSelected(customer) }} openProduct={() => setView('products')} openProject={customer => { setView('projects'); setSelected(customer) }} openEmail={openEmail} />}
       {view === 'dashboard' && <Dashboard customers={customers} projects={projects} followups={followupRows} emails={emails} tasks={tasks} today={today} onOpenCRM={() => setView('crm')} onOpenMail={() => setView('mail')} onOpenTasks={() => setView('tasks')} onOpenProducts={() => setView('products')} openCustomer={setSelected} />}
-      {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
+      {view === 'crm' && <CRM customers={visibleCustomers} projects={projects} members={members} query={query} setQuery={setQuery} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
       {view === 'mail' && <MailCenter emails={emails} sync={emailSync} mailbox={mailbox} customers={customers} projects={projects} products={products} open={openEmail} />}
       {view === 'imports' && <ImportInbox customers={customers} afterApplied={async () => { const [customerRows, productRows, loadedFollowups, loadedProjects, taskRows, events] = await Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.tasks(), api.timeline()]); setCustomers(customerRows); setProducts(productRows); setFollowupRows(loadedFollowups); setProjects(loadedProjects); setTasks(taskRows); setTimelineEvents(events) }} />}
       {view === 'products' && <Products products={products} create={() => setModal('product')} />}
@@ -398,10 +400,11 @@ function CustomerCompleteness({ customer }: { customer: Customer }) {
 }
 function ValueStars({ value = 3 }: { value?: number }) { return <span className="value-stars" title={`客户价值 ${value}/5`}>{Array.from({ length: 5 }, (_, index) => <Star key={index} size={12} fill={index < value ? 'currentColor' : 'none'}/>)}</span> }
 
-function CRM({customers,projects,query,setQuery,open,create,addFollowup}:{customers:Customer[];projects:Project[];query:string;setQuery:(v:string)=>void;open:(c:Customer)=>void;create:()=>void;addFollowup:(customer:Customer)=>void}) {
+function CRM({customers,projects,members,query,setQuery,open,create,addFollowup}:{customers:Customer[];projects:Project[];members:WorkspaceMember[];query:string;setQuery:(v:string)=>void;open:(c:Customer)=>void;create:()=>void;addFollowup:(customer:Customer)=>void}) {
   const pending = customers.filter(customer => customer.customer_stage !== 'Maintain Relationship' && customer.customer_stage !== 'Won').length
   const quoted = customers.filter(customer => customer.customer_stage === 'Quotation' || customer.customer_stage === 'Quoted').length
   const incomplete = customers.filter(customer => [customer.country, customer.contact_person, customer.product_interest, customer.customer_need, customer.next_action?.[0]].some(value => !value || value === '待确认')).length
+  const ownerName = (customer: Customer) => members.find(member => member.user_id === customer.user_id)?.display_name || '共享客户'
   const countries = Object.entries(customers.reduce<Record<string, Customer[]>>((groups, customer) => { (groups[customer.country] ||= []).push(customer); return groups }, {}))
   return <section className="page crm"><div className="page-heading"><div><p className="eyebrow">CUSTOMER INTELLIGENCE LAYER</p><h1>外贸 CRM</h1><p>让每位客户的背景、需求、商业价值与下一步行动一目了然。</p></div><button className="primary" onClick={create}><Plus size={17}/> 新建客户</button></div><div className="crm-kpis"><span><b>{customers.length}</b> 客户</span><span><b>{projects.length}</b> 进行中项目</span><span><b>{pending}</b> 待跟进</span><span><b>{quoted}</b> 报价中</span><span><b>{incomplete}</b> 待补资料</span></div>
     <section className="global-map"><div className="panel-title"><div><p className="eyebrow"><Globe2 size={13}/> GLOBAL CUSTOMERS</p><h2>全球客户分布</h2></div><span>{countries.length} 个国家 / 地区</span></div><div className="country-grid">{countries.map(([country, members]) => <div className="country-card" key={country}><b>{countryFlags[country] ?? '🌍'} {country}</b><small>{members.length} customers</small><div>{members.map(member => <button key={member.id} onClick={() => open(member)}>{member.company_name}</button>)}</div></div>)}</div></section>

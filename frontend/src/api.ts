@@ -1,4 +1,4 @@
-import type { Customer, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent } from './types'
+import type { Customer, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent, WorkspaceMember } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -43,6 +43,7 @@ const asTask = (item: Task): Task => ({ ...item, description: item.description |
 
 export const api = {
   customers: () => request<Customer[]>('/api/customers').then(rows => rows.map(asCustomer)),
+  workspaceMembers: () => request<WorkspaceMember[]>('/api/workspace-members'),
   createCustomer: (payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>('/api/customers', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
   products: () => request<Product[]>('/api/products').then(rows => rows.map(asProduct)),
   createProduct: (payload: Omit<Product, 'id'>) => request<Product[]>('/api/products', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asProduct(rows[0])),

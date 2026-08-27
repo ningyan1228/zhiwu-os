@@ -393,6 +393,11 @@ async def seed_demo(authorization: str | None = Header(default=None)):
 async def list_customers(authorization: str | None = Header(default=None), limit: int = Query(100, le=100)):
     return await supabase(f"customers?select=*&import_reverted=eq.false&archived_at=is.null&order=created_at.desc&limit={limit}", bearer(authorization))
 
+@app.get("/api/workspace-members")
+async def list_workspace_members(authorization: str | None = Header(default=None)):
+    """Read-only labels for customer ownership; RLS remains the source of truth."""
+    return await supabase("workspace_members?select=user_id,display_name,role&order=display_name.asc", bearer(authorization))
+
 @app.post("/api/customers", status_code=201)
 async def create_customer(customer: CustomerIn, authorization: str | None = Header(default=None)):
     return await supabase("customers", bearer(authorization), "POST", customer.model_dump(exclude_none=True))
