@@ -1,4 +1,4 @@
-import type { Customer, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Task, TimelineEvent, WorkspaceMember } from './types'
+import type { Customer, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -33,6 +33,15 @@ async function publicRequest<T>(path: string, init: RequestInit = {}) {
   return response.json() as Promise<T>
 }
 
+async function upload<T>(path: string, body: FormData) {
+  const response = await fetch(`${apiBaseUrl}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { detail?: string } | null
+    throw new Error(payload?.detail || '文件上传失败，请稍后重试。')
+  }
+  return response.json() as Promise<T>
+}
+
 const asCustomer = (item: Customer): Customer => ({ ...item, whatsapp: item.whatsapp || '—', product_interest: item.product_interest || '—', last_contact_date: item.last_contact_date || '—', next_followup_date: item.next_followup_date || '—', notes: item.notes || '暂无备注', customer_summary: item.customer_summary || '待补充客户画像。', customer_background: item.customer_background || '待补充客户背景。', customer_need: item.customer_need || item.product_interest || '待确认客户需求。', important_notes: item.important_notes || '暂无特别注意事项。', customer_value: item.customer_value || 3, customer_tags: item.customer_tags || [], industry: item.industry || '待确认行业' })
 const asProduct = (item: Product): Product => ({ ...item, category: item.category || '未分类', application: item.application || '—', description: item.description || '暂无描述', notes: item.notes || '' })
 const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
@@ -57,6 +66,23 @@ export const api = {
   updateProject: (id: string, payload: Omit<Project, 'id' | 'customer_id' | 'created_at'>) => request<Project[]>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asProject(rows[0])),
   quotes: () => request<Quote[]>('/api/quotes').then(rows => rows.map(asQuote)),
   createQuote: (payload: Omit<Quote, 'id'>) => request<Quote[]>('/api/quotes', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asQuote(rows[0])),
+  suppliers: () => request<Supplier[]>('/api/suppliers?limit=500'),
+  supplierInsights: () => request<SupplierInsight[]>('/api/supplier-insights'),
+  createSupplier: (payload: Omit<Supplier, 'id' | 'created_at'>) => request<Supplier>('/api/suppliers', { method: 'POST', body: JSON.stringify(payload) }),
+  updateSupplier: (id: string, payload: Omit<Supplier, 'id' | 'created_at'>) => request<Supplier>(`/api/suppliers/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  supplierContacts: (supplierId: string) => request<SupplierContact[]>(`/api/suppliers/${supplierId}/contacts`),
+  createSupplierContact: (payload: Omit<SupplierContact, 'id' | 'created_at'>) => request<SupplierContact>('/api/supplier-contacts', { method: 'POST', body: JSON.stringify(payload) }),
+  supplierProducts: (supplierId: string) => request<SupplierProduct[]>(`/api/suppliers/${supplierId}/products`),
+  createSupplierProduct: (payload: Omit<SupplierProduct, 'id' | 'created_at'>) => request<SupplierProduct>('/api/supplier-products', { method: 'POST', body: JSON.stringify(payload) }),
+  supplierFollowups: (supplierId: string) => request<SupplierFollowup[]>(`/api/suppliers/${supplierId}/followups`),
+  createSupplierFollowup: (payload: Omit<SupplierFollowup, 'id' | 'created_at'> & { create_task: boolean }) => request<{ followup: SupplierFollowup; supplier: Supplier; task: Task | null }>('/api/supplier-followups', { method: 'POST', body: JSON.stringify(payload) }),
+  supplierProjectLinks: (filters: { project_id?: string; supplier_id?: string } = {}) => { const params = new URLSearchParams(filters as Record<string, string>); return request<SupplierProjectLink[]>(`/api/supplier-project-links${params.size ? `?${params}` : ''}`) },
+  createSupplierProjectLink: (payload: Omit<SupplierProjectLink, 'id' | 'created_at'>) => request<SupplierProjectLink>('/api/supplier-project-links', { method: 'POST', body: JSON.stringify(payload) }),
+  supplierRfqs: (filters: { supplier_id?: string; project_id?: string } = {}) => { const params = new URLSearchParams(filters as Record<string, string>); return request<SupplierRfq[]>(`/api/supplier-rfqs${params.size ? `?${params}` : ''}`) },
+  createSupplierRfq: (payload: Omit<SupplierRfq, 'id' | 'rfq_number' | 'created_date' | 'created_at'>) => request<SupplierRfq>('/api/supplier-rfqs', { method: 'POST', body: JSON.stringify(payload) }),
+  supplierDocuments: (supplierId: string) => request<SupplierDocument[]>(`/api/suppliers/${supplierId}/documents`),
+  uploadSupplierDocument: (payload: { supplier_id: string; document_type: SupplierDocument['document_type']; file: File; supplier_product_id?: string; project_id?: string; rfq_id?: string; source?: string; internal_notes?: string }) => { const form = new FormData(); Object.entries(payload).forEach(([key, value]) => { if (value !== undefined && value !== null) form.append(key, value as string | Blob) }); return upload<SupplierDocument>('/api/supplier-documents', form) },
+  supplierDocumentPreview: (documentId: string) => request<{ url: string; file_name: string; mime_type?: string | null }>(`/api/supplier-documents/${documentId}/preview`),
   seedDemo: () => request<{ seeded: boolean }>('/api/demo/seed', { method: 'POST' }),
   updatePassword: (password: string, recoveryToken?: string) => recoveryToken
     ? publicRequest<{ updated: boolean }>('/api/auth/update-password', { method: 'POST', headers: { Authorization: `Bearer ${recoveryToken}` }, body: JSON.stringify({ password }) })
@@ -87,6 +113,6 @@ export const api = {
   },
   imports: () => request<ImportBatch[]>('/api/imports'),
   previewImport: (payload: Record<string, unknown>) => request<ImportPreviewResult>('/api/imports/preview', { method: 'POST', body: JSON.stringify({ payload }) }),
-  applyImport: (id: string, payload: { confirm_company_match: boolean; selected_customer_id?: string }) => request<ImportApplyResult>(`/api/imports/${id}/apply`, { method: 'POST', body: JSON.stringify(payload) }).then(result => ({ ...result, customer: asCustomer(result.customer), project: result.project ? asProject(result.project) : null, products: result.products.map(asProduct), followup: result.followup ? asFollowup(result.followup) : null, task: result.task ? asTask(result.task) : null })),
+  applyImport: (id: string, payload: { confirm_company_match: boolean; selected_customer_id?: string }) => request<ImportApplyResult | Record<string, unknown>>(`/api/imports/${id}/apply`, { method: 'POST', body: JSON.stringify(payload) }).then(result => 'customer' in result && result.customer ? ({ ...result, customer: asCustomer(result.customer as Customer), project: result.project ? asProject(result.project as Project) : null, products: Array.isArray(result.products) ? (result.products as Product[]).map(asProduct) : [], followup: result.followup ? asFollowup(result.followup as Followup) : null, task: result.task ? asTask(result.task as Task) : null }) : result),
   revertImport: (id: string) => request<{ batch_id: string; reverted_effects: number; message: string }>(`/api/imports/${id}/revert`, { method: 'POST' }),
 }
