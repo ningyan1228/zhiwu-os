@@ -1,0 +1,315 @@
+"""Compliant public-web lead discovery.
+
+Only public pages are requested, one at a time.  Restricted platforms, pages
+disallowed by robots.txt, private network targets, logins and paywalls are never
+attempted.  Results are always saved as reviewable leads, never as CRM customers.
+"""
+from __future__ import annotations
+
+import asyncio
+import html
+import ipaddress
+import json
+import re
+import socket
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from urllib.parse import quote_plus, urlparse
+from urllib.robotparser import RobotFileParser
+from xml.etree import ElementTree
+
+import httpx
+
+from .main import settings
+
+RESTRICTED_HOSTS = {
+    "linkedin.com", "facebook.com", "instagram.com", "whatsapp.com", "web.whatsapp.com",
+    "mail.google.com", "outlook.live.com", "outlook.office.com", "mail.qq.com", "qiye.aliyun.com",
+}
+GENERIC_EMAIL_DOMAINS = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "163.com", "qq.com"}
+EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
+PHONE_RE = re.compile(r"(?:\+?\d[\d\s().\-]{7,}\d)")
+
+
+def _host(url: str) -> str:
+    return (urlparse(url).hostname or "").lower().strip(".")
+
+
+def _blocked_host(host: str) -> bool:
+    return any(host == blocked or host.endswith(f".{blocked}") for blocked in RESTRICTED_HOSTS)
+
+
+def _is_public_url(url: str) -> tuple[bool, str]:
+    parsed = urlparse(url)
+    host = _host(url)
+    if parsed.scheme not in {"http", "https"} or not host:
+        return False, "不是公开 HTTP/HTTPS 网页"
+    if _blocked_host(host):
+        return False, "受限平台不在采集范围内"
+    if host in {"localhost", "0.0.0.0", "::1"} or host.endswith(".local"):
+        return False, "本地或私有网络地址不允许访问"
+    try:
+        if ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback:
+            return False, "私有网络地址不允许访问"
+    except ValueError:
+        pass
+    return True, ""
+
+
+def _normalise_text(raw: str) -> str:
+    raw = re.sub(r"(?is)<(script|style|noscript|svg).*?>.*?</\1>", " ", raw)
+    raw = re.sub(r"(?is)<[^>]+>", " ", raw)
+    return re.sub(r"\s+", " ", html.unescape(raw)).strip()
+
+
+def _meta(raw: str, key: str) -> str:
+    pattern = rf"<meta[^>]+(?:property|name)=[\"']{re.escape(key)}[\"'][^>]+content=[\"']([^\"']+)"
+    matched = re.search(pattern, raw, re.I)
+    return html.unescape(matched.group(1)).strip() if matched else ""
+
+
+def _page_title(raw: str) -> str:
+    found = re.search(r"(?is)<title[^>]*>(.*?)</title>", raw)
+    return re.sub(r"\s+", " ", html.unescape(found.group(1))).strip() if found else ""
+
+
+def _company_name(raw: str, host: str) -> str:
+    candidate = _meta(raw, "og:site_name") or _page_title(raw)
+    candidate = re.split(r"\s+[|–—-]\s+", candidate, maxsplit=1)[0].strip()
+    if not candidate or len(candidate) > 180:
+        candidate = host.split(".")[0].replace("-", " ").title()
+    return candidate[:200]
+
+
+def _public_business_email(raw: str, host: str) -> str | None:
+    for email in EMAIL_RE.findall(raw):
+        value = email.lower().strip(".,;:)")
+        local, _, domain = value.partition("@")
+        if local in {"noreply", "no-reply", "privacy", "abuse"}:
+            continue
+        if domain == host or domain.endswith(f".{host}") or local in {"info", "sales", "contact", "export", "marketing", "business", "bd", "enquiry", "inquiry"}:
+            return value
+        if domain not in GENERIC_EMAIL_DOMAINS and not domain.endswith((".gov", ".edu")):
+            return value
+    return None
+
+
+def _public_phone(raw: str) -> str | None:
+    for item in PHONE_RE.findall(raw):
+        digits = re.sub(r"\D", "", item)
+        if 8 <= len(digits) <= 18:
+            return re.sub(r"\s+", " ", item).strip()
+    return None
+
+
+def _contains_terms(text: str, terms: list[str]) -> list[str]:
+    lowered = text.casefold()
+    return [term for term in terms if term and term.casefold() in lowered]
+
+
+def _country_match(text: str, countries: list[str]) -> list[str]:
+    lowered = text.casefold()
+    matches: list[str] = []
+    europe_terms = ("europe", "netherlands", "germany", "france", "italy", "spain", "belgium", "poland", "uk")
+    for country in countries:
+        if country.casefold() == "europe":
+            if any(term in lowered for term in europe_terms): matches.append(country)
+        elif country.casefold() in lowered:
+            matches.append(country)
+    return matches
+
+
+async def _robots_allowed(client: httpx.AsyncClient, url: str, user_agent: str) -> tuple[bool, str]:
+    parsed = urlparse(url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    try:
+        response = await client.get(robots_url, headers={"User-Agent": user_agent}, follow_redirects=True)
+    except httpx.HTTPError as exc:
+        return False, f"无法读取 robots.txt：{exc.__class__.__name__}"
+    if response.status_code in {401, 403}:
+        return False, f"robots.txt 返回 {response.status_code}，跳过"
+    if response.status_code == 404:
+        return True, "robots.txt 不存在，按公开网页处理"
+    if response.status_code >= 400:
+        return False, f"robots.txt 返回 {response.status_code}，跳过"
+    parser = RobotFileParser()
+    parser.parse(response.text.splitlines())
+    return (True, "robots.txt 允许") if parser.can_fetch(user_agent, url) else (False, "robots.txt 禁止访问")
+
+
+async def _bing_rss(client: httpx.AsyncClient, query: str, user_agent: str) -> list[str]:
+    """Use only Bing's public RSS response as a discovery index, not a gated API."""
+    url = f"https://www.bing.com/search?format=rss&q={quote_plus(query)}"
+    response = await client.get(url, headers={"User-Agent": user_agent}, follow_redirects=True)
+    if response.status_code >= 400:
+        raise RuntimeError(f"公开搜索结果返回 {response.status_code}")
+    try:
+        root = ElementTree.fromstring(response.text)
+    except ElementTree.ParseError:
+        return []
+    links: list[str] = []
+    for item in root.findall(".//item"):
+        link = (item.findtext("link") or "").strip()
+        allowed, _ = _is_public_url(link)
+        if allowed and link not in links:
+            links.append(link)
+    return links
+
+
+class RestStore:
+    """Small REST adapter usable with a signed-in user token or service role."""
+    def __init__(self, token: str, service: bool = False):
+        cfg = settings()
+        self.base = cfg.supabase_url.rstrip("/")
+        key = cfg.supabase_service_role_key if service else cfg.supabase_anon_key
+        self.headers = {"apikey": key, "Authorization": token, "Content-Type": "application/json", "Prefer": "return=representation"}
+
+    async def request(self, path: str, method: str = "GET", payload: Any = None) -> Any:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.request(method, f"{self.base}/rest/v1/{path}", headers=self.headers, json=payload)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Supabase {response.status_code}: {response.text[:300]}")
+        return response.json() if response.content else None
+
+
+async def _duplicates(store: RestStore, task: dict[str, Any], company: str, domain: str, email: str | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    customers = await store.request("customers?select=id,company_name,email,website&archived_at=is.null&import_reverted=eq.false&limit=500")
+    suppliers = await store.request("suppliers?select=id,company_name,main_email,website&archived_at=is.null&import_reverted=eq.false&limit=500")
+    def domain_of(value: str | None) -> str: return _host(value or "")
+    company_key = company.casefold().strip()
+    customer = next((row for row in customers if (email and (row.get("email") or "").casefold() == email.casefold()) or (domain and domain_of(row.get("website")) == domain) or (row.get("company_name") or "").casefold().strip() == company_key), None)
+    supplier = next((row for row in suppliers if (email and (row.get("main_email") or "").casefold() == email.casefold()) or (domain and domain_of(row.get("website")) == domain) or (row.get("company_name") or "").casefold().strip() == company_key), None)
+    return customer, supplier
+
+
+def _score(task: dict[str, Any], text: str, website: str, email: str | None, company: str, duplicate: bool) -> tuple[int, list[str], list[str], list[str], str]:
+    products = _contains_terms(text, task.get("product_keywords") or [])
+    applications = _contains_terms(text, task.get("application_keywords") or [])
+    countries = _country_match(text, task.get("target_countries") or [])
+    score, reasons = 0, []
+    if products: score += 30; reasons.append(f"命中目标产品关键词：{', '.join(products[:3])} (+30)")
+    if applications: score += 25; reasons.append(f"命中目标应用关键词：{', '.join(applications[:3])} (+25)")
+    if countries: score += 15; reasons.append(f"命中目标国家/地区：{', '.join(countries[:2])} (+15)")
+    if website: score += 10; reasons.append("有独立官网 (+10)")
+    if email or "contact" in text.casefold(): score += 10; reasons.append("有公开商务联系方式或联系页 (+10)")
+    if any(word in text.casefold() for word in ("manufacturer", "manufacturing", "factory", "producer", "brand")):
+        score += 10; reasons.append("页面显示为生产商或品牌方 (+10)")
+    if duplicate: reasons.append("疑似已存在于 CRM 或供应商中心；仅供核验，不计入新线索")
+    need = "可能与目标产品/应用相关，需人工查看官网确认采购或技术需求。"
+    if products or applications:
+        need = f"页面出现 {', '.join((products + applications)[:4])}；可能需要相关材料或技术方案，需人工确认。"
+    return min(score, 100), reasons, products, applications, need
+
+
+async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "manual") -> dict[str, Any]:
+    """Sequential, bounded discovery run. Public index -> robots -> one public page."""
+    cfg = settings()
+    user_agent = getattr(cfg, "lead_discovery_user_agent", "ZhiwuOSLeadDiscovery/1.0 (+https://work.101921.xyz)")
+    delay = max(float(getattr(cfg, "lead_discovery_delay_seconds", 1.0)), 0.5)
+    run_rows = await store.request("lead_discovery_runs", "POST", {"user_id": task["user_id"], "task_id": task["id"], "trigger_type": trigger, "status": "运行中"})
+    run = run_rows[0]
+    log: list[str] = []
+    inserted = skipped = discovered = 0
+    try:
+        product_terms = (task.get("product_keywords") or [task["task_name"]])[:3]
+        app_terms = (task.get("application_keywords") or [""])[:2]
+        countries = (task.get("target_countries") or [""])[:2]
+        queries = []
+        for index, product in enumerate(product_terms):
+            app_term = app_terms[index % len(app_terms)]
+            country = countries[index % len(countries)]
+            queries.append(" ".join(part for part in (product, app_term, country) if part))
+        urls: list[str] = []
+        async with httpx.AsyncClient(timeout=20) as client:
+            for query in queries:
+                try:
+                    for candidate in await _bing_rss(client, query, user_agent):
+                        if candidate not in urls: urls.append(candidate)
+                        if len(urls) >= int(task.get("max_results") or 15): break
+                except Exception as exc:
+                    log.append(f"公开搜索“{query}”失败：{exc}")
+                if len(urls) >= int(task.get("max_results") or 15): break
+                await asyncio.sleep(delay)
+            for source_url in urls[:int(task.get("max_results") or 15)]:
+                allowed, reason = _is_public_url(source_url)
+                if not allowed:
+                    skipped += 1; log.append(f"跳过 {source_url}：{reason}"); continue
+                robots_ok, robots_reason = await _robots_allowed(client, source_url, user_agent)
+                if not robots_ok:
+                    skipped += 1; log.append(f"跳过 {source_url}：{robots_reason}"); continue
+                await asyncio.sleep(delay)
+                try:
+                    response = await client.get(source_url, headers={"User-Agent": user_agent, "Accept": "text/html,application/xhtml+xml"}, follow_redirects=True)
+                    final_url = str(response.url)
+                    final_allowed, final_reason = _is_public_url(final_url)
+                    if response.status_code >= 400 or not final_allowed:
+                        skipped += 1; log.append(f"跳过 {source_url}：{final_reason or f'网页返回 {response.status_code}'}"); continue
+                    content_type = response.headers.get("content-type", "")
+                    if "html" not in content_type.lower():
+                        skipped += 1; log.append(f"跳过 {source_url}：不是 HTML 页面"); continue
+                    raw = response.text[:1_000_000]
+                except httpx.HTTPError as exc:
+                    skipped += 1; log.append(f"跳过 {source_url}：读取失败 {exc.__class__.__name__}"); continue
+                text = _normalise_text(raw)
+                if len(text) < 80:
+                    skipped += 1; log.append(f"跳过 {source_url}：公开页面内容不足"); continue
+                host = _host(final_url)
+                company = _company_name(raw, host)
+                email = _public_business_email(raw, host)
+                phone = _public_phone(raw)
+                customer_dup, supplier_dup = await _duplicates(store, task, company, host, email)
+                duplicate = bool(customer_dup or supplier_dup)
+                score, reasons, product_hits, application_hits, need = _score(task, text, f"{urlparse(final_url).scheme}://{host}", email, company, duplicate)
+                payload = {
+                    "user_id": task["user_id"], "task_id": task["id"], "company_name": company, "website": f"{urlparse(final_url).scheme}://{host}", "website_domain": host,
+                    "source_url": final_url, "source_type": "官网", "public_business_email": email, "public_business_phone": phone,
+                    "discovered_product_keywords": product_hits, "discovered_application_keywords": application_hits, "possible_need": need,
+                    "match_score": score, "score_reasons": reasons, "suspected_duplicate": duplicate,
+                    "duplicate_customer_id": customer_dup.get("id") if customer_dup else None,
+                    "duplicate_supplier_id": supplier_dup.get("id") if supplier_dup else None,
+                    "robots_status": "allowed", "robots_reason": robots_reason,
+                }
+                known = await store.request(f"customer_leads?task_id=eq.{task['id']}&select=id,source_url&limit=500")
+                existing = [row for row in known if row.get("source_url") == final_url]
+                if existing:
+                    await store.request(f"customer_leads?id=eq.{existing[0]['id']}", "PATCH", payload)
+                    log.append(f"更新已发现线索：{company}")
+                else:
+                    await store.request("customer_leads", "POST", payload)
+                    inserted += 1; log.append(f"加入待审核：{company}")
+                discovered += 1
+                await asyncio.sleep(delay)
+        result_status = "成功" if discovered else "跳过"
+        await store.request(f"lead_discovery_runs?id=eq.{run['id']}", "PATCH", {"status": result_status, "finished_at": datetime.now(timezone.utc).isoformat(), "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "run_log": log[:100]})
+        await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"last_run_at": datetime.now(timezone.utc).isoformat(), "last_run_status": result_status, "last_error": None})
+        return {"run_id": run["id"], "status": result_status, "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "log": log}
+    except Exception as exc:
+        message = str(exc)[:1000]
+        await store.request(f"lead_discovery_runs?id=eq.{run['id']}", "PATCH", {"status": "失败", "finished_at": datetime.now(timezone.utc).isoformat(), "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "error_message": message, "run_log": log[:100]})
+        await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"last_run_at": datetime.now(timezone.utc).isoformat(), "last_run_status": "失败", "last_error": message})
+        raise
+
+
+async def run_daily_loop() -> None:
+    """Server-side timer. It only runs tasks explicitly enabled by their owner."""
+    cfg = settings()
+    token = f"Bearer {cfg.supabase_service_role_key}"
+    store = RestStore(token, service=True)
+    while True:
+        now = datetime.now().astimezone()
+        try:
+            tasks = await store.request("lead_search_tasks?daily_enabled=eq.true&status=eq.%E5%90%AF%E7%94%A8&select=*&limit=100")
+            today = now.date().isoformat()
+            for task in tasks:
+                scheduled = str(task.get("daily_run_time") or "08:30")[:5]
+                already = await store.request(f"lead_discovery_runs?task_id=eq.{task['id']}&trigger_type=eq.daily&started_at=gte.{today}T00:00:00Z&select=id&limit=1")
+                if not already and now.strftime("%H:%M") >= scheduled:
+                    try: await run_task_once(store, task, "daily")
+                    except Exception: pass
+        except Exception:
+            pass
+        await asyncio.sleep(60)
+
+
+if __name__ == "__main__":
+    asyncio.run(run_daily_loop())

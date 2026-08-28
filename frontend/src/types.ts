@@ -49,8 +49,15 @@ export type TaskStatus = 'Pending' | 'Completed'
 export type Task = {
   id: string; title: string; description?: string; category: TaskCategory; priority: TaskPriority; status: TaskStatus
   task_date: string; start_time?: string | null; end_time?: string | null; estimated_minutes?: number | null
-  customer_id?: string | null; project_id?: string | null; product_id?: string | null; created_at?: string; completed_at?: string | null
+  customer_id?: string | null; project_id?: string | null; product_id?: string | null; lead_id?: string | null; created_at?: string; completed_at?: string | null
 }
+export type LeadSearchTask = {
+  id: string; user_id?: string; task_name: string; product_keywords: string[]; application_keywords: string[]; target_countries: string[]; excluded_countries: string[]; target_company_types: string[]; search_language: string; max_results: number; daily_enabled: boolean; daily_run_time: string; status: '启用' | '暂停'; last_run_at?: string | null; last_run_status?: '成功' | '失败' | '跳过' | null; last_error?: string | null; created_at: string
+}
+export type CustomerLead = {
+  id: string; task_id?: string | null; company_name: string; country?: string | null; city?: string | null; website?: string | null; website_domain?: string | null; source_url: string; source_type: string; public_contact_name?: string | null; public_contact_title?: string | null; public_business_email?: string | null; public_business_phone?: string | null; discovered_product_keywords: string[]; discovered_application_keywords: string[]; possible_need?: string | null; match_score: number; score_reasons: string[]; suspected_duplicate: boolean; duplicate_customer_id?: string | null; duplicate_supplier_id?: string | null; robots_status: string; robots_reason?: string | null; discovered_at: string; status: '待审核' | '保留' | '已转 CRM' | '已排除' | '已联系'; exclusion_reason?: string | null; notes?: string | null; watchlisted: boolean; crm_customer_id?: string | null; development_task_id?: string | null
+}
+export type LeadDiscoveryRun = { id: string; task_id: string; trigger_type: 'manual' | 'daily' | 'retry'; status: '运行中' | '成功' | '失败' | '跳过'; started_at: string; finished_at?: string | null; discovered_count: number; inserted_count: number; skipped_count: number; error_message?: string | null; run_log: string[] }
 export type DailyLog = { id: string; log_date: string; summary?: string | null; problem?: string | null; tomorrow_plan?: string | null; rating?: number | null; created_at?: string; updated_at?: string }
 export type TimelineEvent = { id: string; event_date: string; event_time?: string | null; title: string; event_type: 'task' | 'email' | 'crm' | 'project' | 'note'; source: string; related_id?: string | null; customer_id?: string | null; project_id?: string | null; product_id?: string | null; created_at?: string }
 export type ImportAction = { entity: string; action: string; label: string; record_id?: string | null }

@@ -2,7 +2,7 @@
 from datetime import date, datetime
 from functools import lru_cache
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     mail_internal_domains: str = ""
     mail_sync_interval_seconds: int = 600
     mail_sync_max_messages: int = 100
+    lead_discovery_user_agent: str = "ZhiwuOSLeadDiscovery/1.0 (+https://work.101921.xyz)"
+    lead_discovery_delay_seconds: float = 1.0
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 @lru_cache
@@ -258,6 +260,43 @@ class TaskIn(BaseModel):
     customer_id: str | None = None
     project_id: str | None = None
     product_id: str | None = None
+    lead_id: str | None = None
+
+class LeadSearchTaskIn(BaseModel):
+    task_name: str = Field(min_length=1, max_length=200)
+    product_keywords: list[str] = []
+    application_keywords: list[str] = []
+    target_countries: list[str] = []
+    excluded_countries: list[str] = []
+    target_company_types: list[str] = []
+    search_language: str = "English"
+    max_results: int = Field(default=15, ge=1, le=30)
+    daily_enabled: bool = False
+    daily_run_time: str = "08:30"
+    status: Literal["启用", "暂停"] = "启用"
+
+class LeadReviewIn(BaseModel):
+    status: Literal["待审核", "保留", "已排除", "已联系"]
+    exclusion_reason: str | None = None
+    notes: str | None = None
+    watchlisted: bool | None = None
+
+class LeadDevelopmentTaskIn(BaseModel):
+    priority: Literal["important", "normal", "low"] = "normal"
+    task_date: str
+    suggested_next_action: str | None = None
+
+class LeadConvertIn(BaseModel):
+    email: str | None = None
+    contact_person: str | None = None
+    country: str | None = None
+    product_interest: str | None = None
+    application: str | None = None
+    priority: Literal["HIGH", "MEDIUM HIGH", "MEDIUM"] = "MEDIUM"
+    next_action: str | None = None
+    next_followup_date: str | None = None
+    notes: str | None = None
+    customer_id: str | None = None
 
 class TaskStatusIn(BaseModel):
     status: Literal["Pending", "Completed"]
@@ -294,6 +333,9 @@ def is_internal_mail_address(address: str | None) -> bool:
     internal_addresses = {item.strip().lower() for item in settings().mail_internal_addresses.split(",") if item.strip()}
     internal_domains = {item.strip().lower() for item in settings().mail_internal_domains.split(",") if item.strip()}
     return value in internal_addresses or ("@" in value and value.rsplit("@", 1)[1] in internal_domains)
+
+def _domain_from_url(value: str | None) -> str:
+    return (urlparse(value or "").hostname or "").lower().removeprefix("www.")
 
 def import_text(value: Any) -> str:
     return str(value or "").strip()
@@ -648,6 +690,117 @@ async def update_task_status(task_id: str, payload: TaskStatusIn, authorization:
     if payload.status == "Completed":
         await record_timeline_event(token, title=f"完成任务：{task['title']}", event_type="task", source="task", related_id=task_id, customer_id=task.get("customer_id"), project_id=task.get("project_id"), product_id=task.get("product_id"))
     return rows[0]
+
+@app.get("/api/lead-search-tasks")
+async def list_lead_search_tasks(authorization: str | None = Header(default=None)):
+    return await supabase("lead_search_tasks?select=*&order=created_at.asc", bearer(authorization))
+
+@app.post("/api/lead-search-tasks", status_code=201)
+async def create_lead_search_task(payload: LeadSearchTaskIn, authorization: str | None = Header(default=None)):
+    rows = await supabase("lead_search_tasks", bearer(authorization), "POST", payload.model_dump())
+    return rows[0]
+
+@app.patch("/api/lead-search-tasks/{task_id}")
+async def update_lead_search_task(task_id: str, payload: LeadSearchTaskIn, authorization: str | None = Header(default=None)):
+    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}", bearer(authorization), "PATCH", {**payload.model_dump(), "updated_at": datetime.now().isoformat()})
+    if not rows: raise HTTPException(404, "Lead search task not found")
+    return rows[0]
+
+@app.get("/api/lead-discovery-runs")
+async def list_lead_discovery_runs(authorization: str | None = Header(default=None), limit: int = Query(50, le=100)):
+    return await supabase(f"lead_discovery_runs?select=*&order=started_at.desc&limit={limit}", bearer(authorization))
+
+async def _run_lead_task_for_user(token: str, task_id: str, trigger: str) -> dict[str, Any]:
+    task_rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&select=*&limit=1", token)
+    if not task_rows: raise HTTPException(404, "Lead search task not found")
+    from .lead_discovery import RestStore, run_task_once
+    try:
+        return await run_task_once(RestStore(token), task_rows[0], trigger)
+    except Exception as exc:
+        raise HTTPException(502, f"公开网页搜索失败：{str(exc)[:500]}")
+
+@app.post("/api/lead-search-tasks/{task_id}/run")
+async def run_lead_search_task(task_id: str, authorization: str | None = Header(default=None)):
+    return await _run_lead_task_for_user(bearer(authorization), task_id, "manual")
+
+@app.post("/api/lead-search-tasks/run-enabled")
+async def run_enabled_lead_search_tasks(authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    tasks = await supabase("lead_search_tasks?status=eq.%E5%90%AF%E7%94%A8&select=id&order=created_at.asc", token)
+    results = []
+    for task in tasks:
+        try: results.append(await _run_lead_task_for_user(token, task["id"], "manual"))
+        except HTTPException as exc: results.append({"task_id": task["id"], "status": "失败", "error": exc.detail})
+    return {"results": results}
+
+@app.get("/api/customer-leads")
+async def list_customer_leads(authorization: str | None = Header(default=None), limit: int = Query(300, le=500)):
+    return await supabase(f"customer_leads?select=*&order=discovered_at.desc&limit={limit}", bearer(authorization))
+
+@app.patch("/api/customer-leads/{lead_id}")
+async def review_customer_lead(lead_id: str, payload: LeadReviewIn, authorization: str | None = Header(default=None)):
+    if payload.status != "已排除" and payload.exclusion_reason:
+        raise HTTPException(422, "仅“已排除”线索可保存排除原因")
+    rows = await supabase(f"customer_leads?id=eq.{lead_id}", bearer(authorization), "PATCH", {**payload.model_dump(exclude_none=True), "updated_at": datetime.now().isoformat()})
+    if not rows: raise HTTPException(404, "Lead not found")
+    return rows[0]
+
+@app.post("/api/customer-leads/{lead_id}/development-task", status_code=201)
+async def create_development_task(lead_id: str, payload: LeadDevelopmentTaskIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    lead_rows = await supabase(f"customer_leads?id=eq.{lead_id}&select=*&limit=1", token)
+    if not lead_rows: raise HTTPException(404, "Lead not found")
+    lead = lead_rows[0]
+    task_rows = await supabase("tasks", token, "POST", {
+        "title": f"研究 / 联系 {lead['company_name']}", "description": payload.suggested_next_action or f"查看官网并确认是否有 {', '.join((lead.get('discovered_application_keywords') or ['目标应用'])[:2])} 业务；仅在人工确认后决定是否联系。",
+        "category": "外贸", "priority": payload.priority, "status": "Pending", "task_date": payload.task_date, "lead_id": lead_id,
+    })
+    task = task_rows[0]
+    await supabase(f"customer_leads?id=eq.{lead_id}", token, "PATCH", {"development_task_id": task["id"], "status": "保留", "updated_at": datetime.now().isoformat()})
+    return task
+
+@app.post("/api/customer-leads/{lead_id}/convert")
+async def convert_customer_lead(lead_id: str, payload: LeadConvertIn, authorization: str | None = Header(default=None)):
+    """Explicit user review is required before any CRM write; no NL code is invented."""
+    token = bearer(authorization)
+    lead_rows = await supabase(f"customer_leads?id=eq.{lead_id}&select=*&limit=1", token)
+    if not lead_rows: raise HTTPException(404, "Lead not found")
+    lead = lead_rows[0]
+    email = (payload.email or lead.get("public_business_email") or "").strip().lower()
+    identity = f"{lead.get('company_name','')} {payload.contact_person or lead.get('public_contact_name') or ''}".lower()
+    if is_internal_mail_address(email) or any(name in identity for name in ("zhiwu", "peter")):
+        raise HTTPException(422, "内部同事不能转为海外客户")
+    customers = await supabase("customers?select=*&archived_at=is.null&import_reverted=eq.false&limit=500", token)
+    lead_domain = _domain_from_url(lead.get("website"))
+    existing = next((row for row in customers if payload.customer_id == row.get("id")), None)
+    if not existing:
+        existing = next((row for row in customers if email and (row.get("email") or "").lower() == email), None)
+    if not existing:
+        existing = next((row for row in customers if lead_domain and _domain_from_url(row.get("website")) == lead_domain), None)
+    if not existing:
+        existing = next((row for row in customers if (row.get("company_name") or "").strip().lower() == (lead.get("company_name") or "").strip().lower()), None)
+    patch = {
+        "contact_person": payload.contact_person or lead.get("public_contact_name"), "country": payload.country or lead.get("country"),
+        "website": lead.get("website"), "product_interest": payload.product_interest,
+        "application": payload.application or lead.get("possible_need"), "priority": payload.priority,
+        "next_action": [payload.next_action] if payload.next_action else None,
+        "next_followup_date": payload.next_followup_date, "notes": payload.notes,
+    }
+    patch = {key: value for key, value in patch.items() if value not in (None, "")}
+    if existing:
+        rows = await supabase(f"customers?id=eq.{existing['id']}", token, "PATCH", patch)
+        customer = rows[0]
+        action = "updated"
+    else:
+        if not email:
+            raise HTTPException(422, "新建 CRM 客户需要公开商务邮箱；请先补充邮箱或仅保留为线索")
+        customer_data = {"company_name": lead["company_name"], "country": payload.country or lead.get("country") or "待确认", "contact_person": payload.contact_person or lead.get("public_contact_name") or "待确认", "email": email, "customer_stage": "New", **patch}
+        rows = await supabase("customers", token, "POST", customer_data)
+        customer = rows[0]
+        action = "created"
+    await record_timeline_event(token, title=f"线索来源：{lead['company_name']}（公开网页审核转入）", event_type="crm", source="lead_discovery", related_id=lead_id, customer_id=customer["id"])
+    await supabase(f"customer_leads?id=eq.{lead_id}", token, "PATCH", {"status": "已转 CRM", "crm_customer_id": customer["id"], "converted_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()})
+    return {"customer": customer, "action": action}
 
 @app.get("/api/daily-logs")
 async def get_daily_log(log_date: str, authorization: str | None = Header(default=None)):

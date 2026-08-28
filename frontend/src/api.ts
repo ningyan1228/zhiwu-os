@@ -1,4 +1,4 @@
-import type { Customer, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
+import type { Customer, CustomerLead, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -105,6 +105,16 @@ export const api = {
   },
   createTask: (payload: Omit<Task, 'id' | 'created_at' | 'completed_at'>) => request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(payload) }).then(asTask),
   updateTaskStatus: (id: string, status: Task['status']) => request<Task>(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }).then(asTask),
+  leadSearchTasks: () => request<LeadSearchTask[]>('/api/lead-search-tasks'),
+  createLeadSearchTask: (payload: Omit<LeadSearchTask, 'id' | 'user_id' | 'last_run_at' | 'last_run_status' | 'last_error' | 'created_at'>) => request<LeadSearchTask>('/api/lead-search-tasks', { method: 'POST', body: JSON.stringify(payload) }),
+  updateLeadSearchTask: (id: string, payload: Omit<LeadSearchTask, 'id' | 'user_id' | 'last_run_at' | 'last_run_status' | 'last_error' | 'created_at'>) => request<LeadSearchTask>(`/api/lead-search-tasks/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  runLeadSearchTask: (id: string) => request<{ run_id: string; status: string; discovered_count: number; inserted_count: number; skipped_count: number; log: string[] }>(`/api/lead-search-tasks/${id}/run`, { method: 'POST' }),
+  runEnabledLeadSearchTasks: () => request<{ results: { status: string; inserted_count?: number; error?: string }[] }>('/api/lead-search-tasks/run-enabled', { method: 'POST' }),
+  customerLeads: () => request<CustomerLead[]>('/api/customer-leads'),
+  leadDiscoveryRuns: () => request<LeadDiscoveryRun[]>('/api/lead-discovery-runs'),
+  reviewCustomerLead: (id: string, payload: { status: CustomerLead['status']; exclusion_reason?: string; notes?: string; watchlisted?: boolean }) => request<CustomerLead>(`/api/customer-leads/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  createDevelopmentTaskFromLead: (id: string, payload: { priority: Task['priority']; task_date: string; suggested_next_action?: string }) => request<Task>(`/api/customer-leads/${id}/development-task`, { method: 'POST', body: JSON.stringify(payload) }).then(asTask),
+  convertCustomerLead: (id: string, payload: { email?: string; contact_person?: string; country?: string; product_interest?: string; application?: string; priority?: Customer['priority']; next_action?: string; next_followup_date?: string; notes?: string; customer_id?: string }) => request<{ customer: Customer; action: 'created' | 'updated' }>(`/api/customer-leads/${id}/convert`, { method: 'POST', body: JSON.stringify(payload) }).then(result => ({ ...result, customer: asCustomer(result.customer) })),
   dailyLog: (day: string) => request<DailyLog | null>(`/api/daily-logs?log_date=${encodeURIComponent(day)}`),
   saveDailyLog: (day: string, payload: Omit<DailyLog, 'id' | 'log_date' | 'created_at' | 'updated_at'>) => request<DailyLog>(`/api/daily-logs/${day}`, { method: 'PUT', body: JSON.stringify(payload) }),
   timeline: (filters: { event_date?: string; from_date?: string; to_date?: string } = {}) => {
