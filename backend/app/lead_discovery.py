@@ -30,6 +30,7 @@ RESTRICTED_HOSTS = {
     "wikipedia.org", "tiktok.com", "x.com", "twitter.com", "pinterest.com",
 }
 GENERIC_EMAIL_DOMAINS = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "163.com", "qq.com"}
+NON_EMAIL_FILE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js", ".woff", ".pdf")
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 PHONE_RE = re.compile(r"(?:\+?\d[\d\s().\-]{7,}\d)")
 CONTACT_DEPARTMENTS = ("export sales", "sales", "purchasing", "procurement", "technical support", "r&d", "research and development", "product development", "packaging development", "quality", "regulatory")
@@ -122,7 +123,9 @@ def _public_business_email(raw: str, host: str) -> str | None:
     for email in EMAIL_RE.findall(raw):
         value = email.lower().strip(".,;:)")
         local, _, domain = value.partition("@")
-        if local in {"noreply", "no-reply", "privacy", "abuse", "example", "placeholder"} or any(token in local for token in ("logo", "image", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".js")):
+        if domain.endswith(NON_EMAIL_FILE_SUFFIXES):
+            continue
+        if local in {"noreply", "no-reply", "privacy", "abuse", "example", "placeholder"} or any(token in local for token in ("logo", "image", "asset", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".js")):
             continue
         if domain == host or domain.endswith(f".{host}") or local in {"info", "sales", "contact", "export", "marketing", "business", "bd", "enquiry", "inquiry"}:
             return value
@@ -133,9 +136,17 @@ def _public_business_email(raw: str, host: str) -> str | None:
 
 def _public_phone(raw: str) -> str | None:
     for item in PHONE_RE.findall(raw):
-        digits = re.sub(r"\D", "", item)
+        value = re.sub(r"\s+", " ", item).strip()
+        # Dates, SVG coordinates and numeric identifiers often match a generic
+        # telephone regex.  A strict record only accepts a recognisable public
+        # business number with country/area formatting.
+        if re.fullmatch(r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}", value) or "." in value:
+            continue
+        if not (value.startswith("+") or value.startswith("00") or "(" in value or "-" in value or " " in value):
+            continue
+        digits = re.sub(r"\D", "", value)
         if 8 <= len(digits) <= 18:
-            return re.sub(r"\s+", " ", item).strip()
+            return value
     return None
 
 
@@ -510,8 +521,9 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     "verification_conclusion": "已通过严格客户核验。" if bucket == "严格客户名单" else (identity_problem if excluded else "真实企业线索，但尚未满足全部严格客户门槛。"),
                     "missing_requirements": missing, "verified_at": datetime.now(timezone.utc).isoformat(),
                 }
-                known = await store.request(f"customer_leads?task_id=eq.{task['id']}&select=id,source_url&limit=500")
-                existing = [row for row in known if row.get("source_url") == final_url]
+                known = await store.request(f"customer_leads?user_id=eq.{task['user_id']}&select=id,source_url,website_domain,company_name,public_business_email&limit=500")
+                company_key = re.sub(r"[^a-z0-9]", "", company.casefold())
+                existing = [row for row in known if row.get("source_url") == final_url or row.get("website_domain") == host or (company_key and re.sub(r"[^a-z0-9]", "", str(row.get("company_name") or "").casefold()) == company_key) or (email and str(row.get("public_business_email") or "").casefold() == email.casefold())]
                 if existing:
                     await store.request(f"customer_leads?id=eq.{existing[0]['id']}", "PATCH", payload)
                     log.append(f"更新已发现线索：{company}")
