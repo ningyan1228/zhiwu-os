@@ -32,6 +32,10 @@ RESTRICTED_HOSTS = {
 GENERIC_EMAIL_DOMAINS = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "163.com", "qq.com"}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 PHONE_RE = re.compile(r"(?:\+?\d[\d\s().\-]{7,}\d)")
+CONTACT_DEPARTMENTS = ("export sales", "sales", "purchasing", "procurement", "technical support", "r&d", "research and development", "product development", "packaging development", "quality", "regulatory")
+IDENTITY_WORDS = ("manufacturer", "manufacturing", "factory", "producer", "brand owner", "converter", "processor", "formulator", "our company")
+EXCLUDED_IDENTITY_WORDS = ("association", "exhibition", "trade show", "directory", "yellow pages", "media", "news", "training", "consulting", "distributor", "distribution", "trading company", "trader")
+OFFICIAL_PAGE_HINTS = ("contact", "about", "company", "factory", "manufactur", "product", "application", "sustainab", "technology", "technical", "download", "tds", "sds")
 
 # These are public association/member directories, not gated social or mailbox
 # platforms.  They are only used as crawler entry points; each page and every
@@ -118,7 +122,7 @@ def _public_business_email(raw: str, host: str) -> str | None:
     for email in EMAIL_RE.findall(raw):
         value = email.lower().strip(".,;:)")
         local, _, domain = value.partition("@")
-        if local in {"noreply", "no-reply", "privacy", "abuse"}:
+        if local in {"noreply", "no-reply", "privacy", "abuse", "example", "placeholder"} or any(token in local for token in ("logo", "image", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".js")):
             continue
         if domain == host or domain.endswith(f".{host}") or local in {"info", "sales", "contact", "export", "marketing", "business", "bd", "enquiry", "inquiry"}:
             return value
@@ -133,6 +137,54 @@ def _public_phone(raw: str) -> str | None:
         if 8 <= len(digits) <= 18:
             return re.sub(r"\s+", " ", item).strip()
     return None
+
+
+def _contact_department(text: str) -> str | None:
+    lowered = text.casefold()
+    for department in CONTACT_DEPARTMENTS:
+        if department in lowered:
+            return department.upper() if department == "r&d" else department.title()
+    return None
+
+
+def _company_type(text: str) -> tuple[str | None, str | None]:
+    """Return an allowed business type or an explicit exclusion reason."""
+    lowered = text.casefold()
+    # A real manufacturer may mention distributors, trade shows or news pages.
+    # Direct manufacturing evidence must take priority over those incidental words.
+    if any(word in lowered for word in ("manufacturer", "manufacturing", "factory", "producer")):
+        return "生产制造商", None
+    if any(word in lowered for word in ("formulator", "formulation")):
+        return "配方商", None
+    if any(word in lowered for word in ("brand owner", "our brands", "consumer products")):
+        return "品牌方/终端使用企业", None
+    if any(word in lowered for word in ("converter", "processing", "processor")):
+        return "加工厂/转换商", None
+    if any(word in lowered for word in EXCLUDED_IDENTITY_WORDS):
+        return None, "官网内容显示为协会、目录、媒体、贸易/分销或其他非目标企业"
+    return None, "官网未确认生产商、配方商、加工厂、品牌方或终端使用企业身份"
+
+
+def _official_subpage_urls(raw: str, base_url: str, limit: int = 6) -> list[str]:
+    """Only follow likely evidence pages on the same official host."""
+    host = _host(base_url)
+    urls: list[str] = []
+    for href in re.findall(r'''(?is)<a[^>]+href=["']([^"'#]+)''', raw):
+        link = urljoin(base_url, html.unescape(href).strip())
+        allowed, _ = _is_public_url(link)
+        parsed = urlparse(link)
+        if not allowed or _host(link) != host or link in urls:
+            continue
+        if any(hint in (parsed.path + "?" + parsed.query).casefold() for hint in OFFICIAL_PAGE_HINTS):
+            urls.append(link)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def _address_excerpt(text: str) -> str | None:
+    found = re.search(r"(?is)(?:address|registered office|head office)\s*[:\-]?\s*([^.|]{18,260})", text)
+    return re.sub(r"\s+", " ", found.group(1)).strip(" ,;:")[:300] if found else None
 
 
 def _contains_terms(text: str, terms: list[str]) -> list[str]:
@@ -367,25 +419,79 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 if len(text) < 80:
                     skipped += 1; log.append(f"跳过 {source_url}：公开页面内容不足"); continue
                 host = _host(final_url)
+                # A directory only discovers a name.  Strict verification then
+                # visits same-domain About / Contact / Product evidence pages.
+                pages: list[tuple[str, str, str]] = [(final_url, raw, text)]
+                for subpage_url in _official_subpage_urls(raw, final_url):
+                    robots_ok, _ = await _robots_allowed(client, subpage_url, user_agent)
+                    if not robots_ok:
+                        continue
+                    try:
+                        sub_response = await client.get(subpage_url, headers={"User-Agent": user_agent, "Accept": "text/html,application/xhtml+xml"}, follow_redirects=True)
+                        if sub_response.status_code < 400 and "html" in sub_response.headers.get("content-type", "").lower() and _host(str(sub_response.url)) == host:
+                            sub_raw = sub_response.text[:1_000_000]
+                            pages.append((str(sub_response.url), sub_raw, _normalise_text(sub_raw)))
+                    except httpx.HTTPError:
+                        pass
+                    await asyncio.sleep(delay)
+
+                combined_text = " ".join(page[2] for page in pages)
                 company = _company_name(raw, host)
-                email = _public_business_email(raw, host)
-                phone = _public_phone(raw)
+                company_type, identity_problem = _company_type(combined_text)
+                email = phone = department = None
+                email_source = phone_source = contact_source = evidence_url = None
+                evidence_text = ""
+                product_hits: list[str] = []
+                application_hits: list[str] = []
+                for page_url, page_raw, page_text in pages:
+                    page_email = _public_business_email(page_raw, host)
+                    page_phone = _public_phone(page_raw)
+                    page_department = _contact_department(page_text)
+                    if page_email and not email:
+                        email, email_source = page_email, page_url
+                    if page_phone and not phone:
+                        phone, phone_source = page_phone, page_url
+                    if page_department and not department:
+                        department, contact_source = page_department, page_url
+                    found_products = _contains_terms(page_text, task.get("product_keywords") or [])
+                    found_applications = _contains_terms(page_text, task.get("application_keywords") or [])
+                    if (found_products or found_applications) and not evidence_url:
+                        product_hits, application_hits = found_products, found_applications
+                        evidence_url, evidence_text = page_url, page_text
+                if not contact_source and (email_source or phone_source):
+                    contact_source = email_source or phone_source
                 customer_dup, supplier_dup = await _duplicates(store, task, company, host, email)
                 duplicate = bool(customer_dup or supplier_dup)
-                score, reasons, product_hits, application_hits, need = _score(task, text, f"{urlparse(final_url).scheme}://{host}", email, company, duplicate)
-                if source_type == "行业目录" and not product_hits and not application_hits:
-                    # A vetted association/exhibitor directory establishes sector
-                    # relevance, but it does not prove that this company needs the
-                    # material. Keep it as a lower-confidence review lead.
-                    score = min(score + 20, 100)
-                    reasons.append("来自匹配行业的公开会员/参展商目录 (+20)，具体需求待人工确认")
-                    need = "来自目标行业公开目录；请查看官网确认其产品、应用与实际材料需求。"
-                # A lead must demonstrate a target product and a basic company or
-                # public-business-contact signal. This intentionally sacrifices
-                # volume to keep the review queue free of generic/video results.
-                directory_based = source_type == "行业目录"
-                if not _looks_like_company_page(text, email) or (not product_hits and not (directory_based and (application_hits or source_type == "行业目录"))):
-                    skipped += 1; log.append(f"跳过 {source_url}：不是可确认的目标企业网页"); continue
+                score, reasons, _, _, need = _score(task, combined_text, f"{urlparse(final_url).scheme}://{host}", email, company, duplicate)
+                missing: list[str] = []
+                if identity_problem: missing.append(identity_problem)
+                # Email and a switchboard alone do not pass the strict rule.
+                # Until a named contact extractor is available, an explicit
+                # business department is mandatory for the strict list.
+                if not department: missing.append("缺公开联系人姓名或可联系业务部门")
+                if not email: missing.append("缺公开业务邮箱")
+                if not phone: missing.append("缺官方公开电话")
+                if not evidence_url: missing.append("无产品或应用直接证据")
+                if duplicate: missing.append("疑似与 CRM 或供应商中心重复")
+                excluded = bool(identity_problem and any(word in identity_problem for word in ("协会", "目录", "媒体", "贸易/分销")))
+                bucket = "排除名单" if excluded else ("严格客户名单" if not missing else "待补信息")
+                matching_grade = "A" if product_hits else ("B" if application_hits else None)
+                if bucket == "严格客户名单" and not matching_grade:
+                    bucket, matching_grade = "待补信息", None
+                    missing.append("无产品或应用直接证据")
+                evidence_summary = ""
+                if evidence_url:
+                    terms = product_hits or application_hits
+                    evidence_summary = f"官方页面出现：{', '.join(terms[:5])}。"
+                    need = f"官方资料显示 {', '.join(terms[:5])}；需首轮确认具体材料、工艺与规格。"
+                if excluded:
+                    reasons.append("不属于可开发企业主体，已进入排除名单")
+                elif missing:
+                    reasons.append("未满足全部严格核验门槛，进入待补信息")
+                else:
+                    reasons.append("官网、业务身份、联系人/部门、邮箱、电话及产品/应用证据均已核验")
+                if not _looks_like_company_page(combined_text, email):
+                    skipped += 1; log.append(f"跳过 {source_url}：不是可确认的企业官网"); continue
                 payload = {
                     "user_id": task["user_id"], "task_id": task["id"], "company_name": company, "website": f"{urlparse(final_url).scheme}://{host}", "website_domain": host,
                     "source_url": final_url, "source_type": source_type, "public_business_email": email, "public_business_phone": phone,
@@ -394,6 +500,15 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     "duplicate_customer_id": customer_dup.get("id") if customer_dup else None,
                     "duplicate_supplier_id": supplier_dup.get("id") if supplier_dup else None,
                     "robots_status": "allowed", "robots_reason": robots_reason,
+                    "verification_bucket": bucket, "company_type": company_type, "official_homepage_url": f"{urlparse(final_url).scheme}://{host}", "company_source_url": final_url,
+                    "contact_department": department, "contact_source_url": contact_source, "email_source_url": email_source, "phone_source_url": phone_source,
+                    "email_domain_note": None if not email or _host(f"https://{email.split('@', 1)[1]}") == host else "邮箱域名与官网不同；需人工确认是否为集团统一或官方技术邮箱。",
+                    "official_address": _address_excerpt(combined_text), "business_scope": company_type or "未公开，需通过首轮询盘确认",
+                    "product_evidence_summary": evidence_summary or None, "product_evidence_url": evidence_url, "product_evidence_type": "官方产品/应用页面" if evidence_url else None,
+                    "matching_grade": matching_grade, "recommended_contact_department": department or "Sales / Technical Support（待确认）",
+                    "first_contact_questions": "请确认贵司相关产品/应用、现用材料、技术指标与采购对接部门。",
+                    "verification_conclusion": "已通过严格客户核验。" if bucket == "严格客户名单" else (identity_problem if excluded else "真实企业线索，但尚未满足全部严格客户门槛。"),
+                    "missing_requirements": missing, "verified_at": datetime.now(timezone.utc).isoformat(),
                 }
                 known = await store.request(f"customer_leads?task_id=eq.{task['id']}&select=id,source_url&limit=500")
                 existing = [row for row in known if row.get("source_url") == final_url]

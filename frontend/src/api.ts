@@ -42,6 +42,23 @@ async function upload<T>(path: string, body: FormData) {
   return response.json() as Promise<T>
 }
 
+async function download(path: string, filename: string) {
+  const response = await fetch(`${apiBaseUrl}${path}`, { headers: { Authorization: `Bearer ${token()}` } })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { detail?: string } | null
+    throw new Error(body?.detail || '导出失败，请稍后重试。')
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
 const asCustomer = (item: Customer): Customer => ({ ...item, whatsapp: item.whatsapp || '—', product_interest: item.product_interest || '—', last_contact_date: item.last_contact_date || '—', next_followup_date: item.next_followup_date || '—', notes: item.notes || '暂无备注', customer_summary: item.customer_summary || '待补充客户画像。', customer_background: item.customer_background || '待补充客户背景。', customer_need: item.customer_need || item.product_interest || '待确认客户需求。', important_notes: item.important_notes || '暂无特别注意事项。', customer_value: item.customer_value || 3, customer_tags: item.customer_tags || [], industry: item.industry || '待确认行业' })
 const asProduct = (item: Product): Product => ({ ...item, category: item.category || '未分类', application: item.application || '—', description: item.description || '暂无描述', notes: item.notes || '' })
 const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
@@ -111,6 +128,7 @@ export const api = {
   runLeadSearchTask: (id: string) => request<{ run_id?: string; status: string; message: string }>(`/api/lead-search-tasks/${id}/run`, { method: 'POST' }),
   runEnabledLeadSearchTasks: () => request<{ status: string; message: string }>('/api/lead-search-tasks/run-enabled', { method: 'POST' }),
   customerLeads: () => request<CustomerLead[]>('/api/customer-leads'),
+  exportStrictCustomerLeads: () => download('/api/customer-leads/strict-export', '严格客户名单.xlsx'),
   leadDiscoveryRuns: () => request<LeadDiscoveryRun[]>('/api/lead-discovery-runs'),
   reviewCustomerLead: (id: string, payload: { status: CustomerLead['status']; exclusion_reason?: string; notes?: string; watchlisted?: boolean }) => request<CustomerLead>(`/api/customer-leads/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   createDevelopmentTaskFromLead: (id: string, payload: { priority: Task['priority']; task_date: string; suggested_next_action?: string }) => request<Task>(`/api/customer-leads/${id}/development-task`, { method: 'POST', body: JSON.stringify(payload) }).then(asTask),

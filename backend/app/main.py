@@ -1,10 +1,13 @@
 """Thin API gateway: browser credentials are verified with Supabase before data is proxied."""
 from datetime import date, datetime
 from functools import lru_cache
+from io import BytesIO
 from typing import Any, Literal
 from urllib.parse import quote, urlparse
 
 import httpx
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -274,7 +277,7 @@ class LeadSearchTaskIn(BaseModel):
     target_company_types: list[str] = []
     source_urls: list[str] = []
     search_language: str = "English"
-    max_results: int = Field(default=15, ge=1, le=30)
+    max_results: int = Field(default=15, ge=1, le=100)
     daily_enabled: bool = False
     daily_run_time: str = "08:30"
     status: Literal["启用", "暂停"] = "启用"
@@ -753,7 +756,10 @@ async def list_customer_leads(authorization: str | None = Header(default=None), 
 async def review_customer_lead(lead_id: str, payload: LeadReviewIn, authorization: str | None = Header(default=None)):
     if payload.status != "已排除" and payload.exclusion_reason:
         raise HTTPException(422, "仅“已排除”线索可保存排除原因")
-    rows = await supabase(f"customer_leads?id=eq.{lead_id}", bearer(authorization), "PATCH", {**payload.model_dump(exclude_none=True), "updated_at": datetime.now().isoformat()})
+    data = {**payload.model_dump(exclude_none=True), "updated_at": datetime.now().isoformat()}
+    if payload.status == "已排除":
+        data.update({"verification_bucket": "排除名单", "verification_conclusion": payload.exclusion_reason or "人工排除"})
+    rows = await supabase(f"customer_leads?id=eq.{lead_id}", bearer(authorization), "PATCH", data)
     if not rows: raise HTTPException(404, "Lead not found")
     return rows[0]
 
@@ -763,6 +769,8 @@ async def create_development_task(lead_id: str, payload: LeadDevelopmentTaskIn, 
     lead_rows = await supabase(f"customer_leads?id=eq.{lead_id}&select=*&limit=1", token)
     if not lead_rows: raise HTTPException(404, "Lead not found")
     lead = lead_rows[0]
+    if lead.get("verification_bucket") != "严格客户名单":
+        raise HTTPException(422, "仅通过严格客户核验的企业可以创建开发任务")
     task_rows = await supabase("tasks", token, "POST", {
         "title": f"研究 / 联系 {lead['company_name']}", "description": payload.suggested_next_action or f"查看官网并确认是否有 {', '.join((lead.get('discovered_application_keywords') or ['目标应用'])[:2])} 业务；仅在人工确认后决定是否联系。",
         "category": "外贸", "priority": payload.priority, "status": "Pending", "task_date": payload.task_date, "lead_id": lead_id,
@@ -778,6 +786,8 @@ async def convert_customer_lead(lead_id: str, payload: LeadConvertIn, authorizat
     lead_rows = await supabase(f"customer_leads?id=eq.{lead_id}&select=*&limit=1", token)
     if not lead_rows: raise HTTPException(404, "Lead not found")
     lead = lead_rows[0]
+    if lead.get("verification_bucket") != "严格客户名单":
+        raise HTTPException(422, "仅通过严格客户核验的企业可以载入 CRM")
     email = (payload.email or lead.get("public_business_email") or "").strip().lower()
     identity = f"{lead.get('company_name','')} {payload.contact_person or lead.get('public_contact_name') or ''}".lower()
     if is_internal_mail_address(email) or any(name in identity for name in ("zhiwu", "peter")):
@@ -813,6 +823,31 @@ async def convert_customer_lead(lead_id: str, payload: LeadConvertIn, authorizat
     await record_timeline_event(token, title=f"线索来源：{lead['company_name']}（公开网页审核转入）", event_type="crm", source="lead_discovery", related_id=lead_id, customer_id=customer["id"])
     await supabase(f"customer_leads?id=eq.{lead_id}", token, "PATCH", {"status": "已转 CRM", "crm_customer_id": customer["id"], "converted_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()})
     return {"customer": customer, "action": action}
+
+@app.get("/api/customer-leads/strict-export")
+async def export_strict_customer_leads(authorization: str | None = Header(default=None)):
+    """Export only fully verified, CRM-eligible companies as a real .xlsx file."""
+    rows = await supabase("customer_leads?select=*&verification_bucket=eq.%E4%B8%A5%E6%A0%BC%E5%AE%A2%E6%88%B7%E5%90%8D%E5%8D%95&order=discovered_at.desc&limit=500", bearer(authorization))
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "严格客户名单"
+    headings = ["公司名称", "国家/地区", "企业类型", "官网", "联系人/部门", "公开邮箱", "公开电话", "公开地址/经营范围", "产品/应用证据摘要", "应用范围", "潜在匹配点", "推荐首联部门", "首轮需确认问题", "真实性核验结论", "匹配等级", "官网来源", "联系方式来源", "产品证据来源", "抓取时间"]
+    sheet.append(headings)
+    for cell in sheet[1]: cell.font = Font(bold=True)
+    for row in rows:
+        values = [row.get("company_name"), row.get("country"), row.get("company_type"), row.get("official_homepage_url") or row.get("website"), row.get("public_contact_name") or row.get("contact_department"), row.get("public_business_email"), row.get("public_business_phone"), row.get("official_address") or row.get("business_scope"), row.get("product_evidence_summary"), ", ".join(row.get("discovered_application_keywords") or []), row.get("possible_need"), row.get("recommended_contact_department"), row.get("first_contact_questions"), row.get("verification_conclusion"), row.get("matching_grade"), row.get("company_source_url"), row.get("contact_source_url"), row.get("product_evidence_url"), row.get("verified_at") or row.get("discovered_at")]
+        sheet.append(values)
+        excel_row = sheet.max_row
+        for index in (4, 16, 17, 18):
+            value = sheet.cell(excel_row, index).value
+            if value:
+                sheet.cell(excel_row, index).hyperlink = str(value)
+                sheet.cell(excel_row, index).style = "Hyperlink"
+    for column in sheet.columns:
+        letter = column[0].column_letter
+        sheet.column_dimensions[letter].width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 14), 48)
+    stream = BytesIO(); workbook.save(stream)
+    return Response(stream.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=strict-customers.xlsx"})
 
 @app.get("/api/daily-logs")
 async def get_daily_log(log_date: str, authorization: str | None = Header(default=None)):
