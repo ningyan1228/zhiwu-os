@@ -5,7 +5,7 @@ from typing import Any, Literal
 from urllib.parse import quote, urlparse
 
 import httpx
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -720,18 +720,24 @@ async def _run_lead_task_for_user(token: str, task_id: str, trigger: str) -> dic
         raise HTTPException(502, f"公开网页搜索失败：{str(exc)[:500]}")
 
 @app.post("/api/lead-search-tasks/{task_id}/run")
-async def run_lead_search_task(task_id: str, authorization: str | None = Header(default=None)):
-    return await _run_lead_task_for_user(bearer(authorization), task_id, "manual")
+async def run_lead_search_task(task_id: str, background_tasks: BackgroundTasks, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    active = await supabase(f"lead_discovery_runs?task_id=eq.{task_id}&status=eq.%E8%BF%90%E8%A1%8C%E4%B8%AD&select=id&limit=1", token)
+    if active: return {"run_id": active[0]["id"], "status": "运行中", "message": "该任务正在按合规限速运行。"}
+    background_tasks.add_task(_run_lead_task_for_user, token, task_id, "manual")
+    return {"status": "已开始", "message": "已在服务器后台开始公开网页搜索；完成后刷新即可查看审核池和运行日志。"}
+
+async def _run_enabled_lead_tasks(token: str) -> None:
+    tasks = await supabase("lead_search_tasks?status=eq.%E5%90%AF%E7%94%A8&select=id&order=created_at.asc", token)
+    for task in tasks:
+        try: await _run_lead_task_for_user(token, task["id"], "manual")
+        except HTTPException: continue
 
 @app.post("/api/lead-search-tasks/run-enabled")
-async def run_enabled_lead_search_tasks(authorization: str | None = Header(default=None)):
+async def run_enabled_lead_search_tasks(background_tasks: BackgroundTasks, authorization: str | None = Header(default=None)):
     token = bearer(authorization)
-    tasks = await supabase("lead_search_tasks?status=eq.%E5%90%AF%E7%94%A8&select=id&order=created_at.asc", token)
-    results = []
-    for task in tasks:
-        try: results.append(await _run_lead_task_for_user(token, task["id"], "manual"))
-        except HTTPException as exc: results.append({"task_id": task["id"], "status": "失败", "error": exc.detail})
-    return {"results": results}
+    background_tasks.add_task(_run_enabled_lead_tasks, token)
+    return {"status": "已开始", "message": "所有启用任务将在服务器后台按顺序运行。"}
 
 @app.get("/api/customer-leads")
 async def list_customer_leads(authorization: str | None = Header(default=None), limit: int = Query(300, le=500)):
