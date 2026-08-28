@@ -169,7 +169,10 @@ class RestStore:
         self.headers = {"apikey": key, "Authorization": token, "Content-Type": "application/json", "Prefer": "return=representation"}
 
     async def request(self, path: str, method: str = "GET", payload: Any = None) -> Any:
-        async with httpx.AsyncClient(timeout=20) as client:
+        # A slow public server should not hold the user's review queue hostage.
+        # Eight seconds remains generous for normal company pages while keeping a
+        # bounded manual run within a few minutes at the configured low rate.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=5.0)) as client:
             response = await client.request(method, f"{self.base}/rest/v1/{path}", headers=self.headers, json=payload)
         if response.status_code >= 400:
             raise RuntimeError(f"Supabase {response.status_code}: {response.text[:300]}")
