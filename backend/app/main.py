@@ -706,7 +706,9 @@ async def create_lead_search_task(payload: LeadSearchTaskIn, authorization: str 
 
 @app.patch("/api/lead-search-tasks/{task_id}")
 async def update_lead_search_task(task_id: str, payload: LeadSearchTaskIn, authorization: str | None = Header(default=None)):
-    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}", bearer(authorization), "PATCH", {**payload.model_dump(), "updated_at": datetime.now().isoformat()})
+    # Keep existing V1.13 tasks usable while V1.14's optional directory-source
+    # column is being rolled out. Explicit non-default sources still persist.
+    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}", bearer(authorization), "PATCH", {**payload.model_dump(exclude_defaults=True), "updated_at": datetime.now().isoformat()})
     if not rows: raise HTTPException(404, "Lead search task not found")
     return rows[0]
 

@@ -33,6 +33,36 @@ GENERIC_EMAIL_DOMAINS = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 PHONE_RE = re.compile(r"(?:\+?\d[\d\s().\-]{7,}\d)")
 
+# These are public association/member directories, not gated social or mailbox
+# platforms.  They are only used as crawler entry points; each page and every
+# linked company website still gets its own robots.txt check before fetching.
+CURATED_PUBLIC_SEEDS = (
+    {
+        "url": "https://ifca.net.in/members.php",
+        "countries": {"india"},
+        "signals": {"packaging", "film", "barrier", "ppc", "pha", "cpp", "cpo", "pvdc", "coating"},
+        "label": "印度软包装协会公开会员目录",
+    },
+    {
+        "url": "https://ifibca.org/members/",
+        "countries": {"india"},
+        "signals": {"packaging", "film", "barrier", "ppc", "pha", "cpp", "cpo", "pvdc", "coating"},
+        "label": "印度包装协会公开会员目录",
+    },
+    {
+        "url": "https://nvc.nl/_members.php?entrant=2&order=city&ordermode=DESC",
+        "countries": {"netherlands", "europe"},
+        "signals": {"packaging", "film", "barrier", "ppc", "pha", "cpp", "cpo", "pvdc", "coating"},
+        "label": "荷兰包装中心公开会员目录",
+    },
+    {
+        "url": "https://scmap.org/members/memberlist/",
+        "countries": {"philippines"},
+        "signals": {"packaging", "film", "barrier", "ppc", "pha", "cpp", "cpo", "pvdc", "coating"},
+        "label": "菲律宾制造商协会公开会员目录",
+    },
+)
+
 
 def _host(url: str) -> str:
     return (urlparse(url).hostname or "").lower().strip(".")
@@ -231,6 +261,21 @@ def _looks_like_company_page(text: str, email: str | None) -> bool:
     return any(signal in lowered for signal in business_signals)
 
 
+def _curated_seed_urls(task: dict[str, Any]) -> list[tuple[str, str]]:
+    """Select a small, relevant public-directory seed set for this task."""
+    focus = " ".join(
+        [task.get("task_name") or "", *(task.get("product_keywords") or []), *(task.get("application_keywords") or [])]
+    ).casefold()
+    countries = {str(value).casefold() for value in (task.get("target_countries") or [])}
+    selected: list[tuple[str, str]] = []
+    for seed in CURATED_PUBLIC_SEEDS:
+        matches_focus = any(signal in focus for signal in seed["signals"])
+        matches_country = not countries or bool(countries.intersection(seed["countries"]))
+        if matches_focus and matches_country:
+            selected.append((seed["url"], seed["label"]))
+    return selected
+
+
 async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "manual") -> dict[str, Any]:
     """Sequential, bounded discovery run. Public index -> robots -> one public page."""
     cfg = settings()
@@ -251,7 +296,8 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
             queries.append(" ".join(part for part in (product, app_term, country) if part))
         limit = int(task.get("max_results") or 15)
         candidates: list[tuple[str, str]] = []
-        source_urls = [str(value).strip() for value in (task.get("source_urls") or []) if str(value).strip()]
+        source_urls = [(str(value).strip(), "自定义公开目录") for value in (task.get("source_urls") or []) if str(value).strip()]
+        source_urls.extend((url, label) for url, label in _curated_seed_urls(task) if url not in [item[0] for item in source_urls])
         official_key = str(getattr(cfg, "brave_search_api_key", "") or "").strip()
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
             if official_key:
@@ -268,12 +314,12 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                         break
                     await asyncio.sleep(delay)
             elif not source_urls:
-                log.append("未配置官方搜索服务，也没有填写公开展会/协会/企业目录来源；为避免抓取不可靠的搜索页面，本次未发起搜索。")
+                log.append("未找到与该任务关键词/国家匹配的公开目录入口；为避免抓取不可靠的搜索页面，本次未发起搜索。")
 
             # User-supplied public exhibitor, association or business-directory
             # pages are a useful key-free source. We first inspect the directory
             # page itself, then only follow public outbound company links.
-            for directory_url in source_urls[:5]:
+            for directory_url, directory_label in source_urls[:5]:
                 allowed, reason = _is_public_url(directory_url)
                 if not allowed:
                     skipped += 1; log.append(f"跳过目录 {directory_url}：{reason}"); continue
@@ -290,7 +336,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                             candidates.append((candidate, "行业目录"))
                         if len(candidates) >= limit:
                             break
-                    log.append(f"读取公开目录：{directory_url}")
+                    log.append(f"读取公开目录：{directory_label}（{directory_url}）")
                 except httpx.HTTPError as exc:
                     skipped += 1; log.append(f"跳过目录 {directory_url}：读取失败 {exc.__class__.__name__}")
                 if len(candidates) >= limit:
@@ -327,10 +373,18 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 customer_dup, supplier_dup = await _duplicates(store, task, company, host, email)
                 duplicate = bool(customer_dup or supplier_dup)
                 score, reasons, product_hits, application_hits, need = _score(task, text, f"{urlparse(final_url).scheme}://{host}", email, company, duplicate)
+                if source_type == "行业目录" and not product_hits and not application_hits:
+                    # A vetted association/exhibitor directory establishes sector
+                    # relevance, but it does not prove that this company needs the
+                    # material. Keep it as a lower-confidence review lead.
+                    score = min(score + 20, 100)
+                    reasons.append("来自匹配行业的公开会员/参展商目录 (+20)，具体需求待人工确认")
+                    need = "来自目标行业公开目录；请查看官网确认其产品、应用与实际材料需求。"
                 # A lead must demonstrate a target product and a basic company or
                 # public-business-contact signal. This intentionally sacrifices
                 # volume to keep the review queue free of generic/video results.
-                if not product_hits or not _looks_like_company_page(text, email):
+                directory_based = source_type == "行业目录"
+                if not _looks_like_company_page(text, email) or (not product_hits and not (directory_based and (application_hits or source_type == "行业目录"))):
                     skipped += 1; log.append(f"跳过 {source_url}：不是可确认的目标企业网页"); continue
                 payload = {
                     "user_id": task["user_id"], "task_id": task["id"], "company_name": company, "website": f"{urlparse(final_url).scheme}://{host}", "website_domain": host,
