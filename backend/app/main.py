@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     mail_sync_max_messages: int = 100
     lead_discovery_user_agent: str = "ZhiwuOSLeadDiscovery/1.0 (+https://work.101921.xyz)"
     lead_discovery_delay_seconds: float = 1.0
+    # Optional official search provider token. It is read only on the server and
+    # must never be returned by an API endpoint or committed to the repository.
+    brave_search_api_key: str | None = None
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 @lru_cache
@@ -269,6 +272,7 @@ class LeadSearchTaskIn(BaseModel):
     target_countries: list[str] = []
     excluded_countries: list[str] = []
     target_company_types: list[str] = []
+    source_urls: list[str] = []
     search_language: str = "English"
     max_results: int = Field(default=15, ge=1, le=30)
     daily_enabled: bool = False

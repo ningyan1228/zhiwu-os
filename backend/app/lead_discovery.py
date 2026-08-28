@@ -14,9 +14,8 @@ import re
 import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
-from xml.etree import ElementTree
 
 import httpx
 
@@ -141,22 +140,34 @@ async def _robots_allowed(client: httpx.AsyncClient, url: str, user_agent: str) 
     return (True, "robots.txt 允许") if parser.can_fetch(user_agent, url) else (False, "robots.txt 禁止访问")
 
 
-async def _bing_rss(client: httpx.AsyncClient, query: str, user_agent: str) -> list[str]:
-    """Use only Bing's public RSS response as a discovery index, not a gated API."""
-    url = f"https://www.bing.com/search?format=rss&q={quote_plus(query)}"
-    response = await client.get(url, headers={"User-Agent": user_agent}, follow_redirects=True)
+async def _brave_search(client: httpx.AsyncClient, query: str, api_key: str, user_agent: str, limit: int) -> list[str]:
+    """Use the provider's documented server-side API; no consumer-result scraping."""
+    response = await client.get(
+        "https://api.search.brave.com/res/v1/web/search",
+        params={"q": query, "count": min(limit, 20), "safesearch": "moderate"},
+        headers={"Accept": "application/json", "User-Agent": user_agent, "X-Subscription-Token": api_key},
+    )
     if response.status_code >= 400:
-        raise RuntimeError(f"公开搜索结果返回 {response.status_code}")
-    try:
-        root = ElementTree.fromstring(response.text)
-    except ElementTree.ParseError:
-        return []
+        raise RuntimeError(f"官方搜索服务返回 {response.status_code}")
     links: list[str] = []
-    for item in root.findall(".//item"):
-        link = (item.findtext("link") or "").strip()
+    for item in (response.json().get("web", {}).get("results", []) or []):
+        link = str(item.get("url") or "").strip()
         allowed, _ = _is_public_url(link)
         if allowed and link not in links:
             links.append(link)
+    return links
+
+
+def _directory_links(raw: str, base_url: str, limit: int) -> list[str]:
+    """Read public directory/exhibitor links from a supplied public page only."""
+    links: list[str] = []
+    for href in re.findall(r'''(?is)<a[^>]+href=["']([^"'#]+)''', raw):
+        link = urljoin(base_url, html.unescape(href).strip())
+        allowed, _ = _is_public_url(link)
+        if allowed and link not in links and _host(link) != _host(base_url):
+            links.append(link)
+        if len(links) >= limit:
+            break
     return links
 
 
@@ -238,18 +249,55 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
             app_term = app_terms[index % len(app_terms)]
             country = countries[index % len(countries)]
             queries.append(" ".join(part for part in (product, app_term, country) if part))
-        urls: list[str] = []
-        async with httpx.AsyncClient(timeout=20) as client:
-            for query in queries:
+        limit = int(task.get("max_results") or 15)
+        candidates: list[tuple[str, str]] = []
+        source_urls = [str(value).strip() for value in (task.get("source_urls") or []) if str(value).strip()]
+        official_key = str(getattr(cfg, "brave_search_api_key", "") or "").strip()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+            if official_key:
+                for query in queries:
+                    try:
+                        for candidate in await _brave_search(client, query, official_key, user_agent, limit):
+                            if candidate not in [url for url, _ in candidates]:
+                                candidates.append((candidate, "公开搜索结果"))
+                            if len(candidates) >= limit:
+                                break
+                    except Exception as exc:
+                        log.append(f"官方搜索“{query}”失败：{exc}")
+                    if len(candidates) >= limit:
+                        break
+                    await asyncio.sleep(delay)
+            elif not source_urls:
+                log.append("未配置官方搜索服务，也没有填写公开展会/协会/企业目录来源；为避免抓取不可靠的搜索页面，本次未发起搜索。")
+
+            # User-supplied public exhibitor, association or business-directory
+            # pages are a useful key-free source. We first inspect the directory
+            # page itself, then only follow public outbound company links.
+            for directory_url in source_urls[:5]:
+                allowed, reason = _is_public_url(directory_url)
+                if not allowed:
+                    skipped += 1; log.append(f"跳过目录 {directory_url}：{reason}"); continue
+                robots_ok, robots_reason = await _robots_allowed(client, directory_url, user_agent)
+                if not robots_ok:
+                    skipped += 1; log.append(f"跳过目录 {directory_url}：{robots_reason}"); continue
                 try:
-                    for candidate in await _bing_rss(client, query, user_agent):
-                        if candidate not in urls: urls.append(candidate)
-                        if len(urls) >= int(task.get("max_results") or 15): break
-                except Exception as exc:
-                    log.append(f"公开搜索“{query}”失败：{exc}")
-                if len(urls) >= int(task.get("max_results") or 15): break
+                    response = await client.get(directory_url, headers={"User-Agent": user_agent, "Accept": "text/html,application/xhtml+xml"}, follow_redirects=True)
+                    final_directory_url = str(response.url)
+                    if response.status_code >= 400 or "html" not in response.headers.get("content-type", "").lower():
+                        skipped += 1; log.append(f"跳过目录 {directory_url}：网页不可用或不是 HTML"); continue
+                    for candidate in _directory_links(response.text[:1_000_000], final_directory_url, limit):
+                        if candidate not in [url for url, _ in candidates]:
+                            candidates.append((candidate, "行业目录"))
+                        if len(candidates) >= limit:
+                            break
+                    log.append(f"读取公开目录：{directory_url}")
+                except httpx.HTTPError as exc:
+                    skipped += 1; log.append(f"跳过目录 {directory_url}：读取失败 {exc.__class__.__name__}")
+                if len(candidates) >= limit:
+                    break
                 await asyncio.sleep(delay)
-            for source_url in urls[:int(task.get("max_results") or 15)]:
+
+            for source_url, source_type in candidates[:limit]:
                 allowed, reason = _is_public_url(source_url)
                 if not allowed:
                     skipped += 1; log.append(f"跳过 {source_url}：{reason}"); continue
@@ -286,7 +334,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     skipped += 1; log.append(f"跳过 {source_url}：不是可确认的目标企业网页"); continue
                 payload = {
                     "user_id": task["user_id"], "task_id": task["id"], "company_name": company, "website": f"{urlparse(final_url).scheme}://{host}", "website_domain": host,
-                    "source_url": final_url, "source_type": "官网", "public_business_email": email, "public_business_phone": phone,
+                    "source_url": final_url, "source_type": source_type, "public_business_email": email, "public_business_phone": phone,
                     "discovered_product_keywords": product_hits, "discovered_application_keywords": application_hits, "possible_need": need,
                     "match_score": score, "score_reasons": reasons, "suspected_duplicate": duplicate,
                     "duplicate_customer_id": customer_dup.get("id") if customer_dup else None,
