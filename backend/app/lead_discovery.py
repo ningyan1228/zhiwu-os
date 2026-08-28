@@ -25,6 +25,10 @@ from .main import settings
 RESTRICTED_HOSTS = {
     "linkedin.com", "facebook.com", "instagram.com", "whatsapp.com", "web.whatsapp.com",
     "mail.google.com", "outlook.live.com", "outlook.office.com", "mail.qq.com", "qiye.aliyun.com",
+    # Search indexes are allowed for discovery only; their consumer/video/account
+    # destinations are not business-company lead pages and must not be retained.
+    "youtube.com", "youtu.be", "google.com", "play.google.com", "accounts.google.com",
+    "wikipedia.org", "tiktok.com", "x.com", "twitter.com", "pinterest.com",
 }
 GENERIC_EMAIL_DOMAINS = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "163.com", "qq.com"}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
@@ -201,6 +205,18 @@ def _score(task: dict[str, Any], text: str, website: str, email: str | None, com
     return min(score, 100), reasons, products, applications, need
 
 
+def _looks_like_company_page(text: str, email: str | None) -> bool:
+    """Avoid treating videos, logins, articles and generic platforms as companies."""
+    lowered = text.casefold()
+    if email:
+        return True
+    business_signals = (
+        "manufacturer", "manufacturing", "factory", "producer", "our company",
+        "about us", "contact us", "get in touch", "packaging", "coating",
+    )
+    return any(signal in lowered for signal in business_signals)
+
+
 async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "manual") -> dict[str, Any]:
     """Sequential, bounded discovery run. Public index -> robots -> one public page."""
     cfg = settings()
@@ -260,6 +276,11 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 customer_dup, supplier_dup = await _duplicates(store, task, company, host, email)
                 duplicate = bool(customer_dup or supplier_dup)
                 score, reasons, product_hits, application_hits, need = _score(task, text, f"{urlparse(final_url).scheme}://{host}", email, company, duplicate)
+                # A lead must demonstrate a target product and a basic company or
+                # public-business-contact signal. This intentionally sacrifices
+                # volume to keep the review queue free of generic/video results.
+                if not product_hits or not _looks_like_company_page(text, email):
+                    skipped += 1; log.append(f"跳过 {source_url}：不是可确认的目标企业网页"); continue
                 payload = {
                     "user_id": task["user_id"], "task_id": task["id"], "company_name": company, "website": f"{urlparse(final_url).scheme}://{host}", "website_domain": host,
                     "source_url": final_url, "source_type": "官网", "public_business_email": email, "public_business_phone": phone,
