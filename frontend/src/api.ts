@@ -125,6 +125,7 @@ export const api = {
   leadSearchTasks: () => request<LeadSearchTask[]>('/api/lead-search-tasks'),
   createLeadSearchTask: (payload: Omit<LeadSearchTask, 'id' | 'user_id' | 'last_run_at' | 'last_run_status' | 'last_error' | 'created_at'>) => request<LeadSearchTask>('/api/lead-search-tasks', { method: 'POST', body: JSON.stringify(payload) }),
   updateLeadSearchTask: (id: string, payload: Omit<LeadSearchTask, 'id' | 'user_id' | 'last_run_at' | 'last_run_status' | 'last_error' | 'created_at'>) => request<LeadSearchTask>(`/api/lead-search-tasks/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteLeadSearchTask: (id: string) => request<{ deleted: boolean; task_id: string; message: string }>(`/api/lead-search-tasks/${id}`, { method: 'DELETE' }),
   runLeadSearchTask: (id: string) => request<{ run_id?: string; status: string; message: string }>(`/api/lead-search-tasks/${id}/run`, { method: 'POST' }),
   runEnabledLeadSearchTasks: () => request<{ status: string; message: string }>('/api/lead-search-tasks/run-enabled', { method: 'POST' }),
   customerLeads: () => request<CustomerLead[]>('/api/customer-leads'),

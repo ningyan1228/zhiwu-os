@@ -700,7 +700,7 @@ async def update_task_status(task_id: str, payload: TaskStatusIn, authorization:
 
 @app.get("/api/lead-search-tasks")
 async def list_lead_search_tasks(authorization: str | None = Header(default=None)):
-    return await supabase("lead_search_tasks?select=*&order=created_at.asc", bearer(authorization))
+    return await supabase("lead_search_tasks?deleted_at=is.null&select=*&order=created_at.asc", bearer(authorization))
 
 @app.post("/api/lead-search-tasks", status_code=201)
 async def create_lead_search_task(payload: LeadSearchTaskIn, authorization: str | None = Header(default=None)):
@@ -711,16 +711,27 @@ async def create_lead_search_task(payload: LeadSearchTaskIn, authorization: str 
 async def update_lead_search_task(task_id: str, payload: LeadSearchTaskIn, authorization: str | None = Header(default=None)):
     # Keep existing V1.13 tasks usable while V1.14's optional directory-source
     # column is being rolled out. Explicit non-default sources still persist.
-    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}", bearer(authorization), "PATCH", {**payload.model_dump(exclude_defaults=True), "updated_at": datetime.now().isoformat()})
+    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", bearer(authorization), "PATCH", {**payload.model_dump(exclude_defaults=True), "updated_at": datetime.now().isoformat()})
     if not rows: raise HTTPException(404, "Lead search task not found")
     return rows[0]
+
+@app.delete("/api/lead-search-tasks/{task_id}")
+async def delete_lead_search_task(task_id: str, authorization: str | None = Header(default=None)):
+    """Soft-delete configuration only; discovered leads and run history remain."""
+    token = bearer(authorization)
+    active = await supabase(f"lead_discovery_runs?task_id=eq.{task_id}&status=eq.%E8%BF%90%E8%A1%8C%E4%B8%AD&select=id&limit=1", token)
+    if active:
+        raise HTTPException(409, "该任务正在运行，请等待完成后再删除")
+    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", token, "PATCH", {"status": "暂停", "daily_enabled": False, "deleted_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()})
+    if not rows: raise HTTPException(404, "Lead search task not found")
+    return {"deleted": True, "task_id": task_id, "message": "任务已删除；已有线索与运行记录已保留。"}
 
 @app.get("/api/lead-discovery-runs")
 async def list_lead_discovery_runs(authorization: str | None = Header(default=None), limit: int = Query(50, le=100)):
     return await supabase(f"lead_discovery_runs?select=*&order=started_at.desc&limit={limit}", bearer(authorization))
 
 async def _run_lead_task_for_user(token: str, task_id: str, trigger: str) -> dict[str, Any]:
-    task_rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&select=*&limit=1", token)
+    task_rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null&select=*&limit=1", token)
     if not task_rows: raise HTTPException(404, "Lead search task not found")
     from .lead_discovery import RestStore, run_task_once
     try:
@@ -737,7 +748,7 @@ async def run_lead_search_task(task_id: str, background_tasks: BackgroundTasks, 
     return {"status": "已开始", "message": "已在服务器后台开始公开网页搜索；完成后刷新即可查看审核池和运行日志。"}
 
 async def _run_enabled_lead_tasks(token: str) -> None:
-    tasks = await supabase("lead_search_tasks?status=eq.%E5%90%AF%E7%94%A8&select=id&order=created_at.asc", token)
+    tasks = await supabase("lead_search_tasks?deleted_at=is.null&status=eq.%E5%90%AF%E7%94%A8&select=id&order=created_at.asc", token)
     for task in tasks:
         try: await _run_lead_task_for_user(token, task["id"], "manual")
         except HTTPException: continue

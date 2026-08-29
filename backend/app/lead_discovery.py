@@ -551,7 +551,7 @@ async def run_daily_loop() -> None:
     while True:
         now = datetime.now().astimezone()
         try:
-            tasks = await store.request("lead_search_tasks?daily_enabled=eq.true&status=eq.%E5%90%AF%E7%94%A8&select=*&limit=100")
+            tasks = await store.request("lead_search_tasks?deleted_at=is.null&daily_enabled=eq.true&status=eq.%E5%90%AF%E7%94%A8&select=*&limit=100")
             today = now.date().isoformat()
             for task in tasks:
                 scheduled = str(task.get("daily_run_time") or "08:30")[:5]
