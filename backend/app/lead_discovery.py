@@ -269,6 +269,9 @@ def _search_queries(task: dict[str, Any], target: int) -> list[str]:
     countries = [str(item).strip() for item in (task.get("target_countries") or []) if str(item).strip()][:12] or [""]
     types = [str(item).strip() for item in (task.get("target_company_types") or []) if str(item).strip()][:4] or ["manufacturer"]
     exclusions = [str(item).strip() for item in (task.get("excluded_countries") or []) if str(item).strip()][:4]
+    # Different public-page angles keep large requests from asking the exact
+    # same query repeatedly when a task has only one product and one country.
+    page_angles = ("official website", "products", "contact", "factory", "manufacturing", "export")
     query_count = max(1, (target + 199) // 200)
     query_count = min(24, max(query_count, min(6, len(products) * max(1, len(countries)))))
     queries: list[str] = []
@@ -277,8 +280,9 @@ def _search_queries(task: dict[str, Any], target: int) -> list[str]:
         application = applications[(index // len(products)) % len(applications)]
         country = countries[(index // (len(products) * len(applications))) % len(countries)]
         company_type = types[index % len(types)]
+        page_angle = page_angles[index % len(page_angles)]
         negative = " ".join(f"-{value}" for value in exclusions)
-        query = " ".join(part for part in (f'"{product}"', application, country, company_type, negative, "-association -directory -exhibition") if part)
+        query = " ".join(part for part in (f'"{product}"', application, country, company_type, page_angle, negative, "-association -directory -exhibition") if part)
         if query not in queries:
             queries.append(query)
     return queries
