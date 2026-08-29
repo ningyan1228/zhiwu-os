@@ -233,22 +233,55 @@ async def _robots_allowed(client: httpx.AsyncClient, url: str, user_agent: str) 
     return (True, "robots.txt 允许") if parser.can_fetch(user_agent, url) else (False, "robots.txt 禁止访问")
 
 
-async def _brave_search(client: httpx.AsyncClient, query: str, api_key: str, user_agent: str, limit: int) -> list[str]:
-    """Use the provider's documented server-side API; no consumer-result scraping."""
-    response = await client.get(
-        "https://api.search.brave.com/res/v1/web/search",
-        params={"q": query, "count": min(limit, 20), "safesearch": "moderate"},
-        headers={"Accept": "application/json", "User-Agent": user_agent, "X-Subscription-Token": api_key},
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(f"官方搜索服务返回 {response.status_code}")
+async def _brave_search(client: httpx.AsyncClient, query: str, api_key: str, user_agent: str, limit: int, delay: float) -> tuple[list[str], int]:
+    """Paginate the documented API (20/page, ten pages/query)."""
     links: list[str] = []
-    for item in (response.json().get("web", {}).get("results", []) or []):
-        link = str(item.get("url") or "").strip()
-        allowed, _ = _is_public_url(link)
-        if allowed and link not in links:
-            links.append(link)
-    return links
+    requests = 0
+    for offset in range(10):
+        if len(links) >= limit:
+            break
+        response = await client.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": min(20, limit - len(links)), "offset": offset, "safesearch": "moderate", "extra_snippets": "true"},
+            headers={"Accept": "application/json", "User-Agent": user_agent, "X-Subscription-Token": api_key},
+        )
+        requests += 1
+        if response.status_code >= 400:
+            raise RuntimeError(f"官方搜索服务返回 {response.status_code}")
+        payload = response.json()
+        for item in (payload.get("web", {}).get("results", []) or []):
+            link = str(item.get("url") or "").strip()
+            allowed, _ = _is_public_url(link)
+            if allowed and link not in links:
+                links.append(link)
+            if len(links) >= limit:
+                break
+        if not payload.get("query", {}).get("more_results_available"):
+            break
+        await asyncio.sleep(delay)
+    return links, requests
+
+
+def _search_queries(task: dict[str, Any], target: int) -> list[str]:
+    """Create diverse, bounded official-index queries for a lead target."""
+    products = [str(item).strip() for item in (task.get("product_keywords") or []) if str(item).strip()][:12] or [str(task["task_name"]).strip()]
+    applications = [str(item).strip() for item in (task.get("application_keywords") or []) if str(item).strip()][:8] or [""]
+    countries = [str(item).strip() for item in (task.get("target_countries") or []) if str(item).strip()][:12] or [""]
+    types = [str(item).strip() for item in (task.get("target_company_types") or []) if str(item).strip()][:4] or ["manufacturer"]
+    exclusions = [str(item).strip() for item in (task.get("excluded_countries") or []) if str(item).strip()][:4]
+    query_count = max(1, (target + 199) // 200)
+    query_count = min(24, max(query_count, min(6, len(products) * max(1, len(countries)))))
+    queries: list[str] = []
+    for index in range(query_count):
+        product = products[index % len(products)]
+        application = applications[(index // len(products)) % len(applications)]
+        country = countries[(index // (len(products) * len(applications))) % len(countries)]
+        company_type = types[index % len(types)]
+        negative = " ".join(f"-{value}" for value in exclusions)
+        query = " ".join(part for part in (f'"{product}"', application, country, company_type, negative, "-association -directory -exhibition") if part)
+        if query not in queries:
+            queries.append(query)
+    return queries
 
 
 def _directory_links(raw: str, base_url: str, limit: int) -> list[str]:
@@ -349,16 +382,11 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
     log: list[str] = []
     inserted = skipped = discovered = 0
     try:
-        product_terms = (task.get("product_keywords") or [task["task_name"]])[:3]
-        app_terms = (task.get("application_keywords") or [""])[:2]
-        countries = (task.get("target_countries") or [""])[:2]
-        queries = []
-        for index, product in enumerate(product_terms):
-            app_term = app_terms[index % len(app_terms)]
-            country = countries[index % len(countries)]
-            queries.append(" ".join(part for part in (product, app_term, country) if part))
-        limit = int(task.get("max_results") or 15)
+        limit = max(1, min(int(task.get("max_results") or 50), 1000))
+        queries = _search_queries(task, limit)
         candidates: list[tuple[str, str]] = []
+        candidate_urls: set[str] = set()
+        search_request_count = 0
         source_urls = [(str(value).strip(), "自定义公开目录") for value in (task.get("source_urls") or []) if str(value).strip()]
         source_urls.extend((url, label) for url, label in _curated_seed_urls(task) if url not in [item[0] for item in source_urls])
         official_key = str(getattr(cfg, "brave_search_api_key", "") or "").strip()
@@ -366,9 +394,15 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
             if official_key:
                 for query in queries:
                     try:
-                        for candidate in await _brave_search(client, query, official_key, user_agent, limit):
-                            if candidate not in [url for url, _ in candidates]:
+                        remaining = limit - len(candidates)
+                        if remaining <= 0:
+                            break
+                        found, request_count = await _brave_search(client, query, official_key, user_agent, min(remaining, 200), delay)
+                        search_request_count += request_count
+                        for candidate in found:
+                            if candidate not in candidate_urls:
                                 candidates.append((candidate, "公开搜索结果"))
+                                candidate_urls.add(candidate)
                             if len(candidates) >= limit:
                                 break
                     except Exception as exc:
@@ -376,6 +410,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     if len(candidates) >= limit:
                         break
                     await asyncio.sleep(delay)
+                log.append(f"官方搜索完成：{len(queries)} 组查询，{search_request_count} 次 API 请求，得到 {len(candidates)} 个待核验官网候选。")
             elif not source_urls:
                 log.append("未找到与该任务关键词/国家匹配的公开目录入口；为避免抓取不可靠的搜索页面，本次未发起搜索。")
 

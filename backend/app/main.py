@@ -277,7 +277,9 @@ class LeadSearchTaskIn(BaseModel):
     target_company_types: list[str] = []
     source_urls: list[str] = []
     search_language: str = "English"
-    max_results: int = Field(default=15, ge=1, le=100)
+    # Per-run candidate target. The worker paginates the official index and
+    # verifies company pages slowly, one at a time.
+    max_results: int = Field(default=50, ge=1, le=1000)
     daily_enabled: bool = False
     daily_run_time: str = "08:30"
     status: Literal["启用", "暂停"] = "启用"
