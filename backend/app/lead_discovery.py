@@ -40,6 +40,44 @@ OFFICIAL_PAGE_HINTS = ("contact", "about", "company", "factory", "manufactur", "
 NON_ENTITY_HOST_TOKENS = ("plasticsdecorating", "eupia", "cepe", "directory", "yellowpages", "exhibitor", "association", "trade-show")
 NON_ENTITY_TITLE_PHRASES = ("why cpp resin exhibits exceptional adhesion in inks",)
 
+# A product name identifies *our material*, not the company that should buy it.
+# Discovery must start from the material's downstream applications and seek the
+# companies that formulate or make those applications.  In particular, a site
+# that sells CPP/CPO/chlorinated-polyolefin resin is normally an upstream peer,
+# not a customer lead.
+CPPH_PRODUCT_TERMS = (
+    "cpph-2a", "chlorinated polypropylene", "chlorinated polyolefin", "cpp resin",
+    "cpo resin", "chlorinated polyolefin adhesion promoter",
+)
+CPPH_APPLICATION_PROFILE = {
+    "label": "PP/PE/TPO 表面附着力促进材料",
+    "applications": (
+        "printing inks for PP/OPP/BOPP films", "flexographic inks", "gravure inks",
+        "PP/TPO automotive plastic coatings", "water-based coatings for polypropylene",
+        "plastic primers", "adhesives for PP and PE substrates",
+    ),
+    "evidence_terms": (
+        "printing ink", "flexographic ink", "gravure ink", "packaging ink",
+        "coating", "automotive coating", "plastic coating", "water-based coating",
+        "primer", "adhesive", "polypropylene substrate", "pp substrate",
+        "tpo substrate", "olefin substrate", "bopp film", "opp film",
+    ),
+    "target_roles": ("ink manufacturer", "coating formulator", "adhesive formulator", "plastic coating processor"),
+}
+DOWNSTREAM_ROLE_SIGNALS = {
+    "油墨制造商/配方商": ("printing ink", "ink manufacturer", "ink formulation", "flexographic ink", "gravure ink"),
+    "涂料制造商/配方商": ("coating manufacturer", "paint manufacturer", "coating formulation", "industrial coating", "automotive coating"),
+    "胶黏剂制造商/配方商": ("adhesive manufacturer", "adhesive formulation", "primer manufacturer", "sealant manufacturer"),
+    "塑料件涂装/加工厂": ("plastic coating", "automotive plastics", "tpo", "polypropylene parts", "surface treatment"),
+}
+UPSTREAM_COMPETITOR_SIGNALS = (
+    "chlorinated polypropylene manufacturer", "chlorinated polypropylene supplier",
+    "chlorinated polyolefin manufacturer", "chlorinated polyolefin supplier",
+    "cpp resin manufacturer", "cpp resin supplier", "cpo resin manufacturer", "cpo resin supplier",
+    "resin manufacturer", "resin supplier", "polymer raw material", "chemical raw material",
+    "adhesion promoter manufacturer", "adhesion promoter supplier",
+)
+
 # These are public association/member directories, not gated social or mailbox
 # platforms.  They are only used as crawler entry points; each page and every
 # linked company website still gets its own robots.txt check before fetching.
@@ -280,27 +318,51 @@ async def _brave_search(client: httpx.AsyncClient, query: str, api_key: str, use
     return links, requests
 
 
-def _search_queries(task: dict[str, Any], target: int) -> list[str]:
-    """Create diverse, bounded official-index queries for a lead target."""
-    products = [str(item).strip() for item in (task.get("product_keywords") or []) if str(item).strip()][:12] or [str(task["task_name"]).strip()]
-    applications = [str(item).strip() for item in (task.get("application_keywords") or []) if str(item).strip()][:8] or [""]
+def _application_profile(task: dict[str, Any]) -> dict[str, tuple[str, ...] | str]:
+    """Translate a material into downstream use cases before any web search.
+
+    Product words deliberately do not become search terms.  They are used only
+    to select a known use-case profile, while a task's application keywords add
+    customer-facing use cases supplied by the operator.
+    """
+    product_text = " ".join(str(item) for item in (task.get("product_keywords") or [])).casefold()
+    is_cpph = any(term in product_text for term in CPPH_PRODUCT_TERMS) or "cpph" in str(task.get("task_name") or "").casefold()
+    additions = tuple(str(item).strip() for item in (task.get("application_keywords") or []) if str(item).strip())
+    if is_cpph:
+        return {
+            "label": CPPH_APPLICATION_PROFILE["label"],
+            "applications": tuple(dict.fromkeys((*CPPH_APPLICATION_PROFILE["applications"], *additions))),
+            "evidence_terms": tuple(dict.fromkeys((*CPPH_APPLICATION_PROFILE["evidence_terms"], *additions))),
+            "target_roles": CPPH_APPLICATION_PROFILE["target_roles"],
+        }
+    # Generic tasks still use application language, never the material name.
+    return {
+        "label": "任务配置的下游应用",
+        "applications": additions or ("end-use application",),
+        "evidence_terms": additions,
+        "target_roles": tuple(str(item).strip() for item in (task.get("target_company_types") or []) if str(item).strip()) or ("manufacturer",),
+    }
+
+
+def _search_queries(task: dict[str, Any], target: int, profile: dict[str, tuple[str, ...] | str]) -> list[str]:
+    """Search downstream applications and roles, never the upstream material."""
+    applications = list(profile["applications"])[:12] or [""]
     countries = [str(item).strip() for item in (task.get("target_countries") or []) if str(item).strip()][:12] or [""]
-    types = [str(item).strip() for item in (task.get("target_company_types") or []) if str(item).strip()][:4] or ["manufacturer"]
+    types = list(profile["target_roles"])[:8] or ["manufacturer"]
     exclusions = [str(item).strip() for item in (task.get("excluded_countries") or []) if str(item).strip()][:4]
     # Different public-page angles keep large requests from asking the exact
     # same query repeatedly when a task has only one product and one country.
     page_angles = ("official website", "products", "contact", "factory", "manufacturing", "export")
     query_count = max(1, (target + 199) // 200)
-    query_count = min(24, max(query_count, min(6, len(products) * max(1, len(countries)))))
+    query_count = min(24, max(query_count, min(6, len(applications) * max(1, len(countries)))))
     queries: list[str] = []
     for index in range(query_count):
-        product = products[index % len(products)]
-        application = applications[(index // len(products)) % len(applications)]
-        country = countries[(index // (len(products) * len(applications))) % len(countries)]
+        application = applications[index % len(applications)]
+        country = countries[(index // len(applications)) % len(countries)]
         company_type = types[index % len(types)]
         page_angle = page_angles[index % len(page_angles)]
         negative = " ".join(f"-{value}" for value in exclusions)
-        query = " ".join(part for part in (f'"{product}"', application, country, company_type, page_angle, negative, "-association -directory -exhibition") if part)
+        query = " ".join(part for part in (application, country, company_type, page_angle, negative, "-association -directory -exhibition -resin -raw-material -supplier") if part)
         if query not in queries:
             queries.append(query)
     return queries
@@ -348,23 +410,33 @@ async def _duplicates(store: RestStore, task: dict[str, Any], company: str, doma
     return customer, supplier
 
 
-def _score(task: dict[str, Any], text: str, website: str, email: str | None, company: str, duplicate: bool) -> tuple[int, list[str], list[str], list[str], str]:
-    products = _contains_terms(text, task.get("product_keywords") or [])
-    applications = _contains_terms(text, task.get("application_keywords") or [])
+def _downstream_role(text: str) -> tuple[str | None, str | None]:
+    """Classify target business role and reject a raw-material peer early."""
+    lowered = text.casefold()
+    if any(signal in lowered for signal in UPSTREAM_COMPETITOR_SIGNALS):
+        return None, "官网显示为 CPP/CPO/树脂/附着力促进剂等上游原料供应商或同行，不是下游客户"
+    for role, signals in DOWNSTREAM_ROLE_SIGNALS.items():
+        if any(signal in lowered for signal in signals):
+            return role, None
+    return None, "官网未证明其生产或配制目标下游应用（油墨、涂料、胶黏剂或 PP/TPO 塑料件涂装）"
+
+
+def _score(task: dict[str, Any], text: str, website: str, email: str | None, company: str, duplicate: bool, application_terms: list[str], downstream_role: str | None) -> tuple[int, list[str], str]:
+    applications = application_terms
     countries = _country_match(text, task.get("target_countries") or [])
     score, reasons = 0, []
-    if products: score += 30; reasons.append(f"命中目标产品关键词：{', '.join(products[:3])} (+30)")
-    if applications: score += 25; reasons.append(f"命中目标应用关键词：{', '.join(applications[:3])} (+25)")
+    if applications: score += 35; reasons.append(f"命中下游应用证据：{', '.join(applications[:3])} (+35)")
+    if downstream_role: score += 20; reasons.append(f"企业角色：{downstream_role} (+20)")
     if countries: score += 15; reasons.append(f"命中目标国家/地区：{', '.join(countries[:2])} (+15)")
     if website: score += 10; reasons.append("有独立官网 (+10)")
     if email or "contact" in text.casefold(): score += 10; reasons.append("有公开商务联系方式或联系页 (+10)")
     if any(word in text.casefold() for word in ("manufacturer", "manufacturing", "factory", "producer", "brand")):
         score += 10; reasons.append("页面显示为生产商或品牌方 (+10)")
     if duplicate: reasons.append("疑似已存在于 CRM 或供应商中心；仅供核验，不计入新线索")
-    need = "可能与目标产品/应用相关，需人工查看官网确认采购或技术需求。"
-    if products or applications:
-        need = f"页面出现 {', '.join((products + applications)[:4])}；可能需要相关材料或技术方案，需人工确认。"
-    return min(score, 100), reasons, products, applications, need
+    need = "官网显示下游应用场景；需人工确认其配方体系、基材、现用材料与采购主体。"
+    if applications:
+        need = f"官网显示 {', '.join(applications[:4])}；需确认是否涉及 PP/PE/TPO 基材，以及是否需要附着力促进方案。"
+    return min(score, 100), reasons, need
 
 
 def _looks_like_company_page(text: str, email: str | None) -> bool:
@@ -405,7 +477,11 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
     inserted = skipped = discovered = 0
     try:
         limit = max(1, min(int(task.get("max_results") or 50), 1000))
-        queries = _search_queries(task, limit)
+        profile = _application_profile(task)
+        queries = _search_queries(task, limit, profile)
+        log.append(
+            f"先生成应用画像：{profile['label']}；下游场景为 {', '.join(list(profile['applications'])[:6])}。"
+        )
         candidates: list[tuple[str, str]] = []
         candidate_urls: set[str] = set()
         search_request_count = 0
@@ -509,6 +585,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 combined_text = " ".join(page[2] for page in pages)
                 company = _company_name(raw, host)
                 company_type, identity_problem = _company_type(combined_text)
+                downstream_role, downstream_problem = _downstream_role(combined_text)
                 email = phone = department = None
                 email_source = phone_source = contact_source = evidence_url = None
                 evidence_text = ""
@@ -524,51 +601,62 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                         phone, phone_source = page_phone, page_url
                     if page_department and not department:
                         department, contact_source = page_department, page_url
-                    found_products = _contains_terms(page_text, task.get("product_keywords") or [])
-                    found_applications = _contains_terms(page_text, task.get("application_keywords") or [])
-                    if (found_products or found_applications) and not evidence_url:
-                        product_hits, application_hits = found_products, found_applications
+                    # The target material must not be used as a proof of demand:
+                    # a company selling it is usually a peer.  Evidence is only
+                    # from the downstream application profile.
+                    found_applications = _contains_terms(page_text, list(profile["evidence_terms"]))
+                    if found_applications and not evidence_url:
+                        application_hits = found_applications
                         evidence_url, evidence_text = page_url, page_text
                 if not contact_source and (email_source or phone_source):
                     contact_source = email_source or phone_source
                 customer_dup, supplier_dup = await _duplicates(store, task, company, host, email)
                 duplicate = bool(customer_dup or supplier_dup)
-                score, reasons, _, _, need = _score(task, combined_text, f"{urlparse(final_url).scheme}://{host}", email, company, duplicate)
+                score, reasons, need = _score(
+                    task, combined_text, f"{urlparse(final_url).scheme}://{host}", email, company,
+                    duplicate, application_hits, downstream_role,
+                )
                 missing: list[str] = []
                 if not host:
                     missing.append("未找到可验证的企业官网主域名")
                 if identity_problem: missing.append(identity_problem)
+                if downstream_problem: missing.append(downstream_problem)
                 # Email and a switchboard alone do not pass the strict rule.
                 # Until a named contact extractor is available, an explicit
                 # business department is mandatory for the strict list.
                 if not department: missing.append("缺公开联系人姓名或可联系业务部门")
                 if not email: missing.append("缺公开业务邮箱")
                 if not phone: missing.append("缺官方公开电话")
-                if not evidence_url: missing.append("无产品或应用直接证据")
+                if not evidence_url: missing.append("无下游应用直接证据")
                 if duplicate: missing.append("疑似与 CRM 或供应商中心重复")
-                excluded = bool(identity_problem and any(word in identity_problem for word in ("协会", "目录", "媒体", "贸易/分销")))
-                bucket = "排除名单" if excluded else ("严格客户名单" if not missing else "待补信息")
-                matching_grade = "A" if product_hits else ("B" if application_hits else None)
-                if bucket == "严格客户名单" and not matching_grade:
-                    bucket, matching_grade = "待补信息", None
-                    missing.append("无产品或应用直接证据")
+                excluded = bool(
+                    (identity_problem and any(word in identity_problem for word in ("协会", "目录", "媒体", "贸易/分销")))
+                    or (downstream_problem and "上游原料供应商或同行" in downstream_problem)
+                )
+                # Public-web discovery is a prospecting stage, not a substitute
+                # for a human strict verification.  It can never create a
+                # CRM-eligible strict record by itself.
+                bucket = "排除名单" if excluded else "待补信息"
+                matching_grade = "A" if application_hits and downstream_role else ("B" if application_hits else None)
+                if not excluded:
+                    missing.append("自动应用型候选，需人工严格核验后方可进入严格客户名单或 CRM")
                 evidence_summary = ""
                 if evidence_url:
-                    terms = product_hits or application_hits
+                    terms = application_hits
                     evidence_summary = f"官方页面出现：{', '.join(terms[:5])}。"
-                    need = f"官方资料显示 {', '.join(terms[:5])}；需首轮确认具体材料、工艺与规格。"
+                    need = f"官方资料显示 {', '.join(terms[:5])}；需确认 PP/PE/TPO 基材、配方体系与具体工艺。"
                 if excluded:
                     reasons.append("不属于可开发企业主体，已进入排除名单")
                 elif missing:
                     reasons.append("未满足全部严格核验门槛，进入待补信息")
                 else:
-                    reasons.append("官网、业务身份、联系人/部门、邮箱、电话及产品/应用证据均已核验")
+                    reasons.append("满足公开网页候选条件，但自动发现记录仍需人工严格核验")
                 if not _looks_like_company_page(combined_text, email):
                     skipped += 1; log.append(f"跳过 {source_url}：不是可确认的企业官网"); continue
                 payload = {
                     "user_id": task["user_id"], "task_id": task["id"], "company_name": company, "website": f"{urlparse(final_url).scheme}://{host}", "website_domain": host,
                     "source_url": final_url, "source_type": source_type, "public_business_email": email, "public_business_phone": phone,
-                    "discovered_product_keywords": product_hits, "discovered_application_keywords": application_hits, "possible_need": need,
+                    "discovered_product_keywords": [], "discovered_application_keywords": application_hits, "possible_need": need,
                     "match_score": score, "score_reasons": reasons, "suspected_duplicate": duplicate,
                     "duplicate_customer_id": customer_dup.get("id") if customer_dup else None,
                     "duplicate_supplier_id": supplier_dup.get("id") if supplier_dup else None,
@@ -576,15 +664,15 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     "verification_bucket": bucket, "company_type": company_type, "official_website": f"{urlparse(final_url).scheme}://{host}", "official_homepage_url": f"{urlparse(final_url).scheme}://{host}", "company_source_url": final_url,
                     "contact_department": department, "contact_source_url": contact_source, "email_source_url": email_source, "phone_source_url": phone_source,
                     "email_domain_note": None if not email or _host(f"https://{email.split('@', 1)[1]}") == host else "邮箱域名与官网不同；该邮箱须由当前企业官网/官方 PDF 页面证明为集团统一或官方技术邮箱。",
-                    "official_address": _address_excerpt(combined_text), "business_scope": company_type or "未公开，需通过首轮询盘确认",
+                    "official_address": _address_excerpt(combined_text), "business_scope": downstream_role or company_type or "未公开，需通过首轮询盘确认",
                     "product_evidence_summary": evidence_summary or None, "product_evidence_url": evidence_url, "product_evidence_type": "官方产品/应用页面" if evidence_url else None,
                     "matching_grade": matching_grade, "recommended_contact_department": department or "Sales / Technical Support（待确认）",
                     "first_contact_questions": "请确认贵司相关产品/应用、现用材料、技术指标与采购对接部门。",
-                    "verification_conclusion": "已通过严格客户核验。" if bucket == "严格客户名单" else (identity_problem if excluded else "真实企业线索，但尚未满足全部严格客户门槛。"),
+                    "verification_conclusion": (identity_problem or downstream_problem or "不属于可开发企业主体") if excluded else "应用型潜在客户候选；公开网页只证明其下游业务，尚未证明采购或使用 CPPH-2A/CPP/CPO。",
                     "missing_requirements": missing, "verified_at": datetime.now(timezone.utc).isoformat(),
                     "first_discovery_source_url": source_url, "official_validation_source_url": final_url,
                     "source_urls": [url for url in (source_url, final_url, contact_source, email_source, phone_source, evidence_url) if url],
-                    "verification_status": "auto_strict_candidate" if bucket == "严格客户名单" else "auto_pending",
+                    "verification_status": "auto_excluded_competitor" if excluded and downstream_problem else ("auto_excluded" if excluded else "auto_application_candidate"),
                     "data_source": "public_web_discovery", "imported_at": None,
                     "needs_human_confirmation": True,
                     "confirmation_note": "公开证据仅证明潜在功能匹配，不代表企业已采购或已批准使用CPPH-2A/CPP/CPO。",
