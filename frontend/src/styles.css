@@ -101,3 +101,13 @@ html[data-theme='dark'] .lead-tabs button{color:#b7c2b9}
 html[data-theme='dark'] .lead-tabs button.active{color:#8ed2ba;border-color:#8ed2ba}
 html[data-theme='dark'] .lead-confirmation{background:#293127;color:#c5d0c6!important}
 html[data-theme='dark'] .lead-task-list .danger{border-color:#87473c;color:#ffbdb0;background:#3d2420}
+
+/* Lead-discovery actions use a deliberate two-by-two grid instead of wrapping
+   according to the length of each label. */
+.lead-page .page-heading{align-items:flex-start;gap:24px}
+.lead-page .page-heading>div:first-child{min-width:0;max-width:760px}
+.lead-page .page-actions{flex:none;display:grid;grid-template-columns:max-content max-content;gap:8px;justify-content:end}
+.lead-page .page-actions>.secondary,.lead-page .page-actions>.primary{min-height:46px;margin:0;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap}
+.lead-page .page-actions>.primary{padding-inline:15px}
+@media(max-width:1120px){.lead-page .page-heading{flex-wrap:wrap}.lead-page .page-heading>div:first-child{max-width:none;flex:1 1 520px}.lead-page .page-actions{margin-left:auto}}
+@media(max-width:760px){.lead-page .page-actions{grid-template-columns:repeat(2,minmax(0,1fr));justify-content:stretch}.lead-page .page-actions>.secondary,.lead-page .page-actions>.primary{width:100%;min-height:42px;padding-inline:8px;font-size:10px}}
