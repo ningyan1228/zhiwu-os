@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { createRoot } from 'react-dom/client'
 import {
   ArrowUpRight, Bell, CalendarDays, Check, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleHelp, ClipboardList, Clock3, Flame, Grid2X2, LogOut,
-  Brain, Factory, Globe2, Home, Inbox, Layers3, Mail, Menu, MoreHorizontal, Network, Package, Paperclip, Plus, Radar, RefreshCw, Search, Settings, Sparkles, Star, Upload, Users, X, type LucideIcon
+  Brain, Factory, Globe2, Home, Inbox, Layers3, Mail, Menu, Moon, MoreHorizontal, Network, Package, Paperclip, Plus, Radar, RefreshCw, Search, Settings, Sparkles, Star, Sun, Upload, Users, X, type LucideIcon
 } from 'lucide-react'
 import { customers as seedCustomers, followups as seedFollowups, products as seedProducts, projects as seedProjects, quotes as seedQuotes } from './data'
 import { api } from './api'
@@ -44,6 +44,7 @@ function currentAccount() {
 
 function App() {
   const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('zhiwu-access-token')))
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => localStorage.getItem('zhiwu-theme') === 'light' ? 'light' : 'dark')
   const [view, setView] = useState<View>(() => window.location.hash.startsWith('#mail') ? 'mail' : 'dashboard')
   const [sidebar, setSidebar] = useState(false)
   const [customers, setCustomers] = useState(seedCustomers)
@@ -78,6 +79,10 @@ function App() {
   const [crmFilter, setCrmFilter] = useState<CrmFilter>('all')
   const [globalQuery, setGlobalQuery] = useState('')
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('zhiwu-theme', theme)
+  }, [theme])
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const account = useMemo(() => currentAccount(), [authenticated])
   const workbench = useMemo(() => {
@@ -323,7 +328,7 @@ function App() {
       <div className="nav-bottom"><a href="https://notes.101921.xyz/" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开知识库"><CalendarDays size={18}/><span>知识库 ↗</span></a><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">{account.initial}</div><div><b>{account.name}</b><small>{account.role} · 修改密码</small></div><ChevronRight size={16}/></button></div>
     </aside>
     <main>
-      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', leads: '客户线索发现', suppliers: '供应商中心', mail: '邮件中心', products: '产品中心', relationships: '产品关系', imports: 'AI 导入暂存箱', tasks: '每日计划', calendar: '工作日历', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="account-menu"><button className="avatar avatar-small account-trigger" aria-label="打开账号菜单" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen(current => !current)}>{account.initial}</button>{accountMenuOpen && <div className="account-popover"><b>{account.name}</b><small>{account.email || '当前登录账号'}</small><button onClick={signOut}><LogOut size={15}/>退出登录</button></div>}</div></div></header>
+      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', leads: '客户线索发现', suppliers: '供应商中心', mail: '邮件中心', products: '产品中心', relationships: '产品关系', imports: 'AI 导入暂存箱', tasks: '每日计划', calendar: '工作日历', projects: '项目管理' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><button className="theme-toggle" type="button" onClick={() => setTheme(current => current === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'} title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>{theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}<span>{theme === 'dark' ? '浅色' : '深色'}</span></button><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="account-menu"><button className="avatar avatar-small account-trigger" aria-label="打开账号菜单" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen(current => !current)}>{account.initial}</button>{accountMenuOpen && <div className="account-popover"><b>{account.name}</b><small>{account.email || '当前登录账号'}</small><button onClick={signOut}><LogOut size={15}/>退出登录</button></div>}</div></div></header>
       {globalQuery.trim() && <WorkspaceSearch query={globalQuery} customers={customers} products={products} projects={projects} emails={emails} close={() => setGlobalQuery('')} openCustomer={customer => { setView('crm'); setSelected(customer) }} openProduct={() => setView('products')} openProject={customer => { setView('projects'); setSelected(customer) }} openEmail={openEmail} />}
       {view === 'dashboard' && <><Dashboard customers={customers} projects={projects} followups={followupRows} emails={emails} tasks={tasks} today={today} onOpenCRM={() => setView('crm')} onOpenMail={() => setView('mail')} onOpenTasks={() => setView('tasks')} onOpenProducts={() => setView('products')} openCustomer={setSelected} /><SupplierDashboard suppliers={suppliers} rfqs={supplierRfqs} links={supplierLinks} insights={supplierInsights} open={() => setView('suppliers')} onOpenSupplier={setSelectedSupplier}/></>}
       {view === 'crm' && <CRM customers={visibleCustomers} allCustomers={customers} projects={projects} members={members} query={query} setQuery={setQuery} filter={crmFilter} setFilter={setCrmFilter} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
