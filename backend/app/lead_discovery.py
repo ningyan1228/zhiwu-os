@@ -37,6 +37,8 @@ CONTACT_DEPARTMENTS = ("export sales", "sales", "purchasing", "procurement", "te
 IDENTITY_WORDS = ("manufacturer", "manufacturing", "factory", "producer", "brand owner", "converter", "processor", "formulator", "our company")
 EXCLUDED_IDENTITY_WORDS = ("association", "exhibition", "trade show", "directory", "yellow pages", "media", "news", "training", "consulting", "distributor", "distribution", "trading company", "trader")
 OFFICIAL_PAGE_HINTS = ("contact", "about", "company", "factory", "manufactur", "product", "application", "sustainab", "technology", "technical", "download", "tds", "sds")
+NON_ENTITY_HOST_TOKENS = ("plasticsdecorating", "eupia", "cepe", "directory", "yellowpages", "exhibitor", "association", "trade-show")
+NON_ENTITY_TITLE_PHRASES = ("why cpp resin exhibits exceptional adhesion in inks",)
 
 # These are public association/member directories, not gated social or mailbox
 # platforms.  They are only used as crawler entry points; each page and every
@@ -119,13 +121,29 @@ def _company_name(raw: str, host: str) -> str:
     return candidate[:200]
 
 
+def _non_entity_page_reason(raw: str, text: str, host: str) -> str | None:
+    """Reject a discovery source before its title can become a company name."""
+    title = _page_title(raw).casefold()
+    lowered = text.casefold()
+    if any(token in host for token in NON_ENTITY_HOST_TOKENS):
+        return "发现来源属于协会、展会、目录或行业媒体，不是企业官网"
+    if any(phrase in title for phrase in NON_ENTITY_TITLE_PHRASES):
+        return "发现来源是文章标题，不是企业实体"
+    # This intentionally requires a strong, publisher-specific signal. A real
+    # manufacturer's own news or blog page may still be a valid official source.
+    publisher_signals = ("industry media", "industry news", "subscribe to our magazine", "media kit", "editorial team")
+    if any(signal in lowered for signal in publisher_signals):
+        return "发现来源显示为行业媒体或新闻页面，不是企业官网"
+    return None
+
+
 def _public_business_email(raw: str, host: str) -> str | None:
     for email in EMAIL_RE.findall(raw):
         value = email.lower().strip(".,;:)")
         local, _, domain = value.partition("@")
         if domain.endswith(NON_EMAIL_FILE_SUFFIXES):
             continue
-        if local in {"noreply", "no-reply", "privacy", "abuse", "example", "placeholder"} or any(token in local for token in ("logo", "image", "asset", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".js")):
+        if local in {"noreply", "no-reply", "privacy", "abuse"} or any(token in local for token in ("logo", "image", "asset", "example", "placeholder", "noreply", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".js")):
             continue
         if domain == host or domain.endswith(f".{host}") or local in {"info", "sales", "contact", "export", "marketing", "business", "bd", "enquiry", "inquiry"}:
             return value
@@ -352,12 +370,12 @@ def _score(task: dict[str, Any], text: str, website: str, email: str | None, com
 def _looks_like_company_page(text: str, email: str | None) -> bool:
     """Avoid treating videos, logins, articles and generic platforms as companies."""
     lowered = text.casefold()
-    if email:
-        return True
     business_signals = (
         "manufacturer", "manufacturing", "factory", "producer", "our company",
         "about us", "contact us", "get in touch", "packaging", "coating",
     )
+    # An arbitrary email on a page is never sufficient: media sites and asset
+    # pages commonly expose one too. The page must declare a company signal.
     return any(signal in lowered for signal in business_signals)
 
 
@@ -469,6 +487,9 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 if len(text) < 80:
                     skipped += 1; log.append(f"跳过 {source_url}：公开页面内容不足"); continue
                 host = _host(final_url)
+                non_entity_reason = _non_entity_page_reason(raw, text, host)
+                if non_entity_reason:
+                    skipped += 1; log.append(f"跳过 {source_url}：{non_entity_reason}"); continue
                 # A directory only discovers a name.  Strict verification then
                 # visits same-domain About / Contact / Product evidence pages.
                 pages: list[tuple[str, str, str]] = [(final_url, raw, text)]
@@ -514,6 +535,8 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 duplicate = bool(customer_dup or supplier_dup)
                 score, reasons, _, _, need = _score(task, combined_text, f"{urlparse(final_url).scheme}://{host}", email, company, duplicate)
                 missing: list[str] = []
+                if not host:
+                    missing.append("未找到可验证的企业官网主域名")
                 if identity_problem: missing.append(identity_problem)
                 # Email and a switchboard alone do not pass the strict rule.
                 # Until a named contact extractor is available, an explicit
@@ -550,15 +573,21 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     "duplicate_customer_id": customer_dup.get("id") if customer_dup else None,
                     "duplicate_supplier_id": supplier_dup.get("id") if supplier_dup else None,
                     "robots_status": "allowed", "robots_reason": robots_reason,
-                    "verification_bucket": bucket, "company_type": company_type, "official_homepage_url": f"{urlparse(final_url).scheme}://{host}", "company_source_url": final_url,
+                    "verification_bucket": bucket, "company_type": company_type, "official_website": f"{urlparse(final_url).scheme}://{host}", "official_homepage_url": f"{urlparse(final_url).scheme}://{host}", "company_source_url": final_url,
                     "contact_department": department, "contact_source_url": contact_source, "email_source_url": email_source, "phone_source_url": phone_source,
-                    "email_domain_note": None if not email or _host(f"https://{email.split('@', 1)[1]}") == host else "邮箱域名与官网不同；需人工确认是否为集团统一或官方技术邮箱。",
+                    "email_domain_note": None if not email or _host(f"https://{email.split('@', 1)[1]}") == host else "邮箱域名与官网不同；该邮箱须由当前企业官网/官方 PDF 页面证明为集团统一或官方技术邮箱。",
                     "official_address": _address_excerpt(combined_text), "business_scope": company_type or "未公开，需通过首轮询盘确认",
                     "product_evidence_summary": evidence_summary or None, "product_evidence_url": evidence_url, "product_evidence_type": "官方产品/应用页面" if evidence_url else None,
                     "matching_grade": matching_grade, "recommended_contact_department": department or "Sales / Technical Support（待确认）",
                     "first_contact_questions": "请确认贵司相关产品/应用、现用材料、技术指标与采购对接部门。",
                     "verification_conclusion": "已通过严格客户核验。" if bucket == "严格客户名单" else (identity_problem if excluded else "真实企业线索，但尚未满足全部严格客户门槛。"),
                     "missing_requirements": missing, "verified_at": datetime.now(timezone.utc).isoformat(),
+                    "first_discovery_source_url": source_url, "official_validation_source_url": final_url,
+                    "source_urls": [url for url in (source_url, final_url, contact_source, email_source, phone_source, evidence_url) if url],
+                    "verification_status": "auto_strict_candidate" if bucket == "严格客户名单" else "auto_pending",
+                    "data_source": "public_web_discovery", "imported_at": None,
+                    "needs_human_confirmation": True,
+                    "confirmation_note": "公开证据仅证明潜在功能匹配，不代表企业已采购或已批准使用CPPH-2A/CPP/CPO。",
                 }
                 known = await store.request(f"customer_leads?user_id=eq.{task['user_id']}&select=id,source_url,website_domain,company_name,public_business_email&limit=500")
                 company_key = re.sub(r"[^a-z0-9]", "", company.casefold())

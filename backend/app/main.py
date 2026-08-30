@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from .strict_lead_import import import_cpph_strict_records
 
 class Settings(BaseSettings):
     supabase_url: str
@@ -761,6 +762,30 @@ async def run_enabled_lead_search_tasks(background_tasks: BackgroundTasks, autho
     background_tasks.add_task(_run_enabled_lead_tasks, token)
     return {"status": "已开始", "message": "所有启用任务将在服务器后台按顺序运行。"}
 
+@app.post("/api/customer-leads/import-cpph-2a-strict")
+async def import_cpph_2a_strict_leads(
+    file: UploadFile = File(...), authorization: str | None = Header(default=None),
+):
+    """Import only the fixed, human-verified CPPH-2A strict workbook.
+
+    This endpoint writes reviewable leads, never CRM customers. Re-uploading the
+    same workbook updates the same records through source ID and identity keys.
+    """
+    token = bearer(authorization)
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(422, "请上传 .xlsx 格式的严格客户名单")
+    content = await file.read()
+    if not content or len(content) > 10 * 1024 * 1024:
+        raise HTTPException(422, "Excel 文件必须在 1 字节到 10 MB 之间")
+
+    async def request(path: str, method: str, payload: dict[str, Any] | None) -> Any:
+        return await supabase(path, token, method, payload)
+
+    try:
+        return await import_cpph_strict_records(request, content)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
 @app.get("/api/customer-leads")
 async def list_customer_leads(authorization: str | None = Header(default=None), limit: int = Query(300, le=500)):
     return await supabase(f"customer_leads?select=*&order=discovered_at.desc&limit={limit}", bearer(authorization))
@@ -802,7 +827,8 @@ async def convert_customer_lead(lead_id: str, payload: LeadConvertIn, authorizat
     if lead.get("verification_bucket") != "严格客户名单":
         raise HTTPException(422, "仅通过严格客户核验的企业可以载入 CRM")
     email = (payload.email or lead.get("public_business_email") or "").strip().lower()
-    identity = f"{lead.get('company_name','')} {payload.contact_person or lead.get('public_contact_name') or ''}".lower()
+    selected_contact = payload.contact_person or lead.get("public_contact_name") or lead.get("public_contact_or_department") or lead.get("contact_department")
+    identity = f"{lead.get('company_name','')} {selected_contact or ''}".lower()
     if is_internal_mail_address(email) or any(name in identity for name in ("zhiwu", "peter")):
         raise HTTPException(422, "内部同事不能转为海外客户")
     customers = await supabase("customers?select=*&archived_at=is.null&import_reverted=eq.false&limit=500", token)
@@ -815,7 +841,7 @@ async def convert_customer_lead(lead_id: str, payload: LeadConvertIn, authorizat
     if not existing:
         existing = next((row for row in customers if (row.get("company_name") or "").strip().lower() == (lead.get("company_name") or "").strip().lower()), None)
     patch = {
-        "contact_person": payload.contact_person or lead.get("public_contact_name"), "country": payload.country or lead.get("country"),
+        "contact_person": selected_contact, "country": payload.country or lead.get("country"),
         "website": lead.get("website"), "product_interest": payload.product_interest,
         "application": payload.application or lead.get("possible_need"), "priority": payload.priority,
         "next_action": [payload.next_action] if payload.next_action else None,
@@ -829,7 +855,7 @@ async def convert_customer_lead(lead_id: str, payload: LeadConvertIn, authorizat
     else:
         if not email:
             raise HTTPException(422, "新建 CRM 客户需要公开商务邮箱；请先补充邮箱或仅保留为线索")
-        customer_data = {"company_name": lead["company_name"], "country": payload.country or lead.get("country") or "待确认", "contact_person": payload.contact_person or lead.get("public_contact_name") or "待确认", "email": email, "customer_stage": "New", **patch}
+        customer_data = {"company_name": lead["company_name"], "country": payload.country or lead.get("country") or "待确认", "contact_person": selected_contact or "待确认", "email": email, "customer_stage": "New", **patch}
         rows = await supabase("customers", token, "POST", customer_data)
         customer = rows[0]
         action = "created"
@@ -844,14 +870,23 @@ async def export_strict_customer_leads(authorization: str | None = Header(defaul
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "严格客户名单"
-    headings = ["公司名称", "国家/地区", "企业类型", "官网", "联系人/部门", "公开邮箱", "公开电话", "公开地址/经营范围", "产品/应用证据摘要", "应用范围", "潜在匹配点", "推荐首联部门", "首轮需确认问题", "真实性核验结论", "匹配等级", "官网来源", "联系方式来源", "产品证据来源", "抓取时间"]
+    headings = ["ID", "匹配级别", "国家/地区", "公司名称", "企业类型", "官网", "公开联系人/部门", "公开邮箱", "公开电话", "公开地址/范围", "PP/PE/TPO相关公开证据", "应用范围", "与H-2A的潜在匹配点", "推荐首联部门", "首轮需确认问题", "真实性核验结论", "来源链接"]
     sheet.append(headings)
     for cell in sheet[1]: cell.font = Font(bold=True)
     for row in rows:
-        values = [row.get("company_name"), row.get("country"), row.get("company_type"), row.get("official_homepage_url") or row.get("website"), row.get("public_contact_name") or row.get("contact_department"), row.get("public_business_email"), row.get("public_business_phone"), row.get("official_address") or row.get("business_scope"), row.get("product_evidence_summary"), ", ".join(row.get("discovered_application_keywords") or []), row.get("possible_need"), row.get("recommended_contact_department"), row.get("first_contact_questions"), row.get("verification_conclusion"), row.get("matching_grade"), row.get("company_source_url"), row.get("contact_source_url"), row.get("product_evidence_url"), row.get("verified_at") or row.get("discovered_at")]
+        source_urls = row.get("source_urls") if isinstance(row.get("source_urls"), list) else []
+        if not source_urls:
+            source_urls = [value for value in (row.get("company_source_url"), row.get("contact_source_url"), row.get("product_evidence_url")) if value]
+        values = [
+            row.get("source_record_id") or row.get("id"), row.get("match_level") or row.get("matching_grade"), row.get("country"), row.get("company_name"), row.get("company_type"),
+            row.get("official_website") or row.get("official_homepage_url") or row.get("website"), row.get("public_contact_or_department") or row.get("public_contact_name") or row.get("contact_department"),
+            row.get("public_business_email"), row.get("public_business_phone"), row.get("official_address") or row.get("business_scope"),
+            row.get("product_application_evidence") or row.get("product_evidence_summary"), row.get("application_scope") or ", ".join(row.get("discovered_application_keywords") or []),
+            row.get("potential_fit") or row.get("possible_need"), row.get("recommended_contact_department"), row.get("first_contact_questions"), row.get("verification_conclusion"), "\n".join(str(url) for url in source_urls),
+        ]
         sheet.append(values)
         excel_row = sheet.max_row
-        for index in (4, 16, 17, 18):
+        for index in (6,):
             value = sheet.cell(excel_row, index).value
             if value:
                 sheet.cell(excel_row, index).hyperlink = str(value)

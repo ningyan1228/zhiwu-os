@@ -1,4 +1,4 @@
-import type { Customer, CustomerLead, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
+import type { Customer, CustomerLead, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, StrictLeadImportResult, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -129,6 +129,7 @@ export const api = {
   runLeadSearchTask: (id: string) => request<{ run_id?: string; status: string; message: string }>(`/api/lead-search-tasks/${id}/run`, { method: 'POST' }),
   runEnabledLeadSearchTasks: () => request<{ status: string; message: string }>('/api/lead-search-tasks/run-enabled', { method: 'POST' }),
   customerLeads: () => request<CustomerLead[]>('/api/customer-leads'),
+  importCpph2aStrictLeads: (file: File) => { const form = new FormData(); form.append('file', file); return upload<StrictLeadImportResult>('/api/customer-leads/import-cpph-2a-strict', form) },
   exportStrictCustomerLeads: () => download('/api/customer-leads/strict-export', '严格客户名单.xlsx'),
   leadDiscoveryRuns: () => request<LeadDiscoveryRun[]>('/api/lead-discovery-runs'),
   reviewCustomerLead: (id: string, payload: { status: CustomerLead['status']; exclusion_reason?: string; notes?: string; watchlisted?: boolean }) => request<CustomerLead>(`/api/customer-leads/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
