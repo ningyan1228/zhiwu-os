@@ -180,3 +180,7 @@ html[data-theme='dark'] .product-history-item small{color:#96d3bc}
 html[data-theme='dark'] .project-board-guide{background:#1d332a;border-color:#3f6656;color:#c0d1c6}
 html[data-theme='dark'] .project-board-guide>svg{color:#91d4bc}
 html[data-theme='dark'] .project-board-guide b{color:#d6e7dc}
+
+.lead-scope-note{margin:0 0 12px;padding:8px 10px;border:1px solid #d7e6dd;border-radius:7px;background:#f6faf7;color:#667970;font-size:10px;line-height:1.5}.lead-scope-note b{color:#357567}
+html[data-theme='dark'] .lead-scope-note{background:#1d3028;border-color:#3d5b4d;color:#c1d0c6}
+html[data-theme='dark'] .lead-scope-note b{color:#9bd8bf}
