@@ -14,7 +14,7 @@ import re
 import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -725,8 +725,24 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     await store.request(f"customer_leads?id=eq.{existing[0]['id']}", "PATCH", payload)
                     log.append(f"更新已发现线索：{company}")
                 else:
-                    await store.request("customer_leads", "POST", payload)
-                    inserted += 1; log.append(f"加入待审核：{company}")
+                    try:
+                        await store.request("customer_leads", "POST", payload)
+                        inserted += 1; log.append(f"加入待审核：{company}")
+                    except RuntimeError as exc:
+                        # Concurrent runs can discover the exact same page in
+                        # the tiny interval between their de-duplication reads.
+                        # The database unique key remains authoritative; turn
+                        # that benign race into an update instead of aborting
+                        # the entire discovery run.
+                        if "duplicate key value" not in str(exc):
+                            raise
+                        raced = await store.request(
+                            f"customer_leads?task_id=eq.{task['id']}&source_url=eq.{quote(final_url, safe='')}&select=id&limit=1"
+                        )
+                        if not raced:
+                            raise
+                        await store.request(f"customer_leads?id=eq.{raced[0]['id']}", "PATCH", payload)
+                        log.append(f"并发去重更新：{company}")
                 discovered += 1
                 await asyncio.sleep(delay)
         result_status = "成功" if discovered else "跳过"

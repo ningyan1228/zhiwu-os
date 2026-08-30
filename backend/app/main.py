@@ -1,5 +1,5 @@
 """Thin API gateway: browser credentials are verified with Supabase before data is proxied."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from io import BytesIO
 from typing import Any, Literal
@@ -42,6 +42,10 @@ class Settings(BaseSettings):
 def settings() -> Settings: return Settings()
 
 app = FastAPI(title="Zhiwu OS API", version="0.1.0")
+# Guards the short interval before a background discovery task writes its run
+# row.  The database check below remains the cross-request source of truth.
+ACTIVE_LEAD_TASKS: set[str] = set()
+LEAD_RUN_STALE_AFTER = timedelta(hours=6)
 app.add_middleware(CORSMiddleware, allow_origins=settings().allowed_origins.split(","), allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 class CustomerIn(BaseModel):
@@ -742,12 +746,26 @@ async def _run_lead_task_for_user(token: str, task_id: str, trigger: str) -> dic
         return await run_task_once(RestStore(token), task_rows[0], trigger)
     except Exception as exc:
         raise HTTPException(502, f"公开网页搜索失败：{str(exc)[:500]}")
+    finally:
+        ACTIVE_LEAD_TASKS.discard(task_id)
 
 @app.post("/api/lead-search-tasks/{task_id}/run")
 async def run_lead_search_task(task_id: str, background_tasks: BackgroundTasks, authorization: str | None = Header(default=None)):
     token = bearer(authorization)
-    active = await supabase(f"lead_discovery_runs?task_id=eq.{task_id}&status=eq.%E8%BF%90%E8%A1%8C%E4%B8%AD&select=id&limit=1", token)
-    if active: return {"run_id": active[0]["id"], "status": "运行中", "message": "该任务正在按合规限速运行。"}
+    if task_id in ACTIVE_LEAD_TASKS:
+        return {"status": "运行中", "message": "该任务正在启动或运行中，请等待当前运行结束。"}
+    active = await supabase(f"lead_discovery_runs?task_id=eq.{task_id}&status=eq.%E8%BF%90%E8%A1%8C%E4%B8%AD&select=id,started_at&limit=20", token)
+    cutoff = datetime.now().astimezone() - LEAD_RUN_STALE_AFTER
+    stale = [row for row in active if datetime.fromisoformat(str(row["started_at"]).replace("Z", "+00:00")) < cutoff]
+    for row in stale:
+        await supabase(f"lead_discovery_runs?id=eq.{row['id']}", token, "PATCH", {
+            "status": "失败", "finished_at": datetime.now().astimezone().isoformat(),
+            "error_message": "任务超过 6 小时未完成，已自动释放；请重新运行。",
+        })
+    active = [row for row in active if row not in stale]
+    if active:
+        return {"run_id": active[0]["id"], "status": "运行中", "message": "该任务正在按合规限速运行。"}
+    ACTIVE_LEAD_TASKS.add(task_id)
     background_tasks.add_task(_run_lead_task_for_user, token, task_id, "manual")
     return {"status": "已开始", "message": "已在服务器后台开始公开网页搜索；完成后刷新即可查看审核池和运行日志。"}
 
