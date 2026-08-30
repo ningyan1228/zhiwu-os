@@ -51,42 +51,15 @@ NON_ENTITY_HOST_TOKENS = ("plasticsdecorating", "eupia", "cepe", "directory", "y
 NON_ENTITY_TITLE_PHRASES = ("why cpp resin exhibits exceptional adhesion in inks",)
 
 # A product name identifies *our material*, not the company that should buy it.
-# Discovery must start from the material's downstream applications and seek the
-# companies that formulate or make those applications.  In particular, a site
-# that sells CPP/CPO/chlorinated-polyolefin resin is normally an upstream peer,
-# not a customer lead.
-CPPH_PRODUCT_TERMS = (
-    "cpph-2a", "chlorinated polypropylene", "chlorinated polyolefin", "cpp resin",
-    "cpo resin", "chlorinated polyolefin adhesion promoter",
+# Every demand-side task must therefore supply its own evidence-backed
+# application profile.  The crawler never substitutes a product-specific
+# built-in profile, because that would silently turn a new product into a
+# search for somebody else's use cases.
+GENERIC_DOWNSTREAM_ENTITY_SIGNALS = (
+    "manufacturer", "manufacturing", "factory", "producer", "formulator",
+    "formulation", "converter", "processing", "processor", "brand owner",
 )
-CPPH_APPLICATION_PROFILE = {
-    "label": "PP/PE/TPO 表面附着力促进材料",
-    "applications": (
-        "printing inks for PP/OPP/BOPP films", "flexographic inks", "gravure inks",
-        "PP/TPO automotive plastic coatings", "water-based coatings for polypropylene",
-        "plastic primers", "adhesives for PP and PE substrates",
-    ),
-    "evidence_terms": (
-        "printing ink", "flexographic ink", "gravure ink", "packaging ink",
-        "coating", "automotive coating", "plastic coating", "water-based coating",
-        "primer", "adhesive", "polypropylene substrate", "pp substrate",
-        "tpo substrate", "olefin substrate", "bopp film", "opp film",
-    ),
-    "target_roles": ("ink manufacturer", "coating formulator", "adhesive formulator", "plastic coating processor"),
-}
-DOWNSTREAM_ROLE_SIGNALS = {
-    "油墨制造商/配方商": ("printing ink", "ink manufacturer", "ink formulation", "flexographic ink", "gravure ink"),
-    "涂料制造商/配方商": ("coating manufacturer", "paint manufacturer", "coating formulation", "industrial coating", "automotive coating"),
-    "胶黏剂制造商/配方商": ("adhesive manufacturer", "adhesive formulation", "primer manufacturer", "sealant manufacturer"),
-    "塑料件涂装/加工厂": ("plastic coating", "automotive plastics", "tpo", "polypropylene parts", "surface treatment"),
-}
-UPSTREAM_COMPETITOR_SIGNALS = (
-    "chlorinated polypropylene manufacturer", "chlorinated polypropylene supplier",
-    "chlorinated polyolefin manufacturer", "chlorinated polyolefin supplier",
-    "cpp resin manufacturer", "cpp resin supplier", "cpo resin manufacturer", "cpo resin supplier",
-    "resin manufacturer", "resin supplier", "polymer raw material", "chemical raw material",
-    "adhesion promoter manufacturer", "adhesion promoter supplier",
-)
+UPSTREAM_ROLE_SIGNALS = ("manufacturer", "supplier", "producer", "factory", "distributor", "trader")
 SUPPLIER_EXCLUSION_SIGNALS = (
     "trading company", "trader", "distributor", "distribution", "wholesaler",
     "importer", "export agent", "directory", "association", "exhibition",
@@ -356,16 +329,14 @@ async def _brave_search(client: httpx.AsyncClient, query: str, api_key: str, use
 
 
 def _application_profile(task: dict[str, Any]) -> dict[str, tuple[str, ...] | str]:
-    """Translate a material into downstream use cases before any web search.
+    """Build a task-specific profile without inventing product applications.
 
-    Product words deliberately do not become search terms.  They are used only
-    to select a known use-case profile, while a task's application keywords add
-    customer-facing use cases supplied by the operator.
+    Demand-side terms must be supplied from the product's official materials or
+    an operator-reviewed application analysis. Product terms are deliberately
+    unavailable to demand-side search; they remain available for factory mode.
     """
     mode = str(task.get("discovery_mode") or "需求客户")
     product_terms = tuple(str(item).strip() for item in (task.get("product_keywords") or []) if str(item).strip())
-    product_text = " ".join(product_terms).casefold()
-    is_cpph = any(term in product_text for term in CPPH_PRODUCT_TERMS) or "cpph" in str(task.get("task_name") or "").casefold()
     additions = tuple(str(item).strip() for item in (task.get("application_keywords") or []) if str(item).strip())
     if mode == "供应工厂":
         # Supplier discovery intentionally uses material terms, but is restricted
@@ -377,21 +348,12 @@ def _application_profile(task: dict[str, Any]) -> dict[str, tuple[str, ...] | st
             "evidence_terms": product_terms,
             "target_roles": ("manufacturer", "factory", "producer"),
         }
-    if is_cpph:
-        return {
-            "mode": "需求客户",
-            "label": CPPH_APPLICATION_PROFILE["label"],
-            "applications": tuple(dict.fromkeys((*CPPH_APPLICATION_PROFILE["applications"], *additions))),
-            "evidence_terms": tuple(dict.fromkeys((*CPPH_APPLICATION_PROFILE["evidence_terms"], *additions))),
-            "target_roles": CPPH_APPLICATION_PROFILE["target_roles"],
-        }
-    # Generic tasks still use application language, never the material name.
     return {
         "mode": "需求客户",
-        "label": "任务配置的下游应用",
-        "applications": additions or ("end-use application",),
+        "label": "已确认的任务下游应用画像",
+        "applications": tuple(dict.fromkeys(additions)),
         "evidence_terms": additions,
-        "target_roles": tuple(str(item).strip() for item in (task.get("target_company_types") or []) if str(item).strip()) or ("manufacturer",),
+        "target_roles": tuple(str(item).strip() for item in (task.get("target_company_types") or []) if str(item).strip()) or ("manufacturer", "formulator", "processor", "brand owner"),
     }
 
 
@@ -463,15 +425,19 @@ async def _duplicates(store: RestStore, task: dict[str, Any], company: str, doma
     return customer, supplier
 
 
-def _downstream_role(text: str) -> tuple[str | None, str | None]:
-    """Classify target business role and reject a raw-material peer early."""
+def _downstream_role(text: str, product_terms: tuple[str, ...]) -> tuple[str | None, str | None]:
+    """Confirm a generic downstream business entity and reject clear peers."""
     lowered = text.casefold()
-    if any(signal in lowered for signal in UPSTREAM_COMPETITOR_SIGNALS):
-        return None, "官网显示为 CPP/CPO/树脂/附着力促进剂等上游原料供应商或同行，不是下游客户"
-    for role, signals in DOWNSTREAM_ROLE_SIGNALS.items():
-        if any(signal in lowered for signal in signals):
-            return role, None
-    return None, "官网未证明其生产或配制目标下游应用（油墨、涂料、胶黏剂或 PP/TPO 塑料件涂装）"
+    for term in product_terms:
+        normalised = term.casefold().strip()
+        if len(normalised) < 5:
+            continue
+        escaped = re.escape(normalised)
+        if any(re.search(rf"{escaped}.{{0,80}}{role}|{role}.{{0,80}}{escaped}", lowered) for role in UPSTREAM_ROLE_SIGNALS):
+            return None, "官网显示为目标产品的上游供应商或同行，不是下游客户"
+    if any(signal in lowered for signal in GENERIC_DOWNSTREAM_ENTITY_SIGNALS):
+        return "目标下游企业候选", None
+    return None, "官网未证明其为制造商、配方商、加工厂或品牌/终端主体"
 
 
 def _supplier_factory_role(text: str, product_terms: list[str]) -> tuple[str | None, str | None]:
@@ -547,6 +513,13 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
     try:
         limit = max(1, min(int(task.get("max_results") or 50), 1000))
         profile = _application_profile(task)
+        if profile["mode"] == "需求客户" and not profile["applications"]:
+            message = "未提供经产品资料确认的下游应用画像；为避免凭产品名称盲搜，本次未执行。"
+            log.append(message)
+            finished_at = datetime.now(timezone.utc).isoformat()
+            await store.request(f"lead_discovery_runs?id=eq.{run['id']}", "PATCH", {"status": "跳过", "finished_at": finished_at, "run_log": log})
+            await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"last_run_at": finished_at, "last_run_status": "跳过", "last_error": message})
+            return {"run_id": run["id"], "status": "跳过", "discovered_count": 0, "inserted_count": 0, "skipped_count": 0, "log": log}
         queries = _search_queries(task, limit, profile)
         log.append(
             f"查询方向：{profile['mode']}；画像：{profile['label']}；检索重点为 {', '.join(list(profile['applications'])[:6])}。"
@@ -658,7 +631,10 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 if supplier_mode:
                     business_role, role_problem = _supplier_factory_role(combined_text, list(profile["evidence_terms"]))
                 else:
-                    business_role, role_problem = _downstream_role(combined_text)
+                    business_role, role_problem = _downstream_role(
+                        combined_text,
+                        tuple(str(item).strip() for item in (task.get("product_keywords") or []) if str(item).strip()),
+                    )
                 email = phone = department = None
                 email_source = phone_source = contact_source = evidence_url = None
                 evidence_text = ""
@@ -742,14 +718,14 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     "product_evidence_summary": evidence_summary or None, "product_evidence_url": evidence_url, "product_evidence_type": "官方产品/应用页面" if evidence_url else None,
                     "matching_grade": matching_grade, "recommended_contact_department": department or "Sales / Technical Support（待确认）",
                     "first_contact_questions": "请确认贵司工厂地址、生产产品、产能、TDS/SDS、MOQ 与出口能力。" if supplier_mode else "请确认贵司相关产品/应用、现用材料、技术指标与采购对接部门。",
-                    "verification_conclusion": (identity_problem or role_problem or "不属于可开发企业主体") if excluded else ("中国大陆供应工厂候选；公开网页信息仍需人工核验，不会自动进入供应商中心。" if supplier_mode else "应用型潜在客户候选；公开网页只证明其下游业务，尚未证明采购或使用 CPPH-2A/CPP/CPO。"),
+                    "verification_conclusion": (identity_problem or role_problem or "不属于可开发企业主体") if excluded else ("中国大陆供应工厂候选；公开网页信息仍需人工核验，不会自动进入供应商中心。" if supplier_mode else "应用型潜在客户候选；公开网页只证明其下游业务，尚未证明其采购或使用本任务产品。"),
                     "missing_requirements": missing, "verified_at": datetime.now(timezone.utc).isoformat(),
                     "first_discovery_source_url": source_url, "official_validation_source_url": final_url,
                     "source_urls": [url for url in (source_url, final_url, contact_source, email_source, phone_source, evidence_url) if url],
                     "verification_status": "auto_excluded_competitor" if excluded and role_problem else ("auto_excluded" if excluded else ("auto_supplier_factory_candidate" if supplier_mode else "auto_application_candidate")),
                     "data_source": "public_web_discovery", "imported_at": None,
                     "needs_human_confirmation": True,
-                    "confirmation_note": "公开证据仅证明潜在功能匹配，不代表企业已采购或已批准使用CPPH-2A/CPP/CPO。",
+                    "confirmation_note": "公开证据仅证明潜在功能匹配，不代表企业已采购、已批准或正在使用本任务产品。",
                 }
                 known = await store.request(f"customer_leads?user_id=eq.{task['user_id']}&select=id,source_url,website_domain,company_name,public_business_email&limit=500")
                 company_key = re.sub(r"[^a-z0-9]", "", company.casefold())
