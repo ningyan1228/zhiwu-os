@@ -425,8 +425,8 @@ async def _duplicates(store: RestStore, task: dict[str, Any], company: str, doma
     return customer, supplier
 
 
-def _downstream_role(text: str, product_terms: tuple[str, ...]) -> tuple[str | None, str | None]:
-    """Confirm a generic downstream business entity and reject clear peers."""
+def _downstream_role(text: str, product_terms: tuple[str, ...], target_roles: tuple[str, ...]) -> tuple[str | None, str | None]:
+    """Separate direct target roles from merely related application businesses."""
     lowered = text.casefold()
     for term in product_terms:
         normalised = term.casefold().strip()
@@ -435,8 +435,12 @@ def _downstream_role(text: str, product_terms: tuple[str, ...]) -> tuple[str | N
         escaped = re.escape(normalised)
         if any(re.search(rf"{escaped}.{{0,80}}{role}|{role}.{{0,80}}{escaped}", lowered) for role in UPSTREAM_ROLE_SIGNALS):
             return None, "官网显示为目标产品的上游供应商或同行，不是下游客户"
+    for target_role in target_roles:
+        normalised = target_role.casefold().strip()
+        if len(normalised) >= 4 and normalised in lowered:
+            return "直接需求候选", None
     if any(signal in lowered for signal in GENERIC_DOWNSTREAM_ENTITY_SIGNALS):
-        return "目标下游企业候选", None
+        return "间接应用链", None
     return None, "官网未证明其为制造商、配方商、加工厂或品牌/终端主体"
 
 
@@ -634,6 +638,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     business_role, role_problem = _downstream_role(
                         combined_text,
                         tuple(str(item).strip() for item in (task.get("product_keywords") or []) if str(item).strip()),
+                        tuple(str(item).strip() for item in (task.get("target_company_types") or []) if str(item).strip()),
                     )
                 email = phone = department = None
                 email_source = phone_source = contact_source = evidence_url = None
@@ -676,16 +681,21 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 if not phone: missing.append("缺官方公开电话")
                 if not evidence_url: missing.append("无下游应用直接证据")
                 if duplicate: missing.append("疑似与 CRM 或供应商中心重复")
+                configured_exclusion = next((str(rule).strip() for rule in (task.get("profile_exclusion_rules") or []) if str(rule).strip() and str(rule).casefold() in combined_text.casefold()), None)
+                if configured_exclusion:
+                    missing.append(f"命中产品画像排除规则：{configured_exclusion}")
                 excluded = bool(
                     (identity_problem and any(word in identity_problem for word in ("协会", "目录", "媒体", "贸易/分销")))
-                    or (not supplier_mode and role_problem and "上游原料供应商或同行" in role_problem)
+                    or (not supplier_mode and role_problem and "上游供应商或同行" in role_problem)
                     or (supplier_mode and role_problem and "贸易商、经销商、目录" in role_problem)
+                    or configured_exclusion
                 )
                 # Public-web discovery is a prospecting stage, not a substitute
                 # for a human strict verification.  It can never create a
                 # CRM-eligible strict record by itself.
                 bucket = "排除名单" if excluded else "待补信息"
-                matching_grade = "A" if application_hits and business_role else ("B" if application_hits else None)
+                lead_layer = "排除" if excluded else ("供应工厂候选" if supplier_mode else ("直接需求候选" if application_hits and business_role == "直接需求候选" else "间接应用链"))
+                matching_grade = "A" if lead_layer == "直接需求候选" else ("B" if application_hits and lead_layer == "间接应用链" else None)
                 if not excluded:
                     missing.append("自动应用型候选，需人工严格核验后方可进入严格客户名单或 CRM")
                 evidence_summary = ""
@@ -712,6 +722,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     "duplicate_supplier_id": supplier_dup.get("id") if supplier_dup else None,
                     "robots_status": "allowed", "robots_reason": robots_reason,
                     "verification_bucket": bucket, "company_type": company_type, "official_website": f"{urlparse(final_url).scheme}://{host}", "official_homepage_url": f"{urlparse(final_url).scheme}://{host}", "company_source_url": final_url,
+                    "lead_layer": lead_layer,
                     "contact_department": department, "contact_source_url": contact_source, "email_source_url": email_source, "phone_source_url": phone_source,
                     "email_domain_note": None if not email or _host(f"https://{email.split('@', 1)[1]}") == host else "邮箱域名与官网不同；该邮箱须由当前企业官网/官方 PDF 页面证明为集团统一或官方技术邮箱。",
                     "official_address": _address_excerpt(combined_text), "business_scope": business_role or company_type or "未公开，需通过首轮询盘确认",

@@ -90,6 +90,13 @@ class ProductIn(BaseModel):
     application: str | None = None
     description: str | None = None
     notes: str | None = None
+    technical_keywords: list[str] = []
+    confirmed_applications: list[str] = []
+    target_industries: list[str] = []
+    target_company_types: list[str] = []
+    exclusion_rules: list[str] = []
+    evidence_urls: list[str] = []
+    profile_status: Literal["草稿", "已确认"] = "草稿"
 
 class FollowupIn(BaseModel):
     customer_id: str
@@ -276,11 +283,13 @@ class TaskIn(BaseModel):
 class LeadSearchTaskIn(BaseModel):
     task_name: str = Field(min_length=1, max_length=200)
     discovery_mode: Literal["需求客户", "供应工厂"] = "需求客户"
+    product_id: str | None = None
     product_keywords: list[str] = []
     application_keywords: list[str] = []
     target_countries: list[str] = []
     excluded_countries: list[str] = []
     target_company_types: list[str] = []
+    profile_exclusion_rules: list[str] = []
     source_urls: list[str] = []
     search_language: str = "English"
     # Per-run candidate target. The worker paginates the official index and
@@ -619,7 +628,18 @@ async def list_products(authorization: str | None = Header(default=None)):
 
 @app.post("/api/products", status_code=201)
 async def create_product(product: ProductIn, authorization: str | None = Header(default=None)):
-    return await supabase("products", bearer(authorization), "POST", product.model_dump(exclude_none=True))
+    values = product.model_dump(exclude_none=True)
+    values["profile_updated_at"] = datetime.now().isoformat()
+    return await supabase("products", bearer(authorization), "POST", values)
+
+@app.patch("/api/products/{product_id}")
+async def update_product(product_id: str, product: ProductIn, authorization: str | None = Header(default=None)):
+    values = product.model_dump(exclude_none=True)
+    values["profile_updated_at"] = datetime.now().isoformat()
+    rows = await supabase(f"products?id=eq.{product_id}&archived_at=is.null", bearer(authorization), "PATCH", values)
+    if not rows:
+        raise HTTPException(404, "Product not found")
+    return rows[0]
 
 @app.get("/api/product-customer-relations")
 async def list_product_customer_relations(authorization: str | None = Header(default=None)):
@@ -710,16 +730,45 @@ async def update_task_status(task_id: str, payload: TaskStatusIn, authorization:
 async def list_lead_search_tasks(authorization: str | None = Header(default=None)):
     return await supabase("lead_search_tasks?deleted_at=is.null&select=*&order=created_at.asc", bearer(authorization))
 
+async def lead_task_values_from_product_profile(payload: LeadSearchTaskIn, token: str) -> dict[str, Any]:
+    """Snapshot a confirmed product profile into a reusable discovery task."""
+    values = payload.model_dump()
+    if not payload.product_id:
+        return values
+    rows = await supabase(f"products?id=eq.{payload.product_id}&archived_at=is.null&select=*", token)
+    if not rows:
+        raise HTTPException(404, "所选产品不存在")
+    product = rows[0]
+    if payload.discovery_mode == "需求客户":
+        if product.get("profile_status") != "已确认":
+            raise HTTPException(422, "需求侧搜索只能选择已确认的产品画像")
+        if not product.get("confirmed_applications") or not product.get("target_company_types"):
+            raise HTTPException(422, "产品画像缺少已确认下游应用或目标企业类型，不能开始需求侧搜索")
+    product_terms = [str(value).strip() for value in (product.get("technical_keywords") or []) if str(value).strip()]
+    for value in (product.get("product_code"), product.get("product_name")):
+        if value and str(value).strip() not in product_terms:
+            product_terms.append(str(value).strip())
+    values.update({
+        "product_keywords": product_terms,
+        "application_keywords": list(product.get("confirmed_applications") or []) if payload.discovery_mode == "需求客户" else values["application_keywords"],
+        "target_company_types": list(product.get("target_company_types") or []) if payload.discovery_mode == "需求客户" else values["target_company_types"],
+        "profile_exclusion_rules": list(product.get("exclusion_rules") or []),
+    })
+    return values
+
 @app.post("/api/lead-search-tasks", status_code=201)
 async def create_lead_search_task(payload: LeadSearchTaskIn, authorization: str | None = Header(default=None)):
-    rows = await supabase("lead_search_tasks", bearer(authorization), "POST", payload.model_dump())
+    token = bearer(authorization)
+    rows = await supabase("lead_search_tasks", token, "POST", await lead_task_values_from_product_profile(payload, token))
     return rows[0]
 
 @app.patch("/api/lead-search-tasks/{task_id}")
 async def update_lead_search_task(task_id: str, payload: LeadSearchTaskIn, authorization: str | None = Header(default=None)):
     # Keep existing V1.13 tasks usable while V1.14's optional directory-source
     # column is being rolled out. Explicit non-default sources still persist.
-    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", bearer(authorization), "PATCH", {**payload.model_dump(exclude_defaults=True), "updated_at": datetime.now().isoformat()})
+    token = bearer(authorization)
+    values = await lead_task_values_from_product_profile(payload, token)
+    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", token, "PATCH", {**values, "updated_at": datetime.now().isoformat()})
     if not rows: raise HTTPException(404, "Lead search task not found")
     return rows[0]
 

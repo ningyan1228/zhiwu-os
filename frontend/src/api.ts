@@ -60,7 +60,7 @@ async function download(path: string, filename: string) {
 }
 
 const asCustomer = (item: Customer): Customer => ({ ...item, whatsapp: item.whatsapp || '—', product_interest: item.product_interest || '—', last_contact_date: item.last_contact_date || '—', next_followup_date: item.next_followup_date || '—', notes: item.notes || '暂无备注', customer_summary: item.customer_summary || '待补充客户画像。', customer_background: item.customer_background || '待补充客户背景。', customer_need: item.customer_need || item.product_interest || '待确认客户需求。', important_notes: item.important_notes || '暂无特别注意事项。', customer_value: item.customer_value || 3, customer_tags: item.customer_tags || [], industry: item.industry || '待确认行业' })
-const asProduct = (item: Product): Product => ({ ...item, category: item.category || '未分类', application: item.application || '—', description: item.description || '暂无描述', notes: item.notes || '' })
+const asProduct = (item: Product): Product => ({ ...item, category: item.category || '未分类', application: item.application || '—', description: item.description || '暂无描述', notes: item.notes || '', technical_keywords: item.technical_keywords || [], confirmed_applications: item.confirmed_applications || [], target_industries: item.target_industries || [], target_company_types: item.target_company_types || [], exclusion_rules: item.exclusion_rules || [], evidence_urls: item.evidence_urls || [], profile_status: item.profile_status || '草稿' })
 const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
 const asProject = (item: Project): Project => ({ ...item, application: item.application || '应用待确认', notes: item.notes || '' })
 const asQuote = (item: Quote): Quote => ({ ...item, currency: item.currency || 'USD', quantity: item.quantity || '待确认', status: item.status || 'Draft' })
@@ -73,6 +73,7 @@ export const api = {
   createCustomer: (payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>('/api/customers', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
   products: () => request<Product[]>('/api/products').then(rows => rows.map(asProduct)),
   createProduct: (payload: Omit<Product, 'id'>) => request<Product[]>('/api/products', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asProduct(rows[0])),
+  updateProduct: (id: string, payload: Omit<Product, 'id'>) => request<Product>(`/api/products/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(asProduct),
   productCustomerRelations: () => request<ProductCustomerRelation[]>('/api/product-customer-relations'),
   linkProductCustomer: (productId: string, customerId: string) => request<ProductCustomerRelation>(`/api/products/${productId}/customers`, { method: 'POST', body: JSON.stringify({ customer_id: customerId }) }),
   updateCustomer: (id: string, payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>(`/api/customers/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
