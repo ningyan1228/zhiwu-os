@@ -142,3 +142,7 @@ html[data-theme='dark'] .customer-tags span,html[data-theme='dark'] .crm-owner>s
 html[data-theme='dark'] .crm-completeness,html[data-theme='dark'] .crm-completeness b{color:#c7d2c9}
 html[data-theme='dark'] .crm-filters button{background:#273229;border-color:#4d5b51;color:#d7e0d8}
 html[data-theme='dark'] .crm-filters button.active{background:#1c463c;border-color:#6db39e;color:#d8f1e6}
+html[data-theme='dark'] .dashboard .hero h1{color:#f1f5f1}
+html[data-theme='dark'] .dashboard .hero h1 span{color:#f0c45d}
+html[data-theme='dark'] .dashboard .hero .subhead{color:#c5d0c7}
+html[data-theme='dark'] .dashboard .hero .eyebrow{color:#afbbb1}
