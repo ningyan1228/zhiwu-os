@@ -174,3 +174,9 @@ html[data-theme='dark'] .product-history-item:before{border-color:#202821;backgr
 html[data-theme='dark'] .product-history-item time{color:#b5c4b8}
 html[data-theme='dark'] .product-history-item small{color:#96d3bc}
 @media(max-width:620px){.product-card-actions{align-items:flex-start!important;flex-direction:column!important}.product-history-intro{align-items:flex-start;flex-direction:column}.product-history-item{grid-template-columns:1fr;gap:4px}.product-history-list{margin-left:5px}.product-history-item{padding-left:14px}}
+
+/* Project board is intentionally a customer-opportunity workspace, not a product catalogue. */
+.project-board-guide{display:flex;align-items:flex-start;gap:9px;margin:0 0 18px;padding:11px 13px;border:1px solid #cfe0d7;border-radius:8px;background:#f4faf6;color:#557167}.project-board-guide>svg{flex:none;margin-top:1px;color:#3c8977}.project-board-guide div{display:grid;gap:3px}.project-board-guide b{color:#345f54;font-size:11px}.project-board-guide span{font-size:10px;line-height:1.5}
+html[data-theme='dark'] .project-board-guide{background:#1d332a;border-color:#3f6656;color:#c0d1c6}
+html[data-theme='dark'] .project-board-guide>svg{color:#91d4bc}
+html[data-theme='dark'] .project-board-guide b{color:#d6e7dc}
