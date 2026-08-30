@@ -32,7 +32,17 @@ RESTRICTED_HOSTS = {
 GENERIC_EMAIL_DOMAINS = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "163.com", "qq.com"}
 NON_EMAIL_FILE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js", ".woff", ".pdf")
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
-PHONE_RE = re.compile(r"(?:\+?\d[\d\s().\-]{7,}\d)")
+# A phone is never inferred from an arbitrary number-like fragment.  Dates,
+# version numbers and page counters are common in public website HTML, so text
+# extraction additionally requires a nearby explicit telephone label.  `tel:`
+# links are considered the strongest public-phone signal.
+PHONE_RE = re.compile(r"(?:\+?\d[\d\s()./\-‐‑‒–—−﹣]{7,}\d)")
+TEL_LINK_RE = re.compile(r'''(?is)href\s*=\s*["']tel:([^"'?#<\s]+)''')
+PHONE_LABEL_RE = re.compile(r"\b(?:tel(?:ephone)?|phone|mobile|call|contact\s*(?:no\.?|number))\b", re.I)
+DATE_LIKE_PHONE_RE = re.compile(r"^(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}$")
+PHONE_DASH_TRANSLATION = str.maketrans({
+    "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-", "﹣": "-",
+})
 CONTACT_DEPARTMENTS = ("export sales", "sales", "purchasing", "procurement", "technical support", "r&d", "research and development", "product development", "packaging development", "quality", "regulatory")
 IDENTITY_WORDS = ("manufacturer", "manufacturing", "factory", "producer", "brand owner", "converter", "processor", "formulator", "our company")
 EXCLUDED_IDENTITY_WORDS = ("association", "exhibition", "trade show", "directory", "yellow pages", "media", "news", "training", "consulting", "distributor", "distribution", "trading company", "trader")
@@ -194,19 +204,42 @@ def _public_business_email(raw: str, host: str) -> str | None:
     return None
 
 
+def _normalise_phone_candidate(item: str) -> str | None:
+    """Return a plausible public business number, never a date or page token."""
+    value = html.unescape(item).translate(PHONE_DASH_TRANSLATION)
+    value = re.sub(r"\s+", " ", value).strip(" ,;:)")
+    value = value.removeprefix("tel:").strip()
+    # ISO dates are especially easy to confuse with numbers.  Check after
+    # Unicode-dash normalisation so 2018–08–29 cannot bypass the filter.
+    if DATE_LIKE_PHONE_RE.fullmatch(value) or "." in value:
+        return None
+    digits = re.sub(r"\D", "", value)
+    if not 8 <= len(digits) <= 18:
+        return None
+    # Do not accept bare counters/IDs just because they have enough digits.
+    if not (value.startswith("+") or value.startswith("00") or "(" in value or "-" in value or "/" in value or " " in value):
+        return None
+    return value
+
+
 def _public_phone(raw: str) -> str | None:
-    for item in PHONE_RE.findall(raw):
-        value = re.sub(r"\s+", " ", item).strip()
-        # Dates, SVG coordinates and numeric identifiers often match a generic
-        # telephone regex.  A strict record only accepts a recognisable public
-        # business number with country/area formatting.
-        if re.fullmatch(r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}", value) or "." in value:
+    # A tel: URL is structured, public contact data and needs no surrounding
+    # text label.  It is intentionally examined before rendered page text.
+    for item in TEL_LINK_RE.findall(raw):
+        phone = _normalise_phone_candidate(item)
+        if phone:
+            return phone
+
+    text = _normalise_text(raw)
+    for match in PHONE_RE.finditer(text):
+        # An unlabelled number in a news footer, copyright notice or address is
+        # not reliable enough to be shown as a company phone.
+        context = text[max(0, match.start() - 100):match.start()]
+        if not PHONE_LABEL_RE.search(context):
             continue
-        if not (value.startswith("+") or value.startswith("00") or "(" in value or "-" in value or " " in value):
-            continue
-        digits = re.sub(r"\D", "", value)
-        if 8 <= len(digits) <= 18:
-            return value
+        phone = _normalise_phone_candidate(match.group(0))
+        if phone:
+            return phone
     return None
 
 
