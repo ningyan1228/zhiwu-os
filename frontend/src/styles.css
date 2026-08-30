@@ -115,3 +115,30 @@ html[data-theme='dark'] .product-customer-summary small{color:#dfbe79}
 .lead-page .page-actions>.primary{padding-inline:15px}
 @media(max-width:1120px){.lead-page .page-heading{flex-wrap:wrap}.lead-page .page-heading>div:first-child{max-width:none;flex:1 1 520px}.lead-page .page-actions{margin-left:auto}}
 @media(max-width:760px){.lead-page .page-actions{grid-template-columns:repeat(2,minmax(0,1fr));justify-content:stretch}.lead-page .page-actions>.secondary,.lead-page .page-actions>.primary{width:100%;min-height:42px;padding-inline:8px;font-size:10px}}
+
+/* Complete the dark palette for modules that define their own white surfaces. */
+html[data-theme='dark'] .supplier-card,html[data-theme='dark'] .supplier-inline-form,html[data-theme='dark'] .supplier-followup-form,html[data-theme='dark'] .supplier-upload-form{background:#202821;border-color:#3b473e}
+html[data-theme='dark'] .supplier-card :is(b,dd),html[data-theme='dark'] .supplier-detail-row b{color:#eef3ee}
+html[data-theme='dark'] .supplier-card :is(span,dt),html[data-theme='dark'] .supplier-detail-row :is(span,small){color:#c0cbc2}
+html[data-theme='dark'] .supplier-tags span{background:#293842;color:#c2d8e8}
+html[data-theme='dark'] .supplier-card-foot,html[data-theme='dark'] .supplier-contact-strip,html[data-theme='dark'] .supplier-detail-row{border-color:#3a473d}
+html[data-theme='dark'] .calendar-grid{border-color:#3a473d}
+html[data-theme='dark'] .calendar-weekdays{border-color:#3a473d}
+html[data-theme='dark'] .calendar-weekdays span{color:#c6d0c8}
+html[data-theme='dark'] .calendar-day{background:#202821;border-color:#3a473d}
+html[data-theme='dark'] .calendar-day:hover{background:#29342c}
+html[data-theme='dark'] .calendar-day.selected{background:#20372f;box-shadow:inset 0 0 0 2px #70b3a2}
+html[data-theme='dark'] .calendar-day.muted{background:#1a211c;color:#748078}
+html[data-theme='dark'] .calendar-day time{color:#d4ded5}
+html[data-theme='dark'] .calendar-day span{color:#d3ded4}
+html[data-theme='dark'] .calendar-day span.done{color:#a8b8ae}
+html[data-theme='dark'] .calendar-day small{color:#9cc6b6}
+html[data-theme='dark'] .project-card :is(dt,.project-label),html[data-theme='dark'] .project-card dd,html[data-theme='dark'] .project-card-foot span{color:#c2cdc4}
+html[data-theme='dark'] .project-card :is(h2,b),html[data-theme='dark'] .project-card-foot button{color:#f0f4f0}
+html[data-theme='dark'] .project-card :is(dl,.project-card-top,.project-card-foot,.project-supply-block){border-color:#3a473d}
+html[data-theme='dark'] .crm-card-actions button:not(.primary),html[data-theme='dark'] .drawer-actions button:not(.primary),html[data-theme='dark'] .supplier-page-actions>button:not(.primary){background:#273229;border-color:#526157;color:#edf3ed}
+html[data-theme='dark'] .crm-card-actions button:not(.primary):hover,html[data-theme='dark'] .drawer-actions button:not(.primary):hover,html[data-theme='dark'] .supplier-page-actions>button:not(.primary):hover{background:#344238}
+html[data-theme='dark'] .customer-tags span,html[data-theme='dark'] .crm-owner>span,html[data-theme='dark'] .supplier-contact-strip span{background:#29342d;color:#cbd6cd}
+html[data-theme='dark'] .crm-completeness,html[data-theme='dark'] .crm-completeness b{color:#c7d2c9}
+html[data-theme='dark'] .crm-filters button{background:#273229;border-color:#4d5b51;color:#d7e0d8}
+html[data-theme='dark'] .crm-filters button.active{background:#1c463c;border-color:#6db39e;color:#d8f1e6}
