@@ -271,6 +271,7 @@ class TaskIn(BaseModel):
 
 class LeadSearchTaskIn(BaseModel):
     task_name: str = Field(min_length=1, max_length=200)
+    discovery_mode: Literal["需求客户", "供应工厂"] = "需求客户"
     product_keywords: list[str] = []
     application_keywords: list[str] = []
     target_countries: list[str] = []

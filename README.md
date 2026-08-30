@@ -20,7 +20,7 @@ Copy-Item config.example .env
 docker compose up --build
 ```
 
-在 Supabase SQL Editor 中执行 [`backend/supabase/schema.sql`](backend/supabase/schema.sql)，然后按版本顺序执行 `backend/supabase/` 中的迁移文件；部署客户线索严格核验前必须执行 [`v1_19_cpph_2a_strict_import.sql`](backend/supabase/v1_19_cpph_2a_strict_import.sql) 和 [`v1_20_application_first_lead_discovery.sql`](backend/supabase/v1_20_application_first_lead_discovery.sql)。把 `SUPABASE_URL`、`SUPABASE_ANON_KEY` 和 `SUPABASE_SERVICE_ROLE_KEY` 填入服务器 `.env`。服务端密钥绝不能进入 GitHub Pages。
+在 Supabase SQL Editor 中执行 [`backend/supabase/schema.sql`](backend/supabase/schema.sql)，然后按版本顺序执行 `backend/supabase/` 中的迁移文件；部署客户线索严格核验前必须执行 [`v1_19_cpph_2a_strict_import.sql`](backend/supabase/v1_19_cpph_2a_strict_import.sql)、[`v1_20_application_first_lead_discovery.sql`](backend/supabase/v1_20_application_first_lead_discovery.sql) 和 [`v1_21_dual_direction_discovery.sql`](backend/supabase/v1_21_dual_direction_discovery.sql)。把 `SUPABASE_URL`、`SUPABASE_ANON_KEY` 和 `SUPABASE_SERVICE_ROLE_KEY` 填入服务器 `.env`。服务端密钥绝不能进入 GitHub Pages。
 
 ## CPPH-2A 严格名单导入
 
@@ -29,6 +29,8 @@ docker compose up --build
 ## 应用优先发现
 
 产品识别词只用于后端生成下游应用画像，绝不直接用来搜索客户。CPPH-2A 会展开为 PP/PE/TPO 基材的油墨、涂料、底涂和胶黏剂等应用，再按“下游应用 × 下游企业类型 × 国家/地区”搜索企业官网。官网售卖 CPP/CPO/树脂/附着力促进剂等原料的企业会作为同行进入排除名单；自动网页发现只会进入“待补信息”，不能直接进入严格名单或 CRM。
+
+查询任务可选两种方向：`需求客户` 采用应用优先逻辑寻找下游潜在使用者；`供应工厂` 用产品名称/技术词检索中国大陆生产工厂，并排除贸易商、经销商、目录和媒体。供应工厂候选不会自动写入供应商中心。
 
 ## 部署概览
 
