@@ -2,6 +2,7 @@
 from datetime import date, datetime, timedelta
 from functools import lru_cache
 from io import BytesIO
+import re
 from typing import Any, Literal
 from urllib.parse import quote, urlparse
 
@@ -125,12 +126,62 @@ class ProductCustomerRelationIn(BaseModel):
 
 class QuoteIn(BaseModel):
     customer_id: str
+    project_id: str | None = None
     product_id: str | None = None
-    quantity: str
+    product_code: str | None = None
+    product_name_snapshot: str | None = None
+    specification: str | None = None
+    packaging: str | None = None
+    quantity: str = "待确认"
+    quantity_unit: str | None = None
+    unit_price: float | None = None
     amount: float | None = None
     currency: str = "USD"
     trade_term: str | None = None
-    status: str = "Draft"
+    incoterm: str | None = None
+    loading_port: str | None = None
+    destination_port: str | None = None
+    lead_time: str | None = None
+    moq: str | None = None
+    valid_until: str | None = None
+    payment_terms: str | None = None
+    status: str = "草稿"
+    source_email_id: str | None = None
+    source_evidence_summary: str | None = None
+    manual_send_confirmed: bool = False
+    manual_send_note: str | None = None
+    internal_supplier_quote_refs: list[str] = []
+    internal_technical_document_refs: list[str] = []
+    internal_notes: str | None = None
+
+class QuoteUpdateIn(BaseModel):
+    project_id: str | None = None
+    product_id: str | None = None
+    product_code: str | None = None
+    product_name_snapshot: str | None = None
+    specification: str | None = None
+    packaging: str | None = None
+    quantity: str | None = None
+    quantity_unit: str | None = None
+    unit_price: float | None = None
+    amount: float | None = None
+    currency: str | None = None
+    trade_term: str | None = None
+    incoterm: str | None = None
+    loading_port: str | None = None
+    destination_port: str | None = None
+    lead_time: str | None = None
+    moq: str | None = None
+    valid_until: str | None = None
+    payment_terms: str | None = None
+    status: str | None = None
+    source_email_id: str | None = None
+    source_evidence_summary: str | None = None
+    manual_send_confirmed: bool = False
+    manual_send_note: str | None = None
+    internal_supplier_quote_refs: list[str] | None = None
+    internal_technical_document_refs: list[str] | None = None
+    internal_notes: str | None = None
 
 SupplierStatus = Literal["待联系", "已询价", "等 TDS", "等报价", "等样品", "技术评估", "已合作", "暂停", "淘汰"]
 
@@ -1260,9 +1311,127 @@ async def revert_import(batch_id: str, authorization: str | None = Header(defaul
 async def list_quotes(authorization: str | None = Header(default=None)):
     return await supabase("quotes?select=*&archived_at=is.null&order=created_at.desc", bearer(authorization))
 
+async def require_quote(token: str, quote_id: str) -> dict[str, Any]:
+    rows = await supabase(f"quotes?id=eq.{quote(quote_id, safe='')}&archived_at=is.null&select=*&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "Quotation not found")
+    return rows[0]
+
+def new_quote_number() -> str:
+    # Timestamp plus microseconds avoids depending on a mutable global counter.
+    return datetime.now().strftime("QT-%Y%m%d-%H%M%S-%f")
+
+def quote_send_evidence(payload: dict[str, Any], *, current: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Only a linked real email or an explicit manual confirmation can mark a quote sent."""
+    result = dict(payload)
+    status = result.get("status", current.get("status") if current else "草稿")
+    source_email_id = result.get("source_email_id", current.get("source_email_id") if current else None)
+    manual_confirmed = bool(result.pop("manual_send_confirmed", False))
+    manual_note = result.get("manual_send_note") or (current or {}).get("manual_send_note")
+    if manual_confirmed:
+        if not manual_note:
+            raise HTTPException(422, "请填写实际发送的人工确认说明，不能仅凭推测标记已发送。")
+        result["manual_send_confirmed_at"] = datetime.now().isoformat()
+        result["send_evidence_type"] = "manual_confirmation"
+    if status in {"已发送", "客户议价", "已接受"}:
+        if source_email_id:
+            result["send_evidence_type"] = "linked_email"
+            result.setdefault("sent_at", datetime.now().isoformat())
+        elif not (result.get("manual_send_confirmed_at") or (current or {}).get("manual_send_confirmed_at")):
+            raise HTTPException(422, "只有关联真实邮件或填写人工发送确认后，才能将报价标记为已发送、议价或已接受。")
+    return result
+
 @app.post("/api/quotes", status_code=201)
-async def create_quote(quote: QuoteIn, authorization: str | None = Header(default=None)):
-    return await supabase("quotes", bearer(authorization), "POST", quote.model_dump(exclude_none=True))
+async def create_quote(quote_data: QuoteIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    payload = quote_data.model_dump(exclude_none=True)
+    payload = quote_send_evidence(payload)
+    payload.pop("manual_send_confirmed", None)
+    payload.update({"quote_number": new_quote_number(), "version": 1, "updated_at": datetime.now().isoformat()})
+    return await supabase("quotes", token, "POST", payload)
+
+@app.patch("/api/quotes/{quote_id}")
+async def update_quote(quote_id: str, quote_data: QuoteUpdateIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    current = await require_quote(token, quote_id)
+    payload = quote_data.model_dump(exclude_none=True)
+    payload = quote_send_evidence(payload, current=current)
+    payload.pop("manual_send_confirmed", None)
+    payload["updated_at"] = datetime.now().isoformat()
+    return (await supabase(f"quotes?id=eq.{quote(quote_id, safe='')}", token, "PATCH", payload))[0]
+
+@app.post("/api/quotes/{quote_id}/revisions", status_code=201)
+async def create_quote_revision(quote_id: str, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    current = await require_quote(token, quote_id)
+    revision = {key: value for key, value in current.items() if key not in {
+        "id", "created_at", "updated_at", "archived_at", "merged_into_quote_id", "archive_reason", "converted_order_id",
+        "status", "sent_at", "send_evidence_type", "manual_send_confirmed_at", "manual_send_note", "source_email_id",
+    }}
+    revision.update({
+        "quote_number": current["quote_number"], "version": int(current.get("version") or 1) + 1,
+        "revision_of_quote_id": current["id"], "status": "草稿", "quantity": current.get("quantity") or "待确认",
+        "source_evidence_summary": f"基于 {current['quote_number']} V{current.get('version') or 1} 建立的修订草稿；须重新确认并发送。",
+        "updated_at": datetime.now().isoformat(),
+    })
+    return await supabase("quotes", token, "POST", revision)
+
+@app.get("/api/orders")
+async def list_orders(authorization: str | None = Header(default=None)):
+    return await supabase("sales_orders?select=*&order=created_at.desc", bearer(authorization))
+
+@app.post("/api/quotes/{quote_id}/convert-order", status_code=201)
+async def convert_quote_to_order(quote_id: str, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    record = await require_quote(token, quote_id)
+    if record.get("converted_order_id"):
+        raise HTTPException(409, "This quotation has already been converted to an order.")
+    if record.get("status") != "已接受":
+        raise HTTPException(422, "只有已接受且具有真实发送凭证的正式报价才能转为订单。")
+    order_number = datetime.now().strftime("SO-%Y%m%d-%H%M%S-%f")
+    order_payload = {key: record.get(key) for key in (
+        "customer_id", "project_id", "product_id", "product_code", "product_name_snapshot", "specification", "packaging",
+        "quantity", "quantity_unit", "unit_price", "amount", "currency", "incoterm", "loading_port", "destination_port",
+        "lead_time", "payment_terms",
+    )}
+    order_payload.update({"order_number": order_number, "quote_id": record["id"], "status": "待PI/合同确认", "execution_notes": "由已接受正式报价转换；请补充真实 PI、付款、生产与出运记录。", "updated_at": datetime.now().isoformat()})
+    order = (await supabase("sales_orders", token, "POST", order_payload))[0]
+    await supabase(f"quotes?id=eq.{quote(quote_id, safe='')}", token, "PATCH", {"converted_order_id": order["id"], "updated_at": datetime.now().isoformat()})
+    return order
+
+@app.post("/api/quotes/import-mail-drafts")
+async def import_mail_quote_drafts(authorization: str | None = Header(default=None)):
+    """Create review-only drafts from existing quotation-related mails.
+
+    This never parses or invents price, quantity, Incoterms or sending status.
+    A draft is created only for an already-linked external customer mail and keeps
+    the email as its evidence reference for the user's review.
+    """
+    token = bearer(authorization)
+    emails = await supabase("emails?select=*&customer_id=not.is.null&order=received_at.desc&limit=500", token)
+    existing = await supabase("quotes?select=source_email_id&source_email_id=not.is.null", token)
+    imported = {row.get("source_email_id") for row in existing}
+    quotation_pattern = re.compile(r"\b(quotation|quote|proforma|price|pricing|pi)\b|报价|价格", re.IGNORECASE)
+    created: list[dict[str, Any]] = []
+    skipped = 0
+    for email in emails:
+        if email.get("id") in imported or email.get("is_internal_sender"):
+            skipped += 1
+            continue
+        text = " ".join(str(email.get(key) or "") for key in ("subject", "content_preview", "content_text"))
+        if email.get("category") != "quotation" and not quotation_pattern.search(text):
+            skipped += 1
+            continue
+        source = f"邮件证据：{str(email.get('received_at') or '')[:10]} · {str(email.get('subject') or '(无主题)')[:300]}。仅据此创建草稿，金额、数量、条款和发送状态均待人工确认。"
+        payload = {
+            "customer_id": email["customer_id"], "project_id": email.get("project_id"), "product_id": email.get("product_id"),
+            "quote_number": new_quote_number(), "version": 1, "quantity": "待确认", "currency": "USD", "status": "草稿",
+            "source_email_id": email["id"], "source_evidence_summary": source, "internal_notes": "由邮件中心自动建立的待核对报价草稿；未自动提取商业条款。",
+            "updated_at": datetime.now().isoformat(),
+        }
+        rows = await supabase("quotes", token, "POST", payload)
+        created.append(rows[0])
+    return {"created": len(created), "skipped": skipped, "quotes": created, "message": "仅创建草稿；请逐条补全并以真实邮件或人工发送确认后再标记已发送。"}
 
 # Supplier Center -----------------------------------------------------------
 # Supplier products are intentionally separate from public.products.  A formal

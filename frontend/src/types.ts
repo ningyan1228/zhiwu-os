@@ -33,7 +33,20 @@ export type Product = { id: string; product_name: string; product_code: string; 
 export type ProductCustomerRelation = { id: string; product_id: string; customer_id: string; created_at: string }
 export type TimelineItem = { date: string; title: string; detail?: string }
 export type Project = { id: string; customer_id: string; project_name: string; product_id?: string; product_code?: string; application: string; stage: CustomerStage; notes: string; created_at?: string }
-export type Quote = { id: string; customer_id: string; product_id?: string; product_code?: string; quantity: string; amount?: number; currency: string; trade_term?: string; status: string; created_at?: string }
+export type QuoteStatus = '草稿' | '待内部确认' | '已发送' | '客户议价' | '已接受' | '已失效' | '已拒绝' | string
+export type Quote = {
+  id: string; customer_id: string; project_id?: string | null; product_id?: string | null; product_code?: string | null
+  quote_number?: string; version?: number; revision_of_quote_id?: string | null; product_name_snapshot?: string | null
+  specification?: string | null; packaging?: string | null; quantity: string; quantity_unit?: string | null
+  unit_price?: number | null; amount?: number | null; currency: string; trade_term?: string | null; incoterm?: string | null
+  loading_port?: string | null; destination_port?: string | null; lead_time?: string | null; moq?: string | null
+  valid_until?: string | null; payment_terms?: string | null; status: QuoteStatus; source_email_id?: string | null
+  source_evidence_summary?: string | null; send_evidence_type?: 'linked_email' | 'manual_confirmation' | null
+  manual_send_confirmed_at?: string | null; manual_send_note?: string | null; sent_at?: string | null
+  internal_supplier_quote_refs?: string[]; internal_technical_document_refs?: string[]; internal_notes?: string | null
+  converted_order_id?: string | null; created_at?: string; updated_at?: string
+}
+export type SalesOrder = { id: string; order_number: string; quote_id: string; customer_id: string; project_id?: string | null; product_id?: string | null; product_code?: string | null; product_name_snapshot?: string | null; specification?: string | null; packaging?: string | null; quantity?: string | null; quantity_unit?: string | null; unit_price?: number | null; amount?: number | null; currency: string; incoterm?: string | null; loading_port?: string | null; destination_port?: string | null; lead_time?: string | null; payment_terms?: string | null; status: string; execution_notes?: string | null; created_at?: string; updated_at?: string }
 export type MailEmail = {
   id: string; message_id: string; sender: string; receiver?: string; sender_name?: string; subject: string
   content_preview?: string; content_text?: string; received_at: string; attachment_count: number

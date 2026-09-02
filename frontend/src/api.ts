@@ -1,4 +1,4 @@
-import type { Customer, CustomerLead, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, StrictLeadImportResult, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
+import type { Customer, CustomerLead, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, SalesOrder, StrictLeadImportResult, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -63,7 +63,7 @@ const asCustomer = (item: Customer): Customer => ({ ...item, whatsapp: item.what
 const asProduct = (item: Product): Product => ({ ...item, category: item.category || '未分类', application: item.application || '—', description: item.description || '暂无描述', notes: item.notes || '', technical_keywords: item.technical_keywords || [], confirmed_applications: item.confirmed_applications || [], target_industries: item.target_industries || [], target_company_types: item.target_company_types || [], exclusion_rules: item.exclusion_rules || [], evidence_urls: item.evidence_urls || [], profile_status: item.profile_status || '草稿' })
 const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
 const asProject = (item: Project): Project => ({ ...item, application: item.application || '应用待确认', notes: item.notes || '' })
-const asQuote = (item: Quote): Quote => ({ ...item, currency: item.currency || 'USD', quantity: item.quantity || '待确认', status: item.status || 'Draft' })
+const asQuote = (item: Quote): Quote => ({ ...item, currency: item.currency || 'USD', quantity: item.quantity || '待确认', status: item.status || '草稿', version: item.version || 1, internal_supplier_quote_refs: item.internal_supplier_quote_refs || [], internal_technical_document_refs: item.internal_technical_document_refs || [] })
 const asMailEmail = (item: MailEmail): MailEmail => ({ ...item, subject: item.subject || '(无主题)', content_preview: item.content_preview || '', attachment_count: item.attachment_count || 0, status: item.status || 'unread', category: item.category || 'customer_inquiry' })
 const asTask = (item: Task): Task => ({ ...item, description: item.description || '', start_time: item.start_time || null, end_time: item.end_time || null, status: item.status || 'Pending', category: item.category || '外贸', priority: item.priority || 'normal' })
 
@@ -84,6 +84,11 @@ export const api = {
   updateProject: (id: string, payload: Omit<Project, 'id' | 'customer_id' | 'created_at'>) => request<Project[]>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asProject(rows[0])),
   quotes: () => request<Quote[]>('/api/quotes').then(rows => rows.map(asQuote)),
   createQuote: (payload: Omit<Quote, 'id'>) => request<Quote[]>('/api/quotes', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asQuote(rows[0])),
+  updateQuote: (id: string, payload: Partial<Omit<Quote, 'id' | 'customer_id' | 'quote_number' | 'version' | 'created_at' | 'updated_at'>>) => request<Quote[]>(`/api/quotes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asQuote(rows[0])),
+  createQuoteRevision: (id: string) => request<Quote[]> (`/api/quotes/${id}/revisions`, { method: 'POST' }).then(rows => asQuote(rows[0])),
+  quoteMailDrafts: () => request<{ created: number; skipped: number; quotes: Quote[]; message: string }>('/api/quotes/import-mail-drafts', { method: 'POST' }),
+  orders: () => request<SalesOrder[]>('/api/orders'),
+  convertQuoteToOrder: (id: string) => request<SalesOrder>(`/api/quotes/${id}/convert-order`, { method: 'POST' }),
   suppliers: () => request<Supplier[]>('/api/suppliers?limit=500'),
   supplierInsights: () => request<SupplierInsight[]>('/api/supplier-insights'),
   createSupplier: (payload: Omit<Supplier, 'id' | 'created_at'>) => request<Supplier>('/api/suppliers', { method: 'POST', body: JSON.stringify(payload) }),
