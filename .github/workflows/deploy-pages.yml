@@ -35,6 +35,10 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
+          # GitHub Pages serves this artifact as its publishing root. Keep the
+          # custom domain declaration inside it, otherwise a later deployment
+          # can serve the default Pages site but drop work.101921.xyz.
+          cp ../CNAME dist/CNAME
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
