@@ -1,4 +1,4 @@
-import type { Customer, CustomerLead, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailAiFactCard, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, SalesOrder, StrictLeadImportResult, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
+import type { Customer, CustomerLead, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailAiFactCard, MailboxAccount, MailEmail, Product, ProductCustomerRelation, Project, Quote, SalesOrder, StrictLeadImportResult, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, TradeCommitment, WorkspaceMember } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -79,6 +79,9 @@ export const api = {
   updateCustomer: (id: string, payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>(`/api/customers/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
   followups: () => request<Followup[]>('/api/followups').then(rows => rows.map(asFollowup)),
   createFollowup: (payload: Omit<Followup, 'id'>) => request<Followup[]>('/api/followups', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asFollowup(rows[0])),
+  tradeCommitments: () => request<TradeCommitment[]>('/api/trade-commitments'),
+  createTradeCommitment: (payload: Omit<TradeCommitment, 'id' | 'created_at' | 'updated_at' | 'completed_at'> & { create_task?: boolean }) => request<TradeCommitment>('/api/trade-commitments', { method: 'POST', body: JSON.stringify(payload) }),
+  updateTradeCommitment: (id: string, payload: Partial<Omit<TradeCommitment, 'id' | 'customer_id' | 'created_at' | 'updated_at'>>) => request<TradeCommitment>(`/api/trade-commitments/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   projects: () => request<Project[]>('/api/projects').then(rows => rows.map(asProject)),
   createProject: (payload: Omit<Project, 'id'>) => request<Project[]>('/api/projects', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asProject(rows[0])),
   updateProject: (id: string, payload: Omit<Project, 'id' | 'customer_id' | 'created_at'>) => request<Project[]>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asProject(rows[0])),

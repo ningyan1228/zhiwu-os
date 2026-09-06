@@ -113,6 +113,40 @@ class FollowupIn(BaseModel):
     next_action: str | None = None
     status: str = "Open"
 
+CommitmentStatus = Literal["已确认", "我方待办", "等待客户", "待核对", "已兑现"]
+CommitmentParty = Literal["客户承诺", "我方承诺", "双方约定"]
+CommitmentEvidenceType = Literal["微信手动记录", "邮件", "项目记录", "运单/物流", "付款凭证", "其他"]
+
+class TradeCommitmentIn(BaseModel):
+    customer_id: str
+    project_id: str | None = None
+    product_id: str | None = None
+    title: str = Field(min_length=1, max_length=300)
+    category: str = Field(default="其他", min_length=1, max_length=80)
+    responsible_party: CommitmentParty
+    status: CommitmentStatus = "待核对"
+    due_date: str | None = None
+    evidence_type: CommitmentEvidenceType = "其他"
+    evidence_reference: str | None = Field(default=None, max_length=500)
+    evidence_note: str = Field(min_length=1, max_length=4000)
+    detail: str | None = Field(default=None, max_length=4000)
+    next_action: str | None = Field(default=None, max_length=1000)
+    create_task: bool = False
+
+class TradeCommitmentUpdateIn(BaseModel):
+    project_id: str | None = None
+    product_id: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    category: str | None = Field(default=None, min_length=1, max_length=80)
+    responsible_party: CommitmentParty | None = None
+    status: CommitmentStatus | None = None
+    due_date: str | None = None
+    evidence_type: CommitmentEvidenceType | None = None
+    evidence_reference: str | None = Field(default=None, max_length=500)
+    evidence_note: str | None = Field(default=None, min_length=1, max_length=4000)
+    detail: str | None = Field(default=None, max_length=4000)
+    next_action: str | None = Field(default=None, max_length=1000)
+
 class ProjectIn(BaseModel):
     customer_id: str
     project_name: str
@@ -779,6 +813,64 @@ async def create_followup(followup: FollowupIn, authorization: str | None = Head
     rows = await supabase("followups", token, "POST", followup.model_dump(exclude_none=True))
     await record_timeline_event(token, title=f"跟进客户：{followup.content}", event_type="crm", source="followup", related_id=rows[0]["id"], customer_id=followup.customer_id, event_date=followup.date)
     return rows
+
+@app.get("/api/trade-commitments")
+async def list_trade_commitments(authorization: str | None = Header(default=None)):
+    return await supabase("trade_commitments?select=*&archived_at=is.null&order=due_date.asc.nullslast,created_at.desc", bearer(authorization))
+
+@app.post("/api/trade-commitments", status_code=201)
+async def create_trade_commitment(commitment: TradeCommitmentIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    customer_rows = await supabase(f"customers?id=eq.{commitment.customer_id}&archived_at=is.null&select=id", token)
+    if not customer_rows:
+        raise HTTPException(404, "Customer not found")
+    if commitment.project_id:
+        project_rows = await supabase(f"projects?id=eq.{commitment.project_id}&customer_id=eq.{commitment.customer_id}&archived_at=is.null&select=id", token)
+        if not project_rows:
+            raise HTTPException(422, "Commitment project must belong to this customer")
+    if commitment.product_id:
+        product_rows = await supabase(f"products?id=eq.{commitment.product_id}&archived_at=is.null&select=id", token)
+        if not product_rows:
+            raise HTTPException(422, "Product not found")
+    values = commitment.model_dump(exclude_none=True, exclude={"create_task"})
+    if values.get("status") == "已兑现":
+        values["completed_at"] = datetime.now().isoformat()
+    rows = await supabase("trade_commitments", token, "POST", values)
+    record = rows[0]
+    await record_timeline_event(token, title=f"新增承诺：{record['title']}", event_type="crm", source="trade_commitment", related_id=record["id"], customer_id=record["customer_id"], project_id=record.get("project_id"), product_id=record.get("product_id"), event_date=str(record.get("due_date") or date.today()))
+    if commitment.create_task and commitment.status != "已兑现":
+        await supabase("tasks", token, "POST", {
+            "title": f"兑现承诺：{commitment.title}", "description": f"承诺台账 · {commitment.responsible_party} · 证据：{commitment.evidence_note}\\n下一步：{commitment.next_action or '待补充'}",
+            "category": "外贸", "priority": "important" if commitment.status == "我方待办" else "normal",
+            "status": "Pending", "task_date": commitment.due_date or str(date.today()),
+            "customer_id": commitment.customer_id, "project_id": commitment.project_id, "product_id": commitment.product_id,
+        })
+    return record
+
+@app.patch("/api/trade-commitments/{commitment_id}")
+async def update_trade_commitment(commitment_id: str, commitment: TradeCommitmentUpdateIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    existing = await supabase(f"trade_commitments?id=eq.{commitment_id}&archived_at=is.null&select=*", token)
+    if not existing:
+        raise HTTPException(404, "Commitment not found")
+    values = commitment.model_dump(exclude_unset=True)
+    if values.get("project_id"):
+        project_rows = await supabase(f"projects?id=eq.{values['project_id']}&customer_id=eq.{existing[0]['customer_id']}&archived_at=is.null&select=id", token)
+        if not project_rows:
+            raise HTTPException(422, "Commitment project must belong to this customer")
+    if values.get("product_id"):
+        product_rows = await supabase(f"products?id=eq.{values['product_id']}&archived_at=is.null&select=id", token)
+        if not product_rows:
+            raise HTTPException(422, "Product not found")
+    if values.get("status") == "已兑现" and not existing[0].get("completed_at"):
+        values["completed_at"] = datetime.now().isoformat()
+    elif values.get("status") and values["status"] != "已兑现":
+        values["completed_at"] = None
+    values["updated_at"] = datetime.now().isoformat()
+    rows = await supabase(f"trade_commitments?id=eq.{commitment_id}", token, "PATCH", values)
+    record = rows[0]
+    await record_timeline_event(token, title=f"更新承诺：{record['title']}（{record['status']}）", event_type="crm", source="trade_commitment", related_id=record["id"], customer_id=record["customer_id"], project_id=record.get("project_id"), product_id=record.get("product_id"), event_date=str(record.get("due_date") or date.today()))
+    return record
 
 @app.get("/api/projects")
 async def list_projects(authorization: str | None = Header(default=None)):

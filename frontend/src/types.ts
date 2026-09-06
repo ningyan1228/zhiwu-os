@@ -28,6 +28,16 @@ export type SupplierRfq = { id: string; rfq_number: string; customer_id: string;
 export type SupplierInsight = { supplier_id: string; document_count: number; tds_count: number; sample_available: boolean; effective_quote_count: number; project_link_count: number }
 
 export type Followup = { id: string; customer_id: string; date: string; content: string; next_action: string; status: 'Open' | 'Done' }
+export type TradeCommitmentStatus = '已确认' | '我方待办' | '等待客户' | '待核对' | '已兑现'
+export type TradeCommitmentParty = '客户承诺' | '我方承诺' | '双方约定'
+export type TradeCommitmentEvidenceType = '微信手动记录' | '邮件' | '项目记录' | '运单/物流' | '付款凭证' | '其他'
+export type TradeCommitment = {
+  id: string; customer_id: string; project_id?: string | null; product_id?: string | null
+  title: string; category: string; responsible_party: TradeCommitmentParty; status: TradeCommitmentStatus
+  due_date?: string | null; evidence_type: TradeCommitmentEvidenceType; evidence_reference?: string | null
+  evidence_note: string; detail?: string | null; next_action?: string | null
+  completed_at?: string | null; created_at: string; updated_at?: string
+}
 export type ProductProfileStatus = '草稿' | '已确认'
 export type Product = { id: string; product_name: string; product_code: string; category: string; application: string; description: string; image_url?: string; notes: string; technical_keywords?: string[]; confirmed_applications?: string[]; target_industries?: string[]; target_company_types?: string[]; exclusion_rules?: string[]; evidence_urls?: string[]; profile_status?: ProductProfileStatus; profile_updated_at?: string | null }
 export type ProductCustomerRelation = { id: string; product_id: string; customer_id: string; created_at: string }
