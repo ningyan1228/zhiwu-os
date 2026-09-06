@@ -21,3 +21,9 @@ MAILBOX_PETER_FOLDER=INBOX
 
 # Every listed address is an internal colleague, never an auto-created CRM customer.
 MAIL_INTERNAL_ADDRESSES=gjsxning@163.com,peter@neonliontech.com
+
+# Optional reviewed email AI. Create the key in SiliconFlow, then keep it on
+# this server only. Never put it in frontend variables or GitHub Pages.
+SILICONFLOW_API_KEY=sk-your-siliconflow-server-only-key
+SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+SILICONFLOW_MODEL=deepseek-ai/DeepSeek-V4-Flash

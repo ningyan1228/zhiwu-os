@@ -55,6 +55,12 @@ export type MailEmail = {
   status: 'unread' | 'new_lead' | 'linked' | 'followup_created' | 'completed'
   category: 'customer_inquiry' | 'technical' | 'quotation' | 'sample' | 'payment' | 'other'; created_at: string
 }
+export type MailAiFactCard = {
+  id: string; email_id: string; provider: string; model: string; prompt_version: string
+  source_hash: string; chinese_summary: string; facts: Record<string, unknown>; confidence?: number | null
+  status: '待审核' | '已确认' | '已忽略'; review_note?: string | null; reviewed_at?: string | null
+  created_at: string; updated_at: string
+}
 export type EmailSync = { status: string; total_synced: number; last_sync_time?: string | null; last_error?: string | null }
 export type MailboxAccount = { id?: string; mailbox_key?: string; label: string; email_address?: string | null; is_active: boolean; configured: boolean }
 export type TaskCategory = '外贸' | '网站' | '设计' | '学习' | '生活' | '其他'

@@ -2,6 +2,8 @@
 from datetime import date, datetime, timedelta
 from functools import lru_cache
 from io import BytesIO
+import hashlib
+import json
 import re
 from typing import Any, Literal
 from urllib.parse import quote, urlparse
@@ -37,6 +39,11 @@ class Settings(BaseSettings):
     # Optional official search provider token. It is read only on the server and
     # must never be returned by an API endpoint or committed to the repository.
     brave_search_api_key: str | None = None
+    # SiliconFlow is the optional, server-side only provider for reviewed mail
+    # summaries.  The browser never receives this key.
+    siliconflow_api_key: str | None = None
+    siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
+    siliconflow_model: str = "deepseek-ai/DeepSeek-V4-Flash"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 @lru_cache
@@ -316,6 +323,10 @@ class EmailCrmUpdateIn(BaseModel):
     create_task: bool = False
     task_date: str | None = None
 
+class MailAiFactCardStatusIn(BaseModel):
+    status: Literal["待审核", "已忽略"]
+    review_note: str | None = Field(default=None, max_length=2000)
+
 class TaskIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
@@ -401,6 +412,55 @@ def bearer(authorization: str | None) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing Supabase user token")
     return authorization
+
+def _mail_text_for_ai(email: dict[str, Any]) -> str:
+    """Bound the request; the original message remains in the mailbox."""
+    return str(email.get("content_text") or email.get("content_preview") or "").strip()[:24000]
+
+def _extract_json_object(value: str) -> dict[str, Any]:
+    cleaned = value.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\\s*|\\s*```$", "", cleaned, flags=re.I)
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(502, "AI 返回格式异常，请重试或改用原邮件人工核对。") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(502, "AI 返回不是可审核的事实卡。")
+    return parsed
+
+async def generate_siliconflow_mail_facts(email: dict[str, Any]) -> dict[str, Any]:
+    """Generate review-only facts. This helper never writes CRM data."""
+    cfg = settings()
+    if not cfg.siliconflow_api_key:
+        raise HTTPException(503, "AI 尚未配置。请由管理员在服务器 backend/.env 填写 SILICONFLOW_API_KEY 后重启后端。")
+    source_text = _mail_text_for_ai(email)
+    if not source_text:
+        raise HTTPException(422, "这封邮件没有可供 AI 分析的正文。")
+    direction = "我方已发或内部归档邮件" if is_internal_mail_address(email.get("sender")) else "客户来信"
+    system = "你是外贸邮件事实审阅助手。将邮件翻译和归纳为简体中文 JSON。严格只提取原文明确表达的信息；每一条事实、承诺、时限、风险均须附简短原文 evidence。不得猜测客户身份、产品匹配、价格接受、已付款、已到账、技术可行、样品签收、发货、客户确认或邮件送达。不明确则写空数组、null 或未确认。suggested_crm_update 只供人工审核，不能把推测写成事实。若为我方邮件，只能说明我方表达/安排，不得当作客户确认。"
+    instruction = "输出一个 JSON 对象，必须含有：source_language、chinese_summary、customer_stated_facts、sender_commitments、topics、product_mentions、application_mentions、deadlines、risks、suggested_crm_update、confidence、needs_human_review。事实/承诺/时限/风险数组项使用中文字段并至少包含 evidence 原文短句。suggested_crm_update 需要 stage、next_action、followup_date、reason；无依据则 null。"
+    user = "邮件方向：" + direction + "\\n发件人：" + str(email.get("sender") or "未知") + "\\n收件人：" + str(email.get("receiver") or "未知") + "\\n主题：" + str(email.get("subject") or "(无主题)") + "\\n时间：" + str(email.get("received_at") or "未知") + "\\n\\n邮件正文：\\n" + source_text + "\\n\\n" + instruction
+    payload = {
+        "model": cfg.siliconflow_model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "temperature": 0.1,
+        "max_tokens": 2400,
+        "enable_thinking": False,
+        "response_format": {"type": "json_object"},
+    }
+    endpoint = f"{cfg.siliconflow_base_url.rstrip('/')}/chat/completions"
+    try:
+        async with httpx.AsyncClient(timeout=75) as client:
+            response = await client.post(endpoint, headers={"Authorization": f"Bearer {cfg.siliconflow_api_key}", "Content-Type": "application/json"}, json=payload)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "连接硅基流动失败，请稍后重试。") from exc
+    if response.status_code >= 400:
+        raise HTTPException(502, f"硅基流动分析失败（{response.status_code}）：{response.text[:500]}")
+    content = (((response.json().get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+    facts = _extract_json_object(content)
+    facts["needs_human_review"] = True
+    return facts
 
 def is_internal_mail_address(address: str | None) -> bool:
     """Keep colleague-forwarded mail out of customer auto-matching."""
@@ -1682,6 +1742,63 @@ async def get_email(email_id: str, authorization: str | None = Header(default=No
         raise HTTPException(404, "Email not found")
     return {**rows[0], "is_internal_sender": is_internal_mail_address(rows[0].get("sender"))}
 
+@app.get("/api/emails/{email_id}/ai-fact-card")
+async def get_email_ai_fact_card(email_id: str, authorization: str | None = Header(default=None)):
+    """Read a previously generated card. This does not call an AI provider."""
+    token = bearer(authorization)
+    email_rows = await supabase(f"emails?id=eq.{quote(email_id, safe='')}&select=id&limit=1", token)
+    if not email_rows:
+        raise HTTPException(404, "Email not found")
+    rows = await supabase(f"mail_ai_fact_cards?email_id=eq.{quote(email_id, safe='')}&select=*&limit=1", token)
+    return rows[0] if rows else None
+
+@app.post("/api/emails/{email_id}/ai-fact-card")
+async def create_email_ai_fact_card(email_id: str, authorization: str | None = Header(default=None)):
+    """Explicit user action only: send one email body to SiliconFlow for review."""
+    token = bearer(authorization)
+    email_rows = await supabase(f"emails?id=eq.{quote(email_id, safe='')}&select=*&limit=1", token)
+    if not email_rows:
+        raise HTTPException(404, "Email not found")
+    email = email_rows[0]
+    facts = await generate_siliconflow_mail_facts(email)
+    source_hash = hashlib.sha256(_mail_text_for_ai(email).encode("utf-8")).hexdigest()
+    confidence = facts.get("confidence") if isinstance(facts.get("confidence"), (int, float)) else None
+    values = {
+        "email_id": email_id,
+        "provider": "siliconflow",
+        "model": settings().siliconflow_model,
+        "prompt_version": "mail-facts-v1",
+        "source_hash": source_hash,
+        "chinese_summary": str(facts.get("chinese_summary") or "AI 未返回可用中文摘要。"),
+        "facts": facts,
+        "confidence": confidence,
+        "status": "待审核",
+        "review_note": None,
+        "reviewed_at": None,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    existing = await supabase(f"mail_ai_fact_cards?email_id=eq.{quote(email_id, safe='')}&select=id&limit=1", token)
+    if existing:
+        rows = await supabase(f"mail_ai_fact_cards?id=eq.{existing[0]['id']}", token, "PATCH", values)
+    else:
+        rows = await supabase("mail_ai_fact_cards", token, "POST", values)
+    return rows[0]
+
+@app.patch("/api/emails/{email_id}/ai-fact-card")
+async def review_email_ai_fact_card(email_id: str, payload: MailAiFactCardStatusIn, authorization: str | None = Header(default=None)):
+    """Allow dismissal, but deliberately no AI endpoint can write CRM fields."""
+    token = bearer(authorization)
+    rows = await supabase(f"mail_ai_fact_cards?email_id=eq.{quote(email_id, safe='')}&select=id&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "AI fact card not found")
+    updated = await supabase(f"mail_ai_fact_cards?id=eq.{rows[0]['id']}", token, "PATCH", {
+        "status": payload.status,
+        "review_note": payload.review_note,
+        "reviewed_at": datetime.utcnow().isoformat() if payload.status == "已忽略" else None,
+        "updated_at": datetime.utcnow().isoformat(),
+    })
+    return updated[0]
+
 @app.patch("/api/emails/{email_id}")
 async def update_email_status(email_id: str, payload: EmailStatusIn, authorization: str | None = Header(default=None)):
     rows = await supabase(f"emails?id=eq.{email_id}", bearer(authorization), "PATCH", payload.model_dump())
@@ -1857,6 +1974,16 @@ async def update_crm_from_email(email_id: str, payload: EmailCrmUpdateIn, author
         "next_action": payload.next_action, "deadline": payload.followup_date, "status": "Pending",
     })
     await record_timeline_event(token, title=f"邮件更新 CRM：{email.get('subject', '(无主题)')[:120]}", event_type="crm", source="mail_crm_update", related_id=followup["id"], customer_id=payload.customer_id, project_id=payload.project_id, product_id=payload.product_id, event_date=payload.followup_date)
+    # The CRM action is the explicit human confirmation.  Keep an optional AI
+    # card in sync, but never make a missing V1.25 table block real CRM work.
+    try:
+        card_rows = await supabase(f"mail_ai_fact_cards?email_id=eq.{quote(email_id, safe='')}&select=id&limit=1", token)
+        if card_rows:
+            await supabase(f"mail_ai_fact_cards?id=eq.{card_rows[0]['id']}", token, "PATCH", {
+                "status": "已确认", "reviewed_at": datetime.utcnow().isoformat(), "updated_at": datetime.utcnow().isoformat(),
+            })
+    except HTTPException:
+        pass
     task = None
     if payload.create_task:
         try:

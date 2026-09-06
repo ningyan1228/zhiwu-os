@@ -1,5 +1,5 @@
 import { AlertTriangle, ArrowRight, CalendarClock, CheckCircle2, CircleHelp, FileSearch, Mail, Package, ShieldCheck, Users } from 'lucide-react'
-import type { Customer, CustomerStage, MailEmail, Product, Project } from './types'
+import type { Customer, CustomerStage, MailAiFactCard, MailEmail, Product, Project } from './types'
 import './mail-fact-card.css'
 
 type Topic = '价格' | '样品' | '技术' | '付款' | '交期' | '资料' | '地址/文件' | '其他'
@@ -67,20 +67,54 @@ export function mailFacts(email: MailEmail, customer?: Customer, project?: Proje
   }
 }
 
-export function MailFactCard({ email, customer, project, product, onReview }: { email: MailEmail; customer?: Customer; project?: Project; product?: Product; onReview: () => void }) {
+function listValues(value: unknown, key?: string) {
+  if (!Array.isArray(value)) return [] as string[]
+  return value.map(item => {
+    if (typeof item === 'string') return item
+    if (item && typeof item === 'object') {
+      const row = item as Record<string, unknown>
+      return String(row[key || 'fact'] || row.fact || row.statement || row.value || row.type || '')
+    }
+    return ''
+  }).filter(Boolean).slice(0, 5)
+}
+function evidenceItems(value: unknown, label: 'fact' | 'statement' | 'type') {
+  if (!Array.isArray(value)) return [] as Array<{ text: string; evidence: string }>
+  return value.map(item => {
+    const row = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+    return { text: String(row[label] || row.fact || row.statement || row.type || ''), evidence: String(row.evidence || '') }
+  }).filter(item => item.text || item.evidence).slice(0, 4)
+}
+
+export function MailFactCard({ email, customer, project, product, onReview, aiCard, aiGenerating, aiError, onGenerate }: { email: MailEmail; customer?: Customer; project?: Project; product?: Product; onReview: () => void; aiCard?: MailAiFactCard | null; aiGenerating?: boolean; aiError?: string; onGenerate?: () => void }) {
   const facts = mailFacts(email, customer, project, product)
+  const aiFacts = aiCard?.facts || {}
+  const aiCustomerFacts = evidenceItems(aiFacts.customer_stated_facts, 'fact')
+  const aiCommitments = evidenceItems(aiFacts.sender_commitments, 'statement')
+  const aiRisks = evidenceItems(aiFacts.risks, 'type')
+  const aiTopics = listValues(aiFacts.topics)
+  const aiProductMentions = listValues(aiFacts.product_mentions)
+  const aiApplications = listValues(aiFacts.application_mentions)
+  const aiSuggestion = aiFacts.suggested_crm_update && typeof aiFacts.suggested_crm_update === 'object' ? aiFacts.suggested_crm_update as Record<string, unknown> : null
   return <section className="mail-fact-card" aria-label="邮件事实卡">
     <header><div><p><FileSearch size={15}/> MAIL FACT CARD · 待确认</p><h3>邮件事实卡</h3></div><span><ShieldCheck size={14}/> 不会自动写入 CRM</span></header>
     <div className="mail-fact-source"><Mail size={15}/><b>{facts.source}</b><span>邮件时间：{email.received_at.slice(0, 10)}</span></div>
-    <div className="mail-fact-grid">
+    {aiCard ? <div className="mail-fact-grid mail-ai-output">
+      <article className="wide"><small>真实 AI 中文摘要 · {aiCard.model}</small><b>{aiCard.chinese_summary}</b><em>分析状态：{aiCard.status}；每项结论仍须回到原邮件核对。</em></article>
+      <article><small>AI 识别主题</small><div className="mail-fact-tags">{(aiTopics.length ? aiTopics : ['未确认']).map(topic => <span key={topic}>{topic}</span>)}</div><em>产品：{aiProductMentions.join('、') || '未确认'}；应用：{aiApplications.join('、') || '未确认'}</em></article>
+      <article><small>客户明确表达</small>{aiCustomerFacts.length ? aiCustomerFacts.map(item => <p key={`${item.text}${item.evidence}`}><b>{item.text}</b><em>证据：{item.evidence || '未提供'}</em></p>) : <em>未提取到可核验的客户事实。</em>}</article>
+      <article><small>{email.is_internal_sender ? '我方邮件中的安排' : '邮件中的承诺/安排'}</small>{aiCommitments.length ? aiCommitments.map(item => <p key={`${item.text}${item.evidence}`}><b>{item.text}</b><em>证据：{item.evidence || '未提供'}</em></p>) : <em>未提取到可核验的承诺。</em>}</article>
+      {aiRisks.length > 0 && <article className="wide"><small>AI 提醒的风险（不是事实结论）</small>{aiRisks.map(item => <p key={`${item.text}${item.evidence}`}><b>{item.text}</b><em>{item.evidence || '请回到原邮件核对。'}</em></p>)}</article>}
+    </div> : <div className="mail-fact-grid">
       <article className="wide"><small>{email.is_internal_sender ? '我方邮件核心内容' : '客户邮件核心内容'}</small><b>{facts.core}</b><em>这是邮件正文摘要，需以“查看原邮件”为准。</em></article>
       <article><small>这封邮件主要在谈什么</small><div className="mail-fact-tags">{facts.topics.map(topic => <span key={topic}>{topic}</span>)}</div><em>由邮件类别与关键词提取，可能不完整。</em></article>
       <article><small>涉及客户 / 项目</small><b>{facts.linked}</b><em>{customer ? '已关联，可审核更新。' : '请先关联真实客户，不能直接写入。'}</em></article>
       <article><small>涉及产品 / 应用</small><b>{facts.productLabel}</b><em>{facts.application}</em></article>
       <article><small>客户 / 我方承诺</small><b>{facts.commitment}</b><em>不会根据措辞自动写成“已确认”。</em></article>
-    </div>
+    </div>}
     <div className="mail-fact-risk"><div><AlertTriangle size={16}/><b>风险与待核对项</b></div>{facts.risks.length ? <ul>{facts.risks.map(risk => <li className={risk.tone} key={risk.label}><b>{risk.label}</b><span>{risk.detail}</span></li>)}</ul> : <p>当前未自动检测到明显风险词；这不代表没有风险，请仍以原邮件为准。</p>}</div>
-    <div className="mail-fact-recommendation"><div><CalendarClock size={17}/><div><small>建议更新（仅预填，不是事实结论）</small><b>阶段：{facts.suggestion.stage}；下一步：{facts.suggestion.action}</b><span>确认后才会写入客户阶段、下一步、跟进日期，并把此邮件保留为证据。</span></div></div><button className="primary" onClick={onReview}>{facts.canWrite ? '审核后决定是否写入' : '先关联客户再审核'}<ArrowRight size={15}/></button></div>
+    <div className="mail-fact-recommendation"><div><CalendarClock size={17}/><div><small>建议更新（仅预填，不是事实结论）</small><b>{aiSuggestion ? `阶段：${String(aiSuggestion.stage || '未建议')}；下一步：${String(aiSuggestion.next_action || '未建议')}` : `阶段：${facts.suggestion.stage}；下一步：${facts.suggestion.action}`}</b><span>确认后才会写入客户阶段、下一步、跟进日期，并把此邮件保留为证据。</span></div></div><div className="mail-fact-actions">{!aiCard && onGenerate && <button onClick={onGenerate} disabled={aiGenerating}>{aiGenerating ? '正在生成真实中文摘要…' : '生成真实中文摘要'}</button>}<button className="primary" onClick={onReview}>{facts.canWrite ? '审核后决定是否写入' : '先关联客户再审核'}<ArrowRight size={15}/></button></div></div>
+    {aiError && <div className="mail-ai-error">{aiError}</div>}
     <footer><CircleHelp size={14}/> 自动提炼用于减少漏看邮件，不用于替代你的外贸判断；价格、付款、交期、技术可行性和客户确认必须人工核对。</footer>
   </section>
 }

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { customers as seedCustomers, followups as seedFollowups, products as seedProducts, projects as seedProjects, quotes as seedQuotes } from './data'
 import { api } from './api'
-import type { Customer, CustomerLead, CustomerStage, DailyLog, EmailSync, Followup, ImportBatch, ImportPreview, LeadDiscoveryRun, LeadSearchTask, MailboxAccount, MailEmail, Product, ProductCustomerRelation, ProductProfileStatus, Project, Quote, SalesOrder, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
+import type { Customer, CustomerLead, CustomerStage, DailyLog, EmailSync, Followup, ImportBatch, ImportPreview, LeadDiscoveryRun, LeadSearchTask, MailAiFactCard, MailboxAccount, MailEmail, Product, ProductCustomerRelation, ProductProfileStatus, Project, Quote, SalesOrder, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, WorkspaceMember } from './types'
 import './styles.css'
 import './account-menu.css'
 import { MemoryCRM, MemorySummary, chineseStage } from './CustomerMemory'
@@ -802,6 +802,9 @@ function MailDetail({ email, customers, projects, products, close, updateCrm, li
   const [crmProjectId, setCrmProjectId] = useState(email.project_id || '')
   const [crmProductId, setCrmProductId] = useState(email.product_id || '')
   const [query, setQuery] = useState('')
+  const [aiCard, setAiCard] = useState<MailAiFactCard | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
   const customer = customers.find(item => item.id === email.customer_id)
   const project = projects.find(item => item.id === email.project_id || item.customer_id === email.customer_id)
   const product = products.find(item => item.id === email.product_id || item.id === project?.product_id || item.product_code === customer?.product_interest)
@@ -810,6 +813,14 @@ function MailDetail({ email, customers, projects, products, close, updateCrm, li
   const candidates = customers.filter(item => `${item.company_name} ${item.country} ${item.contact_person} ${item.email}`.toLowerCase().includes(query.toLowerCase()))
   const suggestion = emailCustomerSuggestion(email, customers)
   const crmSuggestion = emailCrmSuggestion(email)
+  useEffect(() => { let active = true; void api.emailAiFactCard(email.id).then(card => { if (active) setAiCard(card) }).catch(() => { /* V1.25 may not be installed yet. */ }); return () => { active = false } }, [email.id])
+  const generateAiFacts = async () => {
+    if (!window.confirm('将把这封邮件正文发送至硅基流动 DeepSeek-V4-Flash，生成中文摘要和待审核事实卡。不会自动写入 CRM。是否继续？')) return
+    setAiLoading(true); setAiError('')
+    try { setAiCard(await api.generateEmailAiFactCard(email.id)) }
+    catch (error) { setAiError(error instanceof Error ? error.message : '生成 AI 中文摘要失败，请稍后重试。') }
+    finally { setAiLoading(false) }
+  }
   const link = async (target: Customer) => { setLinking(true); try { await linkEmail(email, target); setPickerOpen(false) } finally { setLinking(false) } }
   const saveCrm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget)) as Record<string, string>
@@ -829,7 +840,7 @@ function MailDetail({ email, customers, projects, products, close, updateCrm, li
   }
   const suggestedCompany = email.sender.includes('@') ? email.sender.split('@')[1].split('.')[0] : ''
   return <div className="drawer-layer" onMouseDown={close}><aside className="drawer mail-detail" onMouseDown={event => event.stopPropagation()}><button className="close" onClick={close}><X size={20}/></button><p className="eyebrow">MAIL DETAIL · {email.is_internal_sender ? 'INTERNAL FORWARD' : mailCategoryLabels[email.category]}</p><h2>{email.subject}</h2><div className="mail-detail-meta"><span>{email.sender_name || email.sender}</span><span>{email.sender}</span><time>{new Date(email.received_at).toLocaleString('zh-CN')}</time></div>{email.is_internal_sender && <div className="mail-forward-note"><Users size={14}/><span>此邮件来自内部同事转发，不会被当作客户邮箱自动关联。请在“更新 CRM”中选择真正的海外客户。</span></div>}{suggestion && <div className="mail-suggestion"><Brain size={16}/><div><b>智能处理建议 · {suggestion.confidence}置信度</b><span>建议关联到 {suggestion.customer.company_name}：{suggestion.reason}</span></div><button disabled={linking} onClick={() => void link(suggestion.customer)}>{linking ? '关联中…' : '采纳关联'}</button></div>}<div className="mail-content">{email.content_text || email.content_preview || '邮件正文不可用。'}</div>{email.attachment_count > 0 && <div className="mail-attachments"><Paperclip size={15}/>{email.attachment_count} 个附件（当前只记录数量，不下载或修改附件）</div>}
-    <MailFactCard email={email} customer={customer} project={project} product={product} onReview={() => setCrmOpen(true)}/>
+    <MailFactCard email={email} customer={customer} project={project} product={product} onReview={() => setCrmOpen(true)} aiCard={aiCard} aiGenerating={aiLoading} aiError={aiError} onGenerate={() => void generateAiFacts()}/>
     <DetailSection title="Business Context"><div className="mail-link-card"><span>关联客户</span><b>{customer?.company_name ?? '未自动匹配'}</b><span>国家 / 联系人</span><b>{customer ? `${customer.country} · ${customer.contact_person}` : '待确认'}</b><span>项目</span><b>{project?.project_name ?? '待关联项目'}</b><span>产品</span><b>{product?.product_code ?? customer?.product_interest ?? '待确认'}</b><span>当前阶段</span><b>{customer ? stageLabels[customer.customer_stage] : '新线索'}</b><span>下一步</span><b>{customer?.next_action?.[0] ?? customer?.status_label ?? '确认邮件业务动作'}</b><span>状态</span><b>{mailStatusLabels[email.status]}</b></div>{customer && <div className="mail-customer-intel"><Brain size={15}/><span>{customer.customer_summary}</span></div>}{customer ? <button className="mail-open-customer" onClick={() => { close(); openCustomer(customer) }}>打开客户详情 <ChevronRight size={15}/></button> : <button className="mail-open-customer" onClick={() => setPickerOpen(true)}>关联客户 <ChevronRight size={15}/></button>}</DetailSection>
     {pickerOpen && <section className="mail-link-picker"><div><b>关联客户</b><button className="close" onClick={() => setPickerOpen(false)}><X size={16}/></button></div><label><Search size={15}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索公司、联系人或邮箱" /></label><div className="mail-customer-options">{candidates.map(item => <button key={item.id} disabled={linking} onClick={() => void link(item)}><span>{item.company_name}</span><small>{item.country} · {item.contact_person}</small><ChevronRight size={15}/></button>)}</div></section>}
     {createCustomerOpen && <section className="mail-crm-editor"><div className="mail-crm-editor-head"><div><b>从此邮件创建客户</b><span>客户会归入当前登录账号，并自动关联这封邮件。</span></div><button className="close" type="button" onClick={() => setCreateCustomerOpen(false)}><X size={16}/></button></div><form onSubmit={saveNewCustomer}><div className="form-grid"><Field label="公司名称 *" name="company_name" required defaultValue={suggestedCompany}/><Field label="国家 / 地区" name="country" defaultValue="待确认"/><Field label="联系人" name="contact_person" defaultValue={email.sender_name || ''}/><Field label="客户邮箱 *" name="email" type="email" required defaultValue={email.sender}/><Field label="WhatsApp" name="whatsapp"/><Field label="关注产品" name="product_interest"/></div>{createCustomerError && <div className="login-error">{createCustomerError}</div>}<div className="form-actions"><button type="button" onClick={() => setCreateCustomerOpen(false)}>取消</button><button className="primary" disabled={creatingCustomer}>{creatingCustomer ? '正在创建…' : '创建并关联邮件'}</button></div></form></section>}
