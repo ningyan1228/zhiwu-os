@@ -96,25 +96,20 @@ export function MailFactCard({ email, customer, project, product, onReview, aiCa
   const aiProductMentions = listValues(aiFacts.product_mentions)
   const aiApplications = listValues(aiFacts.application_mentions)
   const aiSuggestion = aiFacts.suggested_crm_update && typeof aiFacts.suggested_crm_update === 'object' ? aiFacts.suggested_crm_update as Record<string, unknown> : null
+  const customerNeed = aiCustomerFacts.map(item => item.text).join('；') || (email.is_internal_sender ? '这是我方邮件，不把我方安排当作客户需求。' : '未提取到可核对的客户需求，请看原邮件。')
+  const nextAction = aiSuggestion ? String(aiSuggestion.next_action || '请人工确认下一步。') : facts.suggestion.action
+  const suggestedStage = aiSuggestion ? String(aiSuggestion.stage || '未建议') : facts.suggestion.stage
   return <section className="mail-fact-card" aria-label="邮件事实卡">
-    <header><div><p><FileSearch size={15}/> MAIL FACT CARD · 待确认</p><h3>邮件事实卡</h3></div><span><ShieldCheck size={14}/> 不会自动写入 CRM</span></header>
-    <div className="mail-fact-source"><Mail size={15}/><b>{facts.source}</b><span>邮件时间：{email.received_at.slice(0, 10)}</span></div>
-    {aiCard ? <div className="mail-fact-grid mail-ai-output">
-      <article className="wide"><small>真实 AI 中文摘要 · {aiCard.model}</small><b>{aiCard.chinese_summary}</b><em>分析状态：{aiCard.status}；每项结论仍须回到原邮件核对。</em></article>
-      <article><small>AI 识别主题</small><div className="mail-fact-tags">{(aiTopics.length ? aiTopics : ['未确认']).map(topic => <span key={topic}>{topic}</span>)}</div><em>产品：{aiProductMentions.join('、') || '未确认'}；应用：{aiApplications.join('、') || '未确认'}</em></article>
-      <article><small>客户明确表达</small>{aiCustomerFacts.length ? aiCustomerFacts.map(item => <p key={`${item.text}${item.evidence}`}><b>{item.text}</b><em>证据：{item.evidence || '未提供'}</em></p>) : <em>未提取到可核验的客户事实。</em>}</article>
-      <article><small>{email.is_internal_sender ? '我方邮件中的安排' : '邮件中的承诺/安排'}</small>{aiCommitments.length ? aiCommitments.map(item => <p key={`${item.text}${item.evidence}`}><b>{item.text}</b><em>证据：{item.evidence || '未提供'}</em></p>) : <em>未提取到可核验的承诺。</em>}</article>
-      {aiRisks.length > 0 && <article className="wide"><small>AI 提醒的风险（不是事实结论）</small>{aiRisks.map(item => <p key={`${item.text}${item.evidence}`}><b>{item.text}</b><em>{item.evidence || '请回到原邮件核对。'}</em></p>)}</article>}
-    </div> : <div className="mail-fact-grid">
-      <article className="wide"><small>{email.is_internal_sender ? '我方邮件核心内容' : '客户邮件核心内容'}</small><b>{facts.core}</b><em>这是邮件正文摘要，需以“查看原邮件”为准。</em></article>
-      <article><small>这封邮件主要在谈什么</small><div className="mail-fact-tags">{facts.topics.map(topic => <span key={topic}>{topic}</span>)}</div><em>由邮件类别与关键词提取，可能不完整。</em></article>
-      <article><small>涉及客户 / 项目</small><b>{facts.linked}</b><em>{customer ? '已关联，可审核更新。' : '请先关联真实客户，不能直接写入。'}</em></article>
-      <article><small>涉及产品 / 应用</small><b>{facts.productLabel}</b><em>{facts.application}</em></article>
-      <article><small>客户 / 我方承诺</small><b>{facts.commitment}</b><em>不会根据措辞自动写成“已确认”。</em></article>
-    </div>}
-    <div className="mail-fact-risk"><div><AlertTriangle size={16}/><b>风险与待核对项</b></div>{facts.risks.length ? <ul>{facts.risks.map(risk => <li className={risk.tone} key={risk.label}><b>{risk.label}</b><span>{risk.detail}</span></li>)}</ul> : <p>当前未自动检测到明显风险词；这不代表没有风险，请仍以原邮件为准。</p>}</div>
-    <div className="mail-fact-recommendation"><div><CalendarClock size={17}/><div><small>建议更新（仅预填，不是事实结论）</small><b>{aiSuggestion ? `阶段：${String(aiSuggestion.stage || '未建议')}；下一步：${String(aiSuggestion.next_action || '未建议')}` : `阶段：${facts.suggestion.stage}；下一步：${facts.suggestion.action}`}</b><span>确认后才会写入客户阶段、下一步、跟进日期，并把此邮件保留为证据。</span></div></div><div className="mail-fact-actions">{!aiCard && onGenerate && <button onClick={onGenerate} disabled={aiGenerating}>{aiGenerating ? '正在生成真实中文摘要…' : '生成真实中文摘要'}</button>}<button className="primary" onClick={onReview}>{facts.canWrite ? '审核后决定是否写入' : '先关联客户再审核'}<ArrowRight size={15}/></button></div></div>
+    <header><div><p><FileSearch size={15}/> 邮件 AI 摘要 · 待核对</p><h3>这封邮件，重点看这三件事</h3></div><span><ShieldCheck size={14}/> 不会自动改 CRM</span></header>
+    <div className="mail-fact-source"><Mail size={15}/><b>{facts.source}</b><span>{email.received_at.slice(0, 10)}</span></div>
+    <div className="mail-fact-simple">
+      <article className="mail-fact-summary"><small>1 · 这封邮件讲什么</small><b>{aiCard?.chinese_summary || facts.core}</b><em>{aiCard ? 'AI 已翻成中文；请以原邮件为准。' : '尚未生成 AI 摘要。'}</em></article>
+      <article><small>2 · 对方要什么</small><b>{aiCard ? customerNeed : `${facts.productLabel}；${facts.application}`}</b><em>{email.is_internal_sender ? '本封为我方邮件，仅供回顾，不代表客户确认。' : '只记录能在邮件中找到的内容。'}</em></article>
+      <article><small>3 · 我下一步做什么</small><b>{nextAction}</b><em>建议阶段：{suggestedStage}；先核对，再决定是否更新。</em></article>
+    </div>
+    <div className="mail-fact-actions mail-fact-primary-action">{!aiCard && onGenerate && <button onClick={onGenerate} disabled={aiGenerating}>{aiGenerating ? '正在生成中文摘要…' : '生成中文摘要'}</button>}<button className="primary" onClick={onReview}>{facts.canWrite ? '确认后更新客户进度' : '先确认对应客户'}<ArrowRight size={15}/></button></div>
+    <details className="mail-fact-evidence"><summary>查看原文证据、识别主题与风险</summary><div className="mail-fact-tags">{(aiTopics.length ? aiTopics : facts.topics).map(topic => <span key={topic}>{topic}</span>)}{aiProductMentions.map(item => <span key={item}>{item}</span>)}{aiApplications.map(item => <span key={item}>{item}</span>)}</div>{aiCommitments.length > 0 && <section><b>{email.is_internal_sender ? '我方邮件中的安排' : '邮件中的承诺/安排'}</b>{aiCommitments.map(item => <p key={`${item.text}${item.evidence}`}>{item.text}<em>{item.evidence || '请回看原邮件。'}</em></p>)}</section>}{(aiRisks.length > 0 || facts.risks.length > 0) && <section className="mail-fact-risk"><b><AlertTriangle size={14}/> 待核对项</b>{(aiRisks.length ? aiRisks : facts.risks.map(item => ({ text: item.label, evidence: item.detail }))).map(item => <p key={`${item.text}${item.evidence}`}>{item.text}<em>{item.evidence || '请回看原邮件。'}</em></p>)}</section>}</details>
     {aiError && <div className="mail-ai-error">{aiError}</div>}
-    <footer><CircleHelp size={14}/> 自动提炼用于减少漏看邮件，不用于替代你的外贸判断；价格、付款、交期、技术可行性和客户确认必须人工核对。</footer>
+    <footer><CircleHelp size={14}/> 价格、付款、交期、技术可行性和客户确认，仍需你按原邮件核对。</footer>
   </section>
 }
