@@ -1626,6 +1626,27 @@ async def update_supplier(supplier_id: str, payload: SupplierUpdateIn, authoriza
     rows = await supabase(f"suppliers?id=eq.{supplier_id}", token, "PATCH", {**payload.model_dump(exclude_none=True), "company_name": payload.company_name.strip(), "updated_at": datetime.now().isoformat()})
     return rows[0]
 
+@app.delete("/api/suppliers/{supplier_id}")
+async def archive_supplier(supplier_id: str, authorization: str | None = Header(default=None)):
+    """Hide a supplier from active work without destroying supply-chain evidence."""
+    token = bearer(authorization)
+    supplier = await require_supplier(token, supplier_id)
+    linked = await supabase(f"supplier_project_links?supplier_id=eq.{supplier_id}&select=id&limit=500", token)
+    rfqs = await supabase(f"supplier_rfqs?supplier_id=eq.{supplier_id}&select=id&limit=500", token)
+    await supabase(
+        f"suppliers?id=eq.{supplier_id}", token, "PATCH",
+        {"archived_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()},
+    )
+    await record_timeline_event(
+        token, title=f"归档供应商：{supplier['company_name']}", event_type="crm",
+        source="supplier", related_id=supplier_id, supplier_id=supplier_id,
+    )
+    return {
+        "deleted": True, "supplier_id": supplier_id,
+        "linked_projects": len(linked), "rfqs": len(rfqs),
+        "message": "供应商已从当前列表移除；已关联项目、询价、资料和跟进记录均已保留。",
+    }
+
 @app.get("/api/suppliers/{supplier_id}/contacts")
 async def list_supplier_contacts(supplier_id: str, authorization: str | None = Header(default=None)):
     token = bearer(authorization); await require_supplier(token, supplier_id)

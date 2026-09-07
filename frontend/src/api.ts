@@ -96,6 +96,7 @@ export const api = {
   supplierInsights: () => request<SupplierInsight[]>('/api/supplier-insights'),
   createSupplier: (payload: Omit<Supplier, 'id' | 'created_at'>) => request<Supplier>('/api/suppliers', { method: 'POST', body: JSON.stringify(payload) }),
   updateSupplier: (id: string, payload: Omit<Supplier, 'id' | 'created_at'>) => request<Supplier>(`/api/suppliers/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteSupplier: (id: string) => request<{ deleted: boolean; supplier_id: string; linked_projects: number; rfqs: number; message: string }>(`/api/suppliers/${id}`, { method: 'DELETE' }),
   supplierContacts: (supplierId: string) => request<SupplierContact[]>(`/api/suppliers/${supplierId}/contacts`),
   createSupplierContact: (payload: Omit<SupplierContact, 'id' | 'created_at'>) => request<SupplierContact>('/api/supplier-contacts', { method: 'POST', body: JSON.stringify(payload) }),
   supplierProducts: (supplierId: string) => request<SupplierProduct[]>(`/api/suppliers/${supplierId}/products`),
