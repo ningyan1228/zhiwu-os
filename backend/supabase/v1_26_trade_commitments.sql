@@ -34,8 +34,23 @@ create index if not exists trade_commitments_open_idx
   where archived_at is null;
 
 alter table public.trade_commitments enable row level security;
+-- Match the existing CRM workspace model: members can work on records for
+-- customer owners they have access to, while new records remain attributable
+-- to the member who created them.
 drop policy if exists "own trade commitments" on public.trade_commitments;
-create policy "own trade commitments" on public.trade_commitments
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "directional trade commitments select" on public.trade_commitments;
+drop policy if exists "directional trade commitments insert" on public.trade_commitments;
+drop policy if exists "directional trade commitments update" on public.trade_commitments;
+drop policy if exists "directional trade commitments delete" on public.trade_commitments;
+
+create policy "directional trade commitments select" on public.trade_commitments
+  for select using (public.can_access_customer_owner(user_id));
+create policy "directional trade commitments insert" on public.trade_commitments
+  for insert with check (public.is_workspace_member() and user_id = auth.uid());
+create policy "directional trade commitments update" on public.trade_commitments
+  for update using (public.can_access_customer_owner(user_id))
+  with check (public.can_access_customer_owner(user_id));
+create policy "directional trade commitments delete" on public.trade_commitments
+  for delete using (public.can_access_customer_owner(user_id));
 
 commit;
