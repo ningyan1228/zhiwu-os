@@ -5,17 +5,17 @@ html[data-theme='dark'] .commitment-hero h1,html[data-theme='dark'] .commitment-
 /* Ledger cards: keep the business context structured instead of letting it
    wrap into a single breadcrumb line. Auto-fit also avoids a lonely card
    occupying only the left half of a wide desktop grid. */
-.commitment-list{grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));align-items:start}
+.commitment-list{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
 .commitment-card.overdue{border-color:#efc9bf;background:#fffdfb;box-shadow:inset 3px 0 #d87b67}
 .commitment-card.today{border-color:#edcf91;box-shadow:inset 3px 0 #dca738}
 .commitment-card>header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start}
 .commitment-card-main{min-width:0}
 .commitment-card header small{display:block}
 .commitment-card h2{margin:5px 0 8px;line-height:1.4}
-.commitment-context{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 12px;color:#687c74;font-size:10px;line-height:1.45}
-.commitment-context span{display:flex;min-width:0;gap:4px}
+.commitment-context{display:flex;min-width:0;overflow:hidden;color:#687c74;font-size:10px;line-height:1.45;white-space:nowrap}
+.commitment-context span{display:flex;min-width:0;overflow:hidden;gap:4px;text-overflow:ellipsis}
 .commitment-context i{flex:none;color:#91a098;font-style:normal}
-.commitment-context span:not(:last-child){border-right:1px solid #dfe7e1;padding-right:8px}
+.commitment-context span+span{margin-left:9px;padding-left:9px;border-left:1px solid #dfe7e1}
 .commitment-card-tags{max-width:112px}
 @media(max-width:840px){.commitment-list{grid-template-columns:1fr}}
-@media(max-width:680px){.commitment-card>header{grid-template-columns:1fr}.commitment-card-tags{justify-content:start;max-width:none}.commitment-context{grid-template-columns:1fr}.commitment-context span:not(:last-child){border-right:0;padding-right:0}}
+@media(max-width:680px){.commitment-card>header{grid-template-columns:1fr}.commitment-card-tags{justify-content:start;max-width:none}.commitment-context span+span{margin-left:7px;padding-left:7px}}
