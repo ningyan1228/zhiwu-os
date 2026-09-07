@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CheckCircle2, ChevronRight, ClipboardCheck, Clock3, FileText, Handshake, Plus, Search, ShieldCheck } from 'lucide-react'
+import { CheckCircle2, ClipboardCheck, Clock3, FileText, Handshake, Plus, Search, ShieldCheck } from 'lucide-react'
 import type { Customer, Product, Project, TradeCommitment, TradeCommitmentEvidenceType, TradeCommitmentParty, TradeCommitmentStatus } from './types'
 import { countryName } from './CustomerMemory'
 import './trade-commitment-ledger.css'
@@ -15,6 +15,10 @@ const today = () => new Date().toISOString().slice(0, 10)
 const dateText = (value?: string | null) => value?.slice(0, 10) || '未设日期'
 const customerName = (id: string, customers: Customer[]) => customers.find(item => item.id === id)?.company_name || '客户已归档'
 const projectName = (id: string | null | undefined, projects: Project[]) => projects.find(item => item.id === id)?.project_name || '未关联项目'
+const productName = (id: string | null | undefined, products: Product[]) => {
+  const product = products.find(item => item.id === id)
+  return product ? `${product.product_code} · ${product.product_name}` : '未关联产品'
+}
 
 function isOpen(item: TradeCommitment) { return item.status !== '已兑现' }
 function dueState(item: TradeCommitment) {
@@ -81,7 +85,7 @@ export function TradeCommitmentLedger({ commitments, customers, projects, produc
     <div className="commitment-guide"><ShieldCheck size={16}/><div><b>判定原则：</b>“客户已付款”“我方已发货”“客户已确认技术性能”都只能在有微信、邮件、凭证或项目记录时填写；无证据请选“待核对”。</div></div>
     <div className="commitment-tools"><div className="commitment-filters">{(['全部', ...statuses] as Filter[]).map(item => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}</button>)}</div><label><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索客户、项目、承诺或证据"/></label></div>
     <div className="commitment-list">{visible.map(item => { const customer = customers.find(row => row.id === item.customer_id); const state = dueState(item); return <article className={`commitment-card ${state}`} key={item.id}>
-      <header><div><small>{customer ? `${countryName(customer.country)} · ${customer.contact_person || '联系人待补充'}` : '历史客户'}</small><h2>{item.title}</h2><p>{customerName(item.customer_id, customers)} <ChevronRight size={13}/> {projectName(item.project_id, projects)}</p></div><div className="commitment-card-tags"><span className={`commitment-status ${item.status}`}>{item.status}</span><span>{item.responsible_party}</span></div></header>
+      <header><div className="commitment-card-main"><small>{customer ? `${countryName(customer.country)} · ${customer.contact_person || '联系人待补充'}` : '历史客户'}</small><h2>{item.title}</h2><div className="commitment-context"><span><i>客户</i>{customerName(item.customer_id, customers)}</span>{item.project_id && <span><i>项目</i>{projectName(item.project_id, projects)}</span>}{item.product_id && <span><i>产品</i>{productName(item.product_id, products)}</span>}</div></div><div className="commitment-card-tags"><span className={`commitment-status ${item.status}`}>{item.status}</span><span>{item.responsible_party}</span></div></header>
       <div className="commitment-details"><div><small>承诺类别</small><b>{item.category}</b></div><div><small>到期 / 跟进日</small><b>{dateText(item.due_date)}</b>{state === 'overdue' && <em>已逾期</em>}{state === 'today' && <em>今天处理</em>}</div><div><small>下一步</small><b>{item.next_action || '待补充下一步'}</b></div></div>
       <div className="commitment-evidence"><FileText size={15}/><div><small>证据 · {item.evidence_type}{item.evidence_reference ? ` · ${item.evidence_reference}` : ''}</small><p>{item.evidence_note}</p>{item.detail && <span>{item.detail}</span>}</div></div>
       <footer>{item.status === '已兑现' ? <span className="commitment-done"><CheckCircle2 size={16}/> 已兑现 · {dateText(item.completed_at)}</span> : <button className="primary subtle" onClick={() => void update(item.id, { status: '已兑现' })}><CheckCircle2 size={15}/> 标记已兑现</button>}<button onClick={() => beginEdit(item)}>修改</button></footer>
