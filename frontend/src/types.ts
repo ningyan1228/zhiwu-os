@@ -71,6 +71,10 @@ export type MailAiFactCard = {
   status: '待审核' | '已确认' | '已忽略'; review_note?: string | null; reviewed_at?: string | null
   created_at: string; updated_at: string
 }
+export type MailReplyDraft = {
+  reply_intent_zh: string; english_draft: string; chinese_back_translation: string
+  assumptions: string[]; needs_human_review: true; provider: string; model: string
+}
 export type EmailSync = { status: string; total_synced: number; last_sync_time?: string | null; last_error?: string | null }
 export type MailboxAccount = { id?: string; mailbox_key?: string; label: string; email_address?: string | null; is_active: boolean; configured: boolean }
 export type TaskCategory = '外贸' | '网站' | '设计' | '学习' | '生活' | '其他'

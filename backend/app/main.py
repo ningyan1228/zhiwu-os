@@ -361,6 +361,10 @@ class MailAiFactCardStatusIn(BaseModel):
     status: Literal["待审核", "已忽略"]
     review_note: str | None = Field(default=None, max_length=2000)
 
+class MailReplyDraftIn(BaseModel):
+    """A Chinese instruction for an English draft. The server never sends mail."""
+    purpose: str | None = Field(default=None, max_length=1200)
+
 class TaskIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
@@ -496,12 +500,55 @@ async def generate_siliconflow_mail_facts(email: dict[str, Any]) -> dict[str, An
     facts["needs_human_review"] = True
     return facts
 
+async def generate_siliconflow_reply_draft(email: dict[str, Any], purpose: str | None) -> dict[str, Any]:
+    """Generate a review-only bilingual reply. It deliberately has no send side effect."""
+    cfg = settings()
+    if not cfg.siliconflow_api_key:
+        raise HTTPException(503, "AI 尚未配置。请由管理员在服务器 backend/.env 填写 SILICONFLOW_API_KEY 后重启后端。")
+    source_text = _mail_text_for_ai(email)
+    if not source_text:
+        raise HTTPException(422, "这封邮件没有可供 AI 起草回复的正文。")
+    system = "你是谨慎的外贸邮件助手。根据一封真实邮件生成供人工审核的英文回复草稿，并提供中文回复意图和中文回译。不得编造价格、付款已到账、库存、交期、发货、运单、技术可行性、客户确认或任何未在邮件中明确的信息。信息不全时，应在英文草稿中礼貌地提出确认问题。不要承诺任何事项；输出内容不能直接视为已发送邮件。"
+    instruction = "输出一个 JSON 对象，字段必须为：reply_intent_zh（简体中文）、english_draft（可直接复制的英文邮件）、chinese_back_translation（对应中文回译）、assumptions（字符串数组）、needs_human_review（true）。英文邮件应有合适称呼和落款占位符 [Your name]，语气专业、简洁。"
+    user = "用户希望：" + (purpose.strip() if purpose and purpose.strip() else "根据这封邮件准备下一步的礼貌英文回复") + "\n\n发件人：" + str(email.get("sender") or "未知") + "\n主题：" + str(email.get("subject") or "(无主题)") + "\n邮件正文：\n" + source_text + "\n\n" + instruction
+    payload = {
+        "model": cfg.siliconflow_model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "temperature": 0.2,
+        "max_tokens": 1800,
+        "enable_thinking": False,
+        "response_format": {"type": "json_object"},
+    }
+    endpoint = f"{cfg.siliconflow_base_url.rstrip('/')}/chat/completions"
+    try:
+        async with httpx.AsyncClient(timeout=75) as client:
+            response = await client.post(endpoint, headers={"Authorization": f"Bearer {cfg.siliconflow_api_key}", "Content-Type": "application/json"}, json=payload)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "连接硅基流动失败，请稍后重试。") from exc
+    if response.status_code >= 400:
+        raise HTTPException(502, f"硅基流动起草失败（{response.status_code}）：{response.text[:500]}")
+    draft = _extract_json_object((((response.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""))
+    return {
+        "reply_intent_zh": str(draft.get("reply_intent_zh") or "请人工核对回复意图。"),
+        "english_draft": str(draft.get("english_draft") or ""),
+        "chinese_back_translation": str(draft.get("chinese_back_translation") or ""),
+        "assumptions": draft.get("assumptions") if isinstance(draft.get("assumptions"), list) else [],
+        "needs_human_review": True,
+        "provider": "siliconflow",
+        "model": cfg.siliconflow_model,
+    }
+
 def is_internal_mail_address(address: str | None) -> bool:
     """Keep colleague-forwarded mail out of customer auto-matching."""
     value = (address or "").strip().lower()
     internal_addresses = {item.strip().lower() for item in settings().mail_internal_addresses.split(",") if item.strip()}
     internal_domains = {item.strip().lower() for item in settings().mail_internal_domains.split(",") if item.strip()}
     return value in internal_addresses or ("@" in value and value.rsplit("@", 1)[1] in internal_domains)
+
+def is_system_notification_email(email: dict[str, Any]) -> bool:
+    sender_name = str(email.get("sender_name") or "").strip().lower()
+    subject = str(email.get("subject") or "").strip().lower()
+    return "阿里邮箱" in sender_name and ("系统通知" in subject or "密码提醒" in subject)
 
 def _domain_from_url(value: str | None) -> str:
     return (urlparse(value or "").hostname or "").lower().removeprefix("www.")
@@ -1855,6 +1902,17 @@ async def get_email(email_id: str, authorization: str | None = Header(default=No
         raise HTTPException(404, "Email not found")
     return {**rows[0], "is_internal_sender": is_internal_mail_address(rows[0].get("sender"))}
 
+@app.get("/api/mail-ai-fact-cards")
+async def list_email_ai_fact_cards(email_ids: str = Query(default=""), authorization: str | None = Header(default=None)):
+    """Fetch saved cards only; this endpoint never calls an AI provider."""
+    token = bearer(authorization)
+    ids = [item.strip() for item in email_ids.split(",") if re.fullmatch(r"[0-9a-fA-F-]{36}", item.strip())]
+    if not ids:
+        return []
+    if len(ids) > 120:
+        raise HTTPException(422, "Too many email ids")
+    return await supabase(f"mail_ai_fact_cards?email_id=in.({','.join(ids)})&select=*", token)
+
 @app.get("/api/emails/{email_id}/ai-fact-card")
 async def get_email_ai_fact_card(email_id: str, authorization: str | None = Header(default=None)):
     """Read a previously generated card. This does not call an AI provider."""
@@ -1896,6 +1954,18 @@ async def create_email_ai_fact_card(email_id: str, authorization: str | None = H
     else:
         rows = await supabase("mail_ai_fact_cards", token, "POST", values)
     return rows[0]
+
+@app.post("/api/emails/{email_id}/reply-draft")
+async def create_email_reply_draft(email_id: str, payload: MailReplyDraftIn, authorization: str | None = Header(default=None)):
+    """An explicit, review-only AI action. The draft is not stored or sent."""
+    token = bearer(authorization)
+    rows = await supabase(f"emails?id=eq.{quote(email_id, safe='')}&select=*&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "Email not found")
+    email = rows[0]
+    if is_internal_mail_address(email.get("sender")) or is_system_notification_email(email):
+        raise HTTPException(422, "系统通知或内部转发邮件不能生成客户回复草稿。")
+    return await generate_siliconflow_reply_draft(email, payload.purpose)
 
 @app.patch("/api/emails/{email_id}/ai-fact-card")
 async def review_email_ai_fact_card(email_id: str, payload: MailAiFactCardStatusIn, authorization: str | None = Header(default=None)):

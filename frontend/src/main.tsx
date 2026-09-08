@@ -13,6 +13,7 @@ import { MemoryCRM, MemorySummary, chineseStage } from './CustomerMemory'
 import { BusinessMap } from './BusinessMap'
 import { TradeCommitmentLedger } from './TradeCommitmentLedger'
 import { MailFactCard } from './MailFactCard'
+import { MailWorkbench } from './MailWorkbench'
 
 type View = 'dashboard' | 'crm' | 'business-map' | 'commitments' | 'leads' | 'suppliers' | 'mail' | 'products' | 'relationships' | 'quotes' | 'projects' | 'tasks' | 'calendar' | 'imports'
 type CrmFilter = 'all' | 'incomplete' | 'overdue'
@@ -797,9 +798,16 @@ function MailCenter({ emails, sync, mailbox, customers, projects, products, open
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<'all' | MailEmail['category'] | 'unlinked'>(() => window.location.hash === '#mail/unlinked' ? 'unlinked' : 'all')
   const today = new Date().toISOString().slice(0, 10)
+  // An email address is stronger evidence than an old imported customer_id.
+  // This keeps repaired records (for example a corrected contact/company) visible
+  // under the current customer card without rewriting historical mail rows.
+  const resolvedCustomer = (email: MailEmail) => {
+    const addresses = [email.sender, email.receiver].map(value => (value || '').trim().toLowerCase()).filter(Boolean)
+    return customers.find(item => addresses.includes((item.email || '').trim().toLowerCase())) || customers.find(item => item.id === email.customer_id)
+  }
   const visible = emails.filter(email => {
-    const customer = customers.find(item => item.id === email.customer_id)
-    const project = projects.find(item => item.id === email.project_id || item.customer_id === email.customer_id)
+    const customer = resolvedCustomer(email)
+    const project = projects.find(item => item.id === email.project_id || item.customer_id === customer?.id)
     const product = products.find(item => item.id === email.product_id || item.id === project?.product_id)
     const searchable = `${email.sender_name || ''} ${email.sender} ${email.subject} ${email.content_preview || ''} ${customer?.company_name || ''} ${project?.project_name || ''} ${product?.product_code || ''}`.toLowerCase()
     const isSystemNotification = isAliMailSystemNotification(email)
@@ -813,11 +821,12 @@ function MailCenter({ emails, sync, mailbox, customers, projects, products, open
   const filters: [typeof category, string][] = [['all', '全部'], ['customer_inquiry', '客户询盘'], ['technical', '技术讨论'], ['quotation', '报价相关'], ['sample', '样品相关'], ['payment', '付款相关'], ['unlinked', `未关联邮件 ${emails.filter(email => !email.customer_id && !isAliMailSystemNotification(email)).length}`]]
   const selectFilter = (value: typeof category) => { window.history.replaceState(null, '', `${window.location.pathname}${value === 'unlinked' ? '#mail/unlinked' : '#mail'}`); setCategory(value) }
   const syncLabel = !mailbox.configured || !mailbox.is_active || sync.status === 'Not configured' || sync.status === 'Idle' ? '等待邮箱配置' : sync.status === 'Success' ? '已同步' : sync.status
-  return <section className="page mail-page"><div className="page-heading"><div><p className="eyebrow">MAIL CENTER · BUSINESS INBOX</p><h1>外贸邮件中心</h1><p>每一封客户来信都可关联到客户、项目、产品和下一步行动。</p></div><div className="mailbox-status"><span><Users size={15}/>{mailbox.label}{mailbox.email_address ? ` · ${mailbox.email_address}` : ''}</span><div className="sync-indicator"><RefreshCw size={15}/><span>{syncLabel}</span></div></div></div>
+  return <section className="page mail-page"><div className="page-heading"><div><p className="eyebrow">MAIL CENTER · BUSINESS INBOX</p><h1>外贸邮件中心</h1><p>先用中文判断客户在说什么、你该做什么；原始英文邮件仍完整保留供核对。</p></div><div className="mailbox-status"><span><Users size={15}/>{mailbox.label}{mailbox.email_address ? ` · ${mailbox.email_address}` : ''}</span><div className="sync-indicator"><RefreshCw size={15}/><span>{syncLabel}</span></div></div></div>
+    <MailWorkbench emails={emails} customers={customers} projects={projects} products={products} openEmail={open}/>
     <div className="mail-metrics"><Metric label="邮件总数" value={String(emails.length)} delta="当前账号全部邮件" icon={<Mail/>}/><Metric label="今日邮件" value={String(todayCount)} delta="当天接收" icon={<Mail/>}/><Metric label="待跟进" value={String(unprocessed)} delta="待转为业务动作" icon={<CircleHelp/>}/><Metric label="客户邮件" value={String(customerEmails)} delta="已关联 CRM" icon={<Users/>}/><Metric label="附件" value={String(attachments)} delta="仅统计，不下载" icon={<Paperclip/>}/></div>
     <section className="mail-list-panel"><div className="table-tools mail-tools"><label><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索客户、邮箱、产品、主题或关键词" /></label><span className="mail-sync-time">{sync.last_sync_time ? `上次同步 ${new Date(sync.last_sync_time).toLocaleString('zh-CN')}` : 'IMAP 每 10 分钟同步一次'}</span></div><div className="mail-filters">{filters.map(([value, label]) => <button key={value} className={category === value ? 'active' : ''} onClick={() => selectFilter(value)}>{label}</button>)}</div><div className="mail-list">{visible.map(email => {
-      const customer = customers.find(item => item.id === email.customer_id)
-      const project = projects.find(item => item.id === email.project_id || item.customer_id === email.customer_id)
+      const customer = resolvedCustomer(email)
+      const project = projects.find(item => item.id === email.project_id || item.customer_id === customer?.id)
        const product = products.find(item => item.id === email.product_id || item.id === project?.product_id)
        const isSystemNotification = isAliMailSystemNotification(email)
        return <button className={`mail-row business${isSystemNotification ? ' system-notification' : ''}`} key={email.id} onClick={() => open(email)}><span className={`mail-unread ${!isSystemNotification && ['unread', 'new_lead'].includes(email.status) ? 'is-unread' : ''}`}/><div className="mail-sender"><b>{email.sender_name || email.sender}</b><span>{isSystemNotification ? '系统通知 · 不参与客户匹配' : customer ? `${customer.country} · ${customer.company_name}` : email.is_internal_sender ? '同事转发 · 待识别客户' : '待匹配客户'}</span></div><div className="mail-subject"><b>{email.subject}</b><span>{email.content_preview || '无可用正文预览'}</span></div><div className="mail-business"><b>{isSystemNotification ? '系统通知' : product?.product_code ?? customer?.product_interest ?? '待关联产品'}</b><span>{isSystemNotification ? '不关联业务项目' : project?.project_name ?? '待关联项目'}</span></div><div className="mail-tags"><span className={`mail-status ${email.status}`}>{isSystemNotification ? '系统通知' : mailStatusLabels[email.status]}</span><span className="mail-category">{isSystemNotification ? '不参与匹配' : email.is_internal_sender ? '同事转发' : mailCategoryLabels[email.category]}</span></div><time>{email.received_at.slice(0, 10)}</time>{email.attachment_count > 0 && <Paperclip size={15}/>}</button>
