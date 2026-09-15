@@ -14,6 +14,7 @@ import { BusinessMap } from './BusinessMap'
 import { TradeCommitmentLedger } from './TradeCommitmentLedger'
 import { MailFactCard } from './MailFactCard'
 import { MailWorkbench } from './MailWorkbench'
+import { tdsDiscoveryPresets, type TdsDiscoveryPreset } from './tdsDiscoveryPresets'
 
 type View = 'dashboard' | 'crm' | 'business-map' | 'commitments' | 'leads' | 'suppliers' | 'mail' | 'products' | 'relationships' | 'quotes' | 'projects' | 'tasks' | 'calendar' | 'imports'
 type CrmFilter = 'all' | 'incomplete' | 'overdue'
@@ -463,6 +464,8 @@ function Dashboard({ customers, projects, followups, emails, tasks, today, onOpe
 
 function LeadDiscovery({ products, tasks, leads, runs, onChanged }: { products: Product[]; tasks: LeadSearchTask[]; leads: CustomerLead[]; runs: LeadDiscoveryRun[]; onChanged: () => Promise<void> }) {
   const [openTaskForm, setOpenTaskForm] = useState(false)
+  const [presetBusy, setPresetBusy] = useState<string | null>(null)
+  const [presetNotice, setPresetNotice] = useState('')
   const [editingTask, setEditingTask] = useState<LeadSearchTask | null>(null)
   const [busy, setBusy] = useState(false)
   const [layer, setLayer] = useState<NonNullable<CustomerLead['lead_layer']>>('直接需求候选')
@@ -506,6 +509,27 @@ function LeadDiscovery({ products, tasks, leads, runs, onChanged }: { products: 
     const result = await api.deleteLeadSearchTask(task.id)
     alert(result.message)
   })
+  const startTdsPreset = async (preset: TdsDiscoveryPreset) => {
+    setPresetBusy(preset.id)
+    setPresetNotice('')
+    try {
+      const existing = tasks.find(task => task.task_name === preset.task.task_name)
+      const task = existing || await api.createLeadSearchTask(preset.task)
+      const health = await api.systemHealth()
+      if (!health.search_configured && !task.source_urls?.length) {
+        setPresetNotice(`“${preset.title}”的应用画像已创建。服务器尚未配置 Brave Search API Key；请补充后再点击“开始查找”，以免产生空搜索。`)
+        await onChanged()
+        return
+      }
+      const result = await api.runLeadSearchTask(task.id)
+      setPresetNotice(`“${preset.title}”：${result.message}`)
+      await onChanged()
+    } catch (error) {
+      setPresetNotice(error instanceof Error ? error.message : '无法创建或运行该产品的查找任务。')
+    } finally {
+      setPresetBusy(null)
+    }
+  }
   const createTask = (lead: CustomerLead) => run(() => api.createDevelopmentTaskFromLead(lead.id, { priority: lead.match_score >= 70 ? 'important' : 'normal', task_date: today, suggested_next_action: '查看官网并确认业务与目标应用的匹配度；仅在人工确认后决定是否联系。' }))
   const convert = (lead: CustomerLead) => run(async () => {
     if (!window.confirm(`确认将“${lead.company_name}”转入外贸 CRM？系统会先按邮箱、官网域名和公司名去重；不会自动发送任何信息。`)) return
@@ -515,6 +539,7 @@ function LeadDiscovery({ products, tasks, leads, runs, onChanged }: { products: 
   return <section className="page lead-page"><div className="page-heading"><div><p className="eyebrow"><Radar size={13}/> VERIFIED PUBLIC-WEB DISCOVERY</p><h1>严格客户核验</h1><p>每个产品都先建立自己的下游应用画像，再寻找实际生产或配制这些应用的企业；目录只用于发现企业。自动发现只会进入待补信息，人工严格核验后才可进入 CRM。</p></div><div className="page-actions"><button className="secondary" onClick={() => { setEditingTask(null); setOpenTaskForm(true) }}><Settings size={16}/> 应用画像与任务</button><label className="secondary import-lead-button"><Upload size={16}/> 导入严格 Excel<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy} onChange={event => { importStrictWorkbook(event.target.files?.[0]); event.currentTarget.value = '' }}/></label><button className="secondary" disabled={busy || !strict.length} onClick={() => void run(() => api.exportStrictCustomerLeads())}>导出 Excel</button><button className="primary" disabled={busy || !tasks.length} onClick={() => void run(() => api.runEnabledLeadSearchTasks())}><RefreshCw size={16}/> {busy ? '正在分析并搜索…' : '按产品画像开始搜索'}</button></div></div>
     <div className="metrics lead-metrics strict-metrics"><Metric icon={<Users/>} label="严格客户" value={String(strict.length)} delta="满足六项硬门槛"/><Metric icon={<Sparkles/>} label="直接需求候选" value={String(direct.length)} delta="目标企业类型与应用均命中"/><Metric icon={<CircleHelp/>} label="间接应用链" value={String(indirect.length)} delta="仅作市场线索，不能进 CRM"/><Metric icon={<Factory/>} label="供应工厂候选" value={String(suppliers.length)} delta="中国大陆生产主体待核验"/><Metric icon={<X/>} label="排除" value={String(excluded.length)} delta="同行、贸易商、媒体、目录等"/></div>
     <div className="compliance-note"><b>产品通用应用优先规则：</b>需求侧搜索只使用该任务已确认的应用画像，不直接拿产品名称找客户；系统按目标企业类型把结果分为直接需求候选或间接应用链。间接线索与供应工厂都禁止进入 CRM；同行、贸易商、媒体和目录进入排除。{latestRun?.status === '跳过' && latestRun.run_log?.[0] ? <span> 上次结果：{latestRun.run_log[0]}</span> : null}</div>
+    <section className="tds-preset-panel"><div><p className="eyebrow"><Package size={13}/> TDS-BASED CUSTOMER DISCOVERY</p><h2>三款重点产品，一键按应用找客户</h2><p>每张卡都已经内置 TDS 里的下游应用、目标制造商类型、海外市场和排除规则。不会搜索原料供应商或同行。</p></div><div className="tds-preset-grid">{tdsDiscoveryPresets.map(preset => { const existing = tasks.find(task => task.task_name === preset.task.task_name); return <article key={preset.id} className="tds-preset-card"><div><span>{preset.material}</span><h3>{preset.title}</h3><p>{preset.summary}</p></div><dl><div><dt>重点应用</dt><dd>{preset.applications.join(' · ')}</dd></div><div><dt>目标客户</dt><dd>{preset.customerFocus.join('；')}</dd></div></dl><button className="primary" disabled={presetBusy !== null} onClick={() => void startTdsPreset(preset)}><Radar size={16}/>{presetBusy === preset.id ? '正在启动…' : existing ? '开始查找客户' : '创建并查找客户'}</button></article> })}</div>{presetNotice && <p className="compliance-note tds-preset-notice">{presetNotice}</p>}</section>
     <section className="panel lead-task-panel"><div className="panel-title"><div><h2>搜索任务</h2><p>每日自动搜索默认关闭；开启后由服务器按设置时间、串行限速运行。</p></div><button onClick={() => { setEditingTask(null); setOpenTaskForm(true) }}><Plus size={15}/> 新建查询任务</button></div><div className="lead-task-list">{tasks.map(task => <article key={task.id}><div><b>{task.task_name}</b><small>{task.discovery_mode === '供应工厂' ? '供应工厂 · 中国大陆生产主体' : '需求客户 · 下游应用主体'} · {task.product_keywords.slice(0, 2).join(' · ') || '待填写关键词'}</small><span>{task.daily_enabled ? `每日 ${task.daily_run_time.slice(0, 5)}` : '仅手动运行'} · {task.status} · 候选企业目标 {task.max_results}{task.source_urls?.length ? ` · ${task.source_urls.length} 个公开目录来源` : ''}</span></div><div><button className="secondary" disabled={busy || task.status === '暂停'} onClick={() => void runTask(task)}>运行</button><button className="secondary" disabled={busy} onClick={() => { setEditingTask(task); setOpenTaskForm(true) }}>编辑</button><button className="secondary" disabled={busy} onClick={() => void run(() => api.updateLeadSearchTask(task.id, { ...task, source_urls: task.source_urls || [], daily_enabled: !task.daily_enabled, status: task.status, daily_run_time: task.daily_run_time.slice(0, 5) }))}>{task.daily_enabled ? '关闭每日' : '开启每日'}</button><button className="danger" disabled={busy} onClick={() => void removeTask(task)}>删除</button></div></article>)}{!tasks.length && <p className="detail-empty">还没有搜索任务。可创建“需求客户”或“供应工厂”查询任务。</p>}</div></section>
     <section className="panel lead-review-panel"><div className="panel-title"><div><h2>分层线索库</h2><p>直接需求候选才可继续严格核验；间接应用链只用于市场研究，供应工厂不进入客户 CRM。</p></div><span className="muted">{selectedTask ? `${selectedTask.task_name} · ` : ''}上次运行：{latestRun?.started_at ? new Date(latestRun.started_at).toLocaleString('zh-CN') : '尚未运行'}</span></div><div className="lead-tabs"><button className={layer === '直接需求候选' ? 'active' : ''} onClick={() => setLayer('直接需求候选')}>直接需求候选 {direct.length}</button><button className={layer === '间接应用链' ? 'active' : ''} onClick={() => setLayer('间接应用链')}>间接应用链 {indirect.length}</button><button className={layer === '供应工厂候选' ? 'active' : ''} onClick={() => setLayer('供应工厂候选')}>供应工厂 {suppliers.length}</button><button className={layer === '排除' ? 'active' : ''} onClick={() => setLayer('排除')}>排除 {excluded.length}</button><button className={layer === '待判定' ? 'active' : ''} onClick={() => setLayer('待判定')}>待判定 {scopedLeads.filter(lead => layerOf(lead) === '待判定').length}</button></div><div className="lead-filters"><select value={taskFilter} onChange={event => { setTaskFilter(event.target.value); setCountryFilter(''); setTypeFilter(''); setGradeFilter(''); setContactFilter('all') }}><option value="">全部任务</option>{tasks.map(task => <option key={task.id} value={task.id}>{task.task_name}</option>)}</select><select value={countryFilter} onChange={event => setCountryFilter(event.target.value)}><option value="">全部地区</option>{countries.map(country => <option key={country}>{country}</option>)}</select><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="">全部企业类型</option>{companyTypes.map(type => <option key={type}>{type}</option>)}</select><select value={gradeFilter} onChange={event => setGradeFilter(event.target.value)}><option value="">全部匹配等级</option><option value="A">A｜直接匹配</option><option value="B">B｜相关待确认</option></select><select value={contactFilter} onChange={event => setContactFilter(event.target.value as typeof contactFilter)}><option value="all">全部联系方式</option><option value="email">有公开邮箱</option><option value="phone">有公开电话</option><option value="both">邮箱和电话齐全</option></select></div><p className="lead-scope-note">当前显示：<b>{selectedTask ? selectedTask.task_name : '全部任务的汇总线索'}</b>{selectedTask ? '。切换任务后，数量、国家筛选与上次运行时间都会同步切换。' : '。请先选择任务，避免将不同产品的结果混在一起判断。'}</p><div className="lead-grid">{shown.map(lead => <LeadVerificationCard key={lead.id} lead={lead} sourceTaskName={lead.task_id ? taskNameById.get(lead.task_id) : undefined} bucket={bucketOf(lead)} busy={busy} review={review} createTask={createTask} convert={convert}/>) }{!shown.length && <p className="detail-empty">该任务在当前分层暂无线索；这不代表其他任务的结果会显示在这里。</p>}</div></section>
      <LeadEngineOperations products={products} tasks={tasks} onChanged={onChanged}/>{openTaskForm && <LeadSearchTaskForm products={products} task={editingTask || undefined} close={() => { setOpenTaskForm(false); setEditingTask(null) }} submit={async payload => { if (editingTask) await api.updateLeadSearchTask(editingTask.id, payload); else await api.createLeadSearchTask(payload); setOpenTaskForm(false); setEditingTask(null); await onChanged() }}/>}</section>

@@ -146,6 +146,7 @@ export const api = {
   domainBlocklist: () => request<DomainBlock[]>('/api/domain-blocklist'),
   createDomainBlock: (payload: Omit<DomainBlock, 'id' | 'created_at'>) => request<DomainBlock>('/api/domain-blocklist', { method: 'POST', body: JSON.stringify(payload) }),
   leadSearchTasks: () => request<LeadSearchTask[]>('/api/lead-search-tasks'),
+  systemHealth: () => request<{ status: string; service: string; search_configured: boolean; ai_configured: boolean }>('/api/system/health'),
   createLeadSearchTask: (payload: Omit<LeadSearchTask, 'id' | 'user_id' | 'last_run_at' | 'last_run_status' | 'last_error' | 'created_at'>) => request<LeadSearchTask>('/api/lead-search-tasks', { method: 'POST', body: JSON.stringify(payload) }),
   updateLeadSearchTask: (id: string, payload: Omit<LeadSearchTask, 'id' | 'user_id' | 'last_run_at' | 'last_run_status' | 'last_error' | 'created_at'>) => request<LeadSearchTask>(`/api/lead-search-tasks/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteLeadSearchTask: (id: string) => request<{ deleted: boolean; task_id: string; message: string }>(`/api/lead-search-tasks/${id}`, { method: 'DELETE' }),
