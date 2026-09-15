@@ -515,6 +515,10 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
     log: list[str] = []
     inserted = skipped = discovered = 0
     try:
+        await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {
+            "run_state": "搜索中", "pause_requested": False, "cancel_requested": False,
+            "current_url": None, "last_progress": {"discovered": 0, "inserted": 0, "skipped": 0},
+        })
         limit = max(1, min(int(task.get("max_results") or 50), 1000))
         profile = _application_profile(task)
         if profile["mode"] == "需求客户" and not profile["applications"]:
@@ -586,6 +590,24 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 await asyncio.sleep(delay)
 
             for source_url, source_type in candidates[:limit]:
+                # Read control flags between companies, never in the middle of
+                # a request. This gives pause/cancel deterministic and safe
+                # semantics without leaving half-written lead records.
+                current = await store.request(f"lead_search_tasks?id=eq.{task['id']}&select=pause_requested,cancel_requested&limit=1")
+                if current and current[0].get("cancel_requested"):
+                    message = "用户已取消任务；已保存的线索和证据保持不变。"
+                    log.append(message)
+                    now = datetime.now(timezone.utc).isoformat()
+                    await store.request(f"lead_discovery_runs?id=eq.{run['id']}", "PATCH", {"status": "跳过", "finished_at": now, "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "run_log": log[:100]})
+                    await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"run_state": "已取消", "current_url": None, "last_run_at": now, "last_run_status": "跳过", "last_error": message})
+                    return {"run_id": run["id"], "status": "已取消", "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "log": log}
+                if current and current[0].get("pause_requested"):
+                    message = "用户已暂停任务；可继续运行，已发现域名会自动去重。"
+                    log.append(message)
+                    now = datetime.now(timezone.utc).isoformat()
+                    await store.request(f"lead_discovery_runs?id=eq.{run['id']}", "PATCH", {"status": "跳过", "finished_at": now, "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "run_log": log[:100]})
+                    await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"run_state": "已暂停", "current_url": None, "last_run_at": now, "last_run_status": "跳过", "last_error": None})
+                    return {"run_id": run["id"], "status": "已暂停", "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "log": log}
                 allowed, reason = _is_public_url(source_url)
                 if not allowed:
                     skipped += 1; log.append(f"跳过 {source_url}：{reason}"); continue
@@ -609,6 +631,14 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 if len(text) < 80:
                     skipped += 1; log.append(f"跳过 {source_url}：公开页面内容不足"); continue
                 host = _host(final_url)
+                blocked = await store.request(f"domain_blocklist?root_domain=eq.{quote(host, safe='')}&enabled=eq.true&select=id&limit=1")
+                if blocked:
+                    skipped += 1; log.append(f"跳过 {source_url}：命中用户域名黑名单"); continue
+                await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {
+                    "run_state": "抓取中", "current_url": final_url,
+                    "last_progress": {"discovered": discovered, "inserted": inserted, "skipped": skipped, "current_url": final_url},
+                })
+                await store.request(f"lead_discovery_runs?id=eq.{run['id']}", "PATCH", {"current_url": final_url})
                 non_entity_reason = _non_entity_page_reason(raw, text, host)
                 if non_entity_reason:
                     skipped += 1; log.append(f"跳过 {source_url}：{non_entity_reason}"); continue
@@ -668,6 +698,17 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     task, combined_text, f"{urlparse(final_url).scheme}://{host}", email, company,
                     duplicate, application_hits, business_role,
                 )
+                # Rules remain authoritative enough to run without an API key.
+                # An enabled model can only make a bounded, reviewable revision.
+                from .lead_analyzer import configured_analyzer
+                ai_result = await configured_analyzer(cfg, bool(task.get("ai_enabled"))).analyze(
+                    company=company, task_name=str(task.get("task_name") or "目标产品"), rule_score=score,
+                    evidence=combined_text,
+                )
+                if ai_result.score_adjustment:
+                    score = max(0, min(100, score + ai_result.score_adjustment))
+                    reasons.append(f"AI 审阅调整 {ai_result.score_adjustment:+d}（仍需人工复核）")
+                reasons.extend(ai_result.match_reasons[:6])
                 missing: list[str] = []
                 if not host:
                     missing.append("未找到可验证的企业官网主域名")
@@ -714,7 +755,16 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     skipped += 1; log.append(f"跳过 {source_url}：不是可确认的企业官网"); continue
                 payload = {
                     "user_id": task["user_id"], "task_id": task["id"], "company_name": company, "website": f"{urlparse(final_url).scheme}://{host}", "website_domain": host,
+                    "root_domain": host,
                     "source_url": final_url, "source_type": source_type, "public_business_email": email, "public_business_phone": phone,
+                    "public_emails": ([{"value": email, "category": "business", "source_url": email_source}] if email else []),
+                    "public_phones": ([{"value": phone, "source_url": phone_source}] if phone else []),
+                    "contact_page_url": contact_source, "confidence_score": ai_result.confidence_score,
+                    "risk_flags": (["疑似重复"] if duplicate else []) + (["缺少公开业务邮箱"] if not email else []) + ai_result.risk_flags[:6],
+                    "recommended_product": task.get("task_name"),
+                    "recommended_pitch": ai_result.recommended_pitch or need,
+                    "evidence_snippets": ([{"source_url": evidence_url, "text": evidence_text[:500]}] if evidence_url else []),
+                    "last_verified_at": datetime.now(timezone.utc).isoformat(),
                     "discovery_mode": "供应工厂" if supplier_mode else "需求客户",
                     "discovered_product_keywords": application_hits if supplier_mode else [], "discovered_application_keywords": [] if supplier_mode else application_hits, "possible_need": need,
                     "match_score": score, "score_reasons": reasons, "suspected_duplicate": duplicate,
@@ -764,15 +814,16 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                         await store.request(f"customer_leads?id=eq.{raced[0]['id']}", "PATCH", payload)
                         log.append(f"并发去重更新：{company}")
                 discovered += 1
+                await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"run_state": "分析中", "last_progress": {"discovered": discovered, "inserted": inserted, "skipped": skipped, "current_url": final_url}})
                 await asyncio.sleep(delay)
         result_status = "成功" if discovered else "跳过"
         await store.request(f"lead_discovery_runs?id=eq.{run['id']}", "PATCH", {"status": result_status, "finished_at": datetime.now(timezone.utc).isoformat(), "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "run_log": log[:100]})
-        await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"last_run_at": datetime.now(timezone.utc).isoformat(), "last_run_status": result_status, "last_error": None})
+        await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"run_state": "已完成" if discovered else "部分失败", "current_url": None, "last_progress": {"discovered": discovered, "inserted": inserted, "skipped": skipped}, "last_run_at": datetime.now(timezone.utc).isoformat(), "last_run_status": result_status, "last_error": None})
         return {"run_id": run["id"], "status": result_status, "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "log": log}
     except Exception as exc:
         message = str(exc)[:1000]
         await store.request(f"lead_discovery_runs?id=eq.{run['id']}", "PATCH", {"status": "失败", "finished_at": datetime.now(timezone.utc).isoformat(), "discovered_count": discovered, "inserted_count": inserted, "skipped_count": skipped, "error_message": message, "run_log": log[:100]})
-        await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"last_run_at": datetime.now(timezone.utc).isoformat(), "last_run_status": "失败", "last_error": message})
+        await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"run_state": "部分失败", "current_url": None, "last_run_at": datetime.now(timezone.utc).isoformat(), "last_run_status": "失败", "last_error": message})
         raise
 
 

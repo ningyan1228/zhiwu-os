@@ -27,3 +27,12 @@ MAIL_INTERNAL_ADDRESSES=gjsxning@163.com,peter@neonliontech.com
 SILICONFLOW_API_KEY=sk-your-siliconflow-server-only-key
 SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
 SILICONFLOW_MODEL=deepseek-ai/DeepSeek-V4-Flash
+
+# Foreign-trade lead engine: all optional secrets remain on the server.
+BRAVE_SEARCH_API_KEY=
+AI_ENABLED=false
+AI_BASE_URL=
+AI_API_KEY=
+AI_MODEL=
+LEAD_DISCOVERY_USER_AGENT=ZhiwuOSLeadDiscovery/1.0 (+https://your-domain.example/contact)
+LEAD_DISCOVERY_DELAY_SECONDS=3

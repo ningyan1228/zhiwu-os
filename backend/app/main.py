@@ -1,5 +1,6 @@
 """Thin API gateway: browser credentials are verified with Supabase before data is proxied."""
 from datetime import date, datetime, timedelta
+import csv
 from functools import lru_cache
 from io import BytesIO
 import hashlib
@@ -39,6 +40,12 @@ class Settings(BaseSettings):
     # Optional official search provider token. It is read only on the server and
     # must never be returned by an API endpoint or committed to the repository.
     brave_search_api_key: str | None = None
+    # Optional OpenAI-compatible lead analysis.  It is strictly server-only;
+    # the crawler retains its rules-only path when any setting is absent.
+    ai_enabled: bool = False
+    ai_base_url: str | None = None
+    ai_api_key: str | None = None
+    ai_model: str | None = None
     # SiliconFlow is the optional, server-side only provider for reviewed mail
     # summaries.  The browser never receives this key.
     siliconflow_api_key: str | None = None
@@ -422,6 +429,40 @@ class LeadConvertIn(BaseModel):
     notes: str | None = None
     customer_id: str | None = None
 
+class ProductKeywordIn(BaseModel):
+    product_id: str
+    keyword: str = Field(min_length=1, max_length=300)
+    keyword_type: Literal["include", "exclude", "local"] = "include"
+    language_code: str = Field(default="en", min_length=2, max_length=16)
+    country: str | None = Field(default=None, max_length=100)
+    weight: int = Field(default=5, ge=1, le=20)
+    enabled: bool = True
+
+class CrawlSourceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    source_type: Literal["官网", "展会目录", "协会目录", "行业目录", "政府或商会目录", "用户导入", "合规搜索 API"]
+    start_url: str | None = Field(default=None, max_length=2000)
+    country: str | None = Field(default=None, max_length=100)
+    industry: str | None = Field(default=None, max_length=200)
+    enabled: bool = True
+    request_delay_seconds: float = Field(default=3, ge=1, le=30)
+    max_pages: int = Field(default=8, ge=1, le=50)
+
+class DomainBlockIn(BaseModel):
+    root_domain: str = Field(min_length=3, max_length=253)
+    reason: str = Field(default="人工屏蔽", min_length=1, max_length=500)
+    enabled: bool = True
+
+class LeadBatchReviewIn(BaseModel):
+    lead_ids: list[str] = Field(min_length=1, max_length=100)
+    status: Literal["待审核", "保留", "已排除", "已联系"]
+    exclusion_reason: str | None = Field(default=None, max_length=1000)
+
+class LeadBatchConvertIn(BaseModel):
+    lead_ids: list[str] = Field(min_length=1, max_length=100)
+    priority: Literal["HIGH", "MEDIUM HIGH", "MEDIUM"] = "MEDIUM"
+    next_action: str | None = Field(default=None, max_length=1000)
+
 class TaskStatusIn(BaseModel):
     status: Literal["Pending", "Completed"]
 
@@ -767,6 +808,12 @@ async def request_password_recovery(payload: RecoveryIn):
 @app.get("/health")
 def health(): return {"status": "ok"}
 
+@app.get("/api/system/health")
+def system_health():
+    """Public-safe readiness signal; never return configuration values or keys."""
+    cfg = settings()
+    return {"status": "ok", "service": "zhiwu-os-lead-engine", "search_configured": bool(cfg.brave_search_api_key), "ai_configured": bool(cfg.ai_enabled and cfg.ai_api_key and cfg.ai_base_url and cfg.ai_model)}
+
 @app.post("/api/demo/seed")
 async def seed_demo(authorization: str | None = Header(default=None)):
     """Initialize one authenticated workspace with the V1.1 trade CRM demo dataset."""
@@ -831,6 +878,57 @@ async def update_product(product_id: str, product: ProductIn, authorization: str
     rows = await supabase(f"products?id=eq.{product_id}&archived_at=is.null", bearer(authorization), "PATCH", values)
     if not rows:
         raise HTTPException(404, "Product not found")
+    return rows[0]
+
+# Lead-engine configuration stays in versioned Supabase tables rather than in
+# crawler constants.  RLS is enforced again by the user's bearer token here.
+@app.get("/api/keywords")
+async def list_product_keywords(product_id: str | None = Query(default=None), authorization: str | None = Header(default=None)):
+    filter_part = f"&product_id=eq.{quote(product_id, safe='')}" if product_id else ""
+    return await supabase(f"product_keywords?select=*&order=created_at.desc{filter_part}", bearer(authorization))
+
+@app.post("/api/keywords", status_code=201)
+async def create_product_keyword(payload: ProductKeywordIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    product = await supabase(f"products?id=eq.{payload.product_id}&archived_at=is.null&select=id&limit=1", token)
+    if not product:
+        raise HTTPException(404, "产品不存在")
+    rows = await supabase("product_keywords", token, "POST", payload.model_dump())
+    return rows[0]
+
+@app.patch("/api/keywords/{keyword_id}")
+async def update_product_keyword(keyword_id: str, payload: ProductKeywordIn, authorization: str | None = Header(default=None)):
+    rows = await supabase(f"product_keywords?id=eq.{keyword_id}", bearer(authorization), "PATCH", {**payload.model_dump(), "updated_at": datetime.now().isoformat()})
+    if not rows: raise HTTPException(404, "关键词不存在")
+    return rows[0]
+
+@app.get("/api/sources")
+async def list_crawl_sources(authorization: str | None = Header(default=None)):
+    return await supabase("crawl_sources?select=*&order=updated_at.desc", bearer(authorization))
+
+@app.post("/api/sources", status_code=201)
+async def create_crawl_source(payload: CrawlSourceIn, authorization: str | None = Header(default=None)):
+    if payload.start_url and (not _domain_from_url(payload.start_url) or not payload.start_url.lower().startswith(("http://", "https://"))):
+        raise HTTPException(422, "起始 URL 必须是公开 HTTP(S) 地址")
+    rows = await supabase("crawl_sources", bearer(authorization), "POST", payload.model_dump())
+    return rows[0]
+
+@app.patch("/api/sources/{source_id}")
+async def update_crawl_source(source_id: str, payload: CrawlSourceIn, authorization: str | None = Header(default=None)):
+    rows = await supabase(f"crawl_sources?id=eq.{source_id}", bearer(authorization), "PATCH", {**payload.model_dump(), "updated_at": datetime.now().isoformat()})
+    if not rows: raise HTTPException(404, "数据源不存在")
+    return rows[0]
+
+@app.get("/api/domain-blocklist")
+async def list_domain_blocklist(authorization: str | None = Header(default=None)):
+    return await supabase("domain_blocklist?select=*&order=created_at.desc", bearer(authorization))
+
+@app.post("/api/domain-blocklist", status_code=201)
+async def create_domain_block(payload: DomainBlockIn, authorization: str | None = Header(default=None)):
+    root_domain = _domain_from_url("https://" + payload.root_domain)
+    if not root_domain:
+        raise HTTPException(422, "请输入有效根域名")
+    rows = await supabase("domain_blocklist", bearer(authorization), "POST", {**payload.model_dump(), "root_domain": root_domain})
     return rows[0]
 
 @app.get("/api/product-customer-relations")
@@ -983,27 +1081,37 @@ async def list_lead_search_tasks(authorization: str | None = Header(default=None
 async def lead_task_values_from_product_profile(payload: LeadSearchTaskIn, token: str) -> dict[str, Any]:
     """Snapshot a confirmed product profile into a reusable discovery task."""
     values = payload.model_dump()
-    if not payload.product_id:
-        return values
-    rows = await supabase(f"products?id=eq.{payload.product_id}&archived_at=is.null&select=*", token)
-    if not rows:
-        raise HTTPException(404, "所选产品不存在")
-    product = rows[0]
-    if payload.discovery_mode == "需求客户":
-        if product.get("profile_status") != "已确认":
-            raise HTTPException(422, "需求侧搜索只能选择已确认的产品画像")
-        if not product.get("confirmed_applications") or not product.get("target_company_types"):
-            raise HTTPException(422, "产品画像缺少已确认下游应用或目标企业类型，不能开始需求侧搜索")
-    product_terms = [str(value).strip() for value in (product.get("technical_keywords") or []) if str(value).strip()]
-    for value in (product.get("product_code"), product.get("product_name")):
-        if value and str(value).strip() not in product_terms:
-            product_terms.append(str(value).strip())
-    values.update({
-        "product_keywords": product_terms,
-        "application_keywords": list(product.get("confirmed_applications") or []) if payload.discovery_mode == "需求客户" else values["application_keywords"],
-        "target_company_types": list(product.get("target_company_types") or []) if payload.discovery_mode == "需求客户" else values["target_company_types"],
-        "profile_exclusion_rules": list(product.get("exclusion_rules") or []),
-    })
+    if payload.product_id:
+        rows = await supabase(f"products?id=eq.{payload.product_id}&archived_at=is.null&select=*", token)
+        if not rows:
+            raise HTTPException(404, "所选产品不存在")
+        product = rows[0]
+        if payload.discovery_mode == "需求客户":
+            if product.get("profile_status") != "已确认":
+                raise HTTPException(422, "需求侧搜索只能选择已确认的产品画像")
+            if not product.get("confirmed_applications") or not product.get("target_company_types"):
+                raise HTTPException(422, "产品画像缺少已确认下游应用或目标企业类型，不能开始需求侧搜索")
+        keyword_rows = await supabase(f"product_keywords?product_id=eq.{payload.product_id}&enabled=eq.true&select=keyword,keyword_type,country", token)
+        requested_countries = {str(country).casefold() for country in payload.target_countries if str(country).strip()}
+        scoped_keywords = [row for row in keyword_rows if not row.get("country") or not requested_countries or str(row["country"]).casefold() in requested_countries]
+        product_terms = [str(value).strip() for value in (product.get("technical_keywords") or []) if str(value).strip()]
+        product_terms.extend(str(row["keyword"]).strip() for row in scoped_keywords if row.get("keyword_type") in {"include", "local"})
+        exclusions = list(product.get("exclusion_rules") or []) + [str(row["keyword"]).strip() for row in scoped_keywords if row.get("keyword_type") == "exclude"]
+        for value in (product.get("product_code"), product.get("product_name")):
+            if value and str(value).strip() not in product_terms:
+                product_terms.append(str(value).strip())
+        values.update({
+            "product_keywords": list(dict.fromkeys(product_terms)),
+            "application_keywords": list(product.get("confirmed_applications") or []) if payload.discovery_mode == "需求客户" else values["application_keywords"],
+            "target_company_types": list(product.get("target_company_types") or []) if payload.discovery_mode == "需求客户" else values["target_company_types"],
+            "profile_exclusion_rules": list(dict.fromkeys(exclusions)),
+        })
+    # Source settings are reusable: a task may still provide its own URLs, but
+    # enabled public sources matching its target countries are appended safely.
+    source_rows = await supabase("crawl_sources?enabled=eq.true&select=start_url,country", token)
+    requested_countries = {str(country).casefold() for country in payload.target_countries if str(country).strip()}
+    configured_urls = [str(row.get("start_url") or "").strip() for row in source_rows if row.get("start_url") and (not row.get("country") or not requested_countries or str(row["country"]).casefold() in requested_countries)]
+    values["source_urls"] = list(dict.fromkeys([*values.get("source_urls", []), *configured_urls]))
     return values
 
 @app.post("/api/lead-search-tasks", status_code=201)
@@ -1068,6 +1176,28 @@ async def run_lead_search_task(task_id: str, background_tasks: BackgroundTasks, 
     background_tasks.add_task(_run_lead_task_for_user, token, task_id, "manual")
     return {"status": "已开始", "message": "已在服务器后台开始公开网页搜索；完成后刷新即可查看审核池和运行日志。"}
 
+@app.post("/api/lead-search-tasks/{task_id}/pause")
+async def pause_lead_search_task(task_id: str, authorization: str | None = Header(default=None)):
+    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", bearer(authorization), "PATCH", {"pause_requested": True, "run_state": "已暂停", "status": "暂停", "updated_at": datetime.now().isoformat()})
+    if not rows: raise HTTPException(404, "采集任务不存在")
+    return {"task": rows[0], "message": "已请求暂停；当前页面处理完成后会安全停止。"}
+
+@app.post("/api/lead-search-tasks/{task_id}/resume")
+async def resume_lead_search_task(task_id: str, background_tasks: BackgroundTasks, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", token, "PATCH", {"pause_requested": False, "cancel_requested": False, "run_state": "排队中", "status": "启用", "updated_at": datetime.now().isoformat()})
+    if not rows: raise HTTPException(404, "采集任务不存在")
+    if task_id not in ACTIVE_LEAD_TASKS:
+        ACTIVE_LEAD_TASKS.add(task_id)
+        background_tasks.add_task(_run_lead_task_for_user, token, task_id, "retry")
+    return {"task": rows[0], "message": "已恢复并排队；已完成的候选会按域名去重更新。"}
+
+@app.post("/api/lead-search-tasks/{task_id}/cancel")
+async def cancel_lead_search_task(task_id: str, authorization: str | None = Header(default=None)):
+    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", bearer(authorization), "PATCH", {"cancel_requested": True, "pause_requested": False, "run_state": "已取消", "status": "暂停", "daily_enabled": False, "updated_at": datetime.now().isoformat()})
+    if not rows: raise HTTPException(404, "采集任务不存在")
+    return {"task": rows[0], "message": "已请求取消；已保存的审核线索和证据不会删除。"}
+
 async def _run_enabled_lead_tasks(token: str) -> None:
     tasks = await supabase("lead_search_tasks?deleted_at=is.null&status=eq.%E5%90%AF%E7%94%A8&select=id&order=created_at.asc", token)
     for task in tasks:
@@ -1107,6 +1237,55 @@ async def import_cpph_2a_strict_leads(
 @app.get("/api/customer-leads")
 async def list_customer_leads(authorization: str | None = Header(default=None), limit: int = Query(300, le=500)):
     return await supabase(f"customer_leads?select=*&order=discovered_at.desc&limit={limit}", bearer(authorization))
+
+@app.post("/api/customer-leads/batch-review")
+async def batch_review_customer_leads(payload: LeadBatchReviewIn, authorization: str | None = Header(default=None)):
+    if payload.status != "已排除" and payload.exclusion_reason:
+        raise HTTPException(422, "只有批量排除可以写入排除原因")
+    if any(not re.fullmatch(r"[0-9a-fA-F-]{36}", lead_id) for lead_id in payload.lead_ids):
+        raise HTTPException(422, "线索 ID 格式错误")
+    data: dict[str, Any] = {"status": payload.status, "updated_at": datetime.now().isoformat()}
+    if payload.status == "已排除":
+        data.update({"verification_bucket": "排除名单", "exclusion_reason": payload.exclusion_reason or "人工批量排除", "verification_conclusion": payload.exclusion_reason or "人工批量排除"})
+    joined = ",".join(payload.lead_ids)
+    rows = await supabase(f"customer_leads?id=in.({joined})", bearer(authorization), "PATCH", data)
+    return {"updated": len(rows or []), "leads": rows or []}
+
+@app.post("/api/customer-leads/import-seeds")
+async def import_seed_leads(task_id: str = Form(...), file: UploadFile = File(...), authorization: str | None = Header(default=None)):
+    """Import a user-provided CSV seed list; no invented companies or contacts.
+
+    Accepted columns: website_url (or website/source_url), company_name, country.
+    Imported rows remain pending review and can later be fetched by the normal
+    compliant task runner.  CSV is intentionally chosen for transparent import.
+    """
+    token = bearer(authorization)
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(422, "请上传 CSV 种子名单")
+    content = await file.read()
+    if not content or len(content) > 2 * 1024 * 1024:
+        raise HTTPException(422, "CSV 文件必须在 1 字节到 2 MB 之间")
+    task_rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null&select=id&limit=1", token)
+    if not task_rows: raise HTTPException(404, "采集任务不存在")
+    try:
+        reader = csv.DictReader(content.decode("utf-8-sig").splitlines())
+    except UnicodeDecodeError as exc:
+        raise HTTPException(422, "CSV 必须为 UTF-8 编码") from exc
+    inserted = updated = skipped = 0
+    for source in reader:
+        if inserted + updated + skipped >= 500: break
+        website = str(source.get("website_url") or source.get("website") or source.get("source_url") or "").strip()
+        domain = _domain_from_url(website)
+        if not domain or not website.lower().startswith(("http://", "https://")):
+            skipped += 1; continue
+        company = str(source.get("company_name") or domain).strip()[:300]
+        existing = await supabase(f"customer_leads?root_domain=eq.{quote(domain, safe='')}&select=id&limit=1", token)
+        values = {"task_id": task_id, "company_name": company, "country": str(source.get("country") or "").strip() or None, "website": f"https://{domain}", "website_domain": domain, "root_domain": domain, "source_url": website, "source_type": "其他公开网页", "status": "待审核", "verification_bucket": "待补信息", "lead_layer": "待判定", "score_reasons": ["用户导入的公开种子 URL；尚未抓取或评分。"], "robots_status": "pending", "data_source": "user_seed_csv", "needs_human_confirmation": True}
+        if existing:
+            await supabase(f"customer_leads?id=eq.{existing[0]['id']}", token, "PATCH", values); updated += 1
+        else:
+            await supabase("customer_leads", token, "POST", values); inserted += 1
+    return {"inserted": inserted, "updated": updated, "skipped": skipped, "message": "种子已进入待审核池；运行任务后会按 robots 与限速规则核验官网。"}
 
 @app.patch("/api/customer-leads/{lead_id}")
 async def review_customer_lead(lead_id: str, payload: LeadReviewIn, authorization: str | None = Header(default=None)):
@@ -1181,6 +1360,20 @@ async def convert_customer_lead(lead_id: str, payload: LeadConvertIn, authorizat
     await supabase(f"customer_leads?id=eq.{lead_id}", token, "PATCH", {"status": "已转 CRM", "crm_customer_id": customer["id"], "converted_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()})
     return {"customer": customer, "action": action}
 
+@app.post("/api/customer-leads/batch-add-to-crm")
+async def batch_add_customer_leads_to_crm(payload: LeadBatchConvertIn, authorization: str | None = Header(default=None)):
+    """Human-triggered batch conversion with per-row outcomes, never silent skips."""
+    if any(not re.fullmatch(r"[0-9a-fA-F-]{36}", lead_id) for lead_id in payload.lead_ids):
+        raise HTTPException(422, "线索 ID 格式错误")
+    outcomes: list[dict[str, Any]] = []
+    for lead_id in payload.lead_ids:
+        try:
+            result = await convert_customer_lead(lead_id, LeadConvertIn(priority=payload.priority, next_action=payload.next_action or "人工批量审核后进入 CRM，请确认下一步开发动作。", notes="由人工批量审核操作转入 CRM。"), authorization)
+            outcomes.append({"lead_id": lead_id, "ok": True, "action": result["action"], "customer_id": result["customer"]["id"]})
+        except HTTPException as exc:
+            outcomes.append({"lead_id": lead_id, "ok": False, "error": str(exc.detail)})
+    return {"converted": sum(1 for row in outcomes if row["ok"]), "failed": sum(1 for row in outcomes if not row["ok"]), "outcomes": outcomes}
+
 @app.get("/api/customer-leads/strict-export")
 async def export_strict_customer_leads(authorization: str | None = Header(default=None)):
     """Export only fully verified, CRM-eligible companies as a real .xlsx file."""
@@ -1214,6 +1407,33 @@ async def export_strict_customer_leads(authorization: str | None = Header(defaul
         sheet.column_dimensions[letter].width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 14), 48)
     stream = BytesIO(); workbook.save(stream)
     return Response(stream.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=strict-customers.xlsx"})
+
+@app.get("/api/customer-leads/export.csv")
+async def export_customer_leads_csv(
+    authorization: str | None = Header(default=None),
+    country: str | None = Query(default=None),
+    min_score: int | None = Query(default=None, ge=0, le=100),
+    max_score: int | None = Query(default=None, ge=0, le=100),
+    review_status: str | None = Query(default=None),
+    product_keyword: str | None = Query(default=None),
+):
+    """Export the requested review scope as an Excel-friendly UTF-8 CSV."""
+    leads = await supabase("customer_leads?select=*&order=discovered_at.desc&limit=500", bearer(authorization))
+    keyword = (product_keyword or "").casefold().strip()
+    filtered = [lead for lead in leads if
+        (not country or str(lead.get("country") or "").casefold() == country.casefold()) and
+        (min_score is None or int(lead.get("match_score") or 0) >= min_score) and
+        (max_score is None or int(lead.get("match_score") or 0) <= max_score) and
+        (not review_status or lead.get("status") == review_status) and
+        (not keyword or keyword in " ".join(str(value) for value in ((lead.get("discovered_product_keywords") or []) + (lead.get("discovered_application_keywords") or []))).casefold())]
+    headings = ["公司名称", "国家/地区", "官网", "根域名", "公司类型", "匹配分", "置信度", "公开业务邮箱", "公开电话", "来源", "审核状态", "CRM 状态", "匹配产品/应用", "评分依据", "推荐开发角度", "发现时间"]
+    from io import StringIO
+    buffer = StringIO(newline="")
+    writer = csv.writer(buffer)
+    writer.writerow(headings)
+    for lead in filtered:
+        writer.writerow([lead.get("company_name"), lead.get("country"), lead.get("official_website") or lead.get("website"), lead.get("root_domain") or lead.get("website_domain"), lead.get("company_type"), lead.get("match_score"), lead.get("confidence_score"), lead.get("public_business_email"), lead.get("public_business_phone"), lead.get("source_url"), lead.get("status"), lead.get("lead_status") or lead.get("status"), "; ".join((lead.get("discovered_product_keywords") or []) + (lead.get("discovered_application_keywords") or [])), "；".join(lead.get("score_reasons") or []), lead.get("recommended_pitch") or lead.get("possible_need"), lead.get("discovered_at")])
+    return Response(("\ufeff" + buffer.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=customer-leads.csv"})
 
 @app.get("/api/daily-logs")
 async def get_daily_log(log_date: str, authorization: str | None = Header(default=None)):

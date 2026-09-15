@@ -37,3 +37,7 @@ docker compose up --build
 1. 前端：构建 `frontend`，将 `dist` 发布至 GitHub Pages。
 2. 后端：在个人服务器运行 Docker Compose，通过 Nginx / Cloudflare Tunnel 对外暴露 HTTPS API。
 3. 数据：Supabase 免费 PostgreSQL + Storage，迁移中的 RLS 以已登录用户为边界。
+
+## 外贸客户线索采集 MVP
+
+现有 CRM 已扩展为“公开目录/用户种子 → 官网核验 → 规则或可选 AI 评分 → 人工审核 → CRM → CSV 导出”的真实服务端闭环。请在既有迁移之后执行 [`backend/supabase/v1_27_foreign_trade_lead_engine.sql`](backend/supabase/v1_27_foreign_trade_lead_engine.sql)，并阅读 [外贸线索模块运行与部署说明](docs/FOREIGN_TRADE_LEAD_ENGINE.md)。

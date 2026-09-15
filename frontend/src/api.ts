@@ -1,4 +1,4 @@
-import type { Customer, CustomerLead, DailyLog, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailAiFactCard, MailboxAccount, MailEmail, MailReplyDraft, Product, ProductCustomerRelation, Project, Quote, SalesOrder, StrictLeadImportResult, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, TradeCommitment, WorkspaceMember } from './types'
+import type { CrawlSource, Customer, CustomerLead, DailyLog, DomainBlock, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailAiFactCard, MailboxAccount, MailEmail, MailReplyDraft, Product, ProductCustomerRelation, ProductKeyword, Project, Quote, SalesOrder, StrictLeadImportResult, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, TradeCommitment, WorkspaceMember } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -137,15 +137,30 @@ export const api = {
   },
   createTask: (payload: Omit<Task, 'id' | 'created_at' | 'completed_at'>) => request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(payload) }).then(asTask),
   updateTaskStatus: (id: string, status: Task['status']) => request<Task>(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }).then(asTask),
+  productKeywords: (productId?: string) => request<ProductKeyword[]>(`/api/keywords${productId ? `?product_id=${encodeURIComponent(productId)}` : ''}`),
+  createProductKeyword: (payload: Omit<ProductKeyword, 'id' | 'created_at' | 'updated_at'>) => request<ProductKeyword>('/api/keywords', { method: 'POST', body: JSON.stringify(payload) }),
+  updateProductKeyword: (id: string, payload: Omit<ProductKeyword, 'id' | 'created_at' | 'updated_at'>) => request<ProductKeyword>(`/api/keywords/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  crawlSources: () => request<CrawlSource[]>('/api/sources'),
+  createCrawlSource: (payload: Omit<CrawlSource, 'id' | 'created_at' | 'updated_at' | 'last_run_at' | 'success_count' | 'failure_count'>) => request<CrawlSource>('/api/sources', { method: 'POST', body: JSON.stringify(payload) }),
+  updateCrawlSource: (id: string, payload: Omit<CrawlSource, 'id' | 'created_at' | 'updated_at' | 'last_run_at' | 'success_count' | 'failure_count'>) => request<CrawlSource>(`/api/sources/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  domainBlocklist: () => request<DomainBlock[]>('/api/domain-blocklist'),
+  createDomainBlock: (payload: Omit<DomainBlock, 'id' | 'created_at'>) => request<DomainBlock>('/api/domain-blocklist', { method: 'POST', body: JSON.stringify(payload) }),
   leadSearchTasks: () => request<LeadSearchTask[]>('/api/lead-search-tasks'),
   createLeadSearchTask: (payload: Omit<LeadSearchTask, 'id' | 'user_id' | 'last_run_at' | 'last_run_status' | 'last_error' | 'created_at'>) => request<LeadSearchTask>('/api/lead-search-tasks', { method: 'POST', body: JSON.stringify(payload) }),
   updateLeadSearchTask: (id: string, payload: Omit<LeadSearchTask, 'id' | 'user_id' | 'last_run_at' | 'last_run_status' | 'last_error' | 'created_at'>) => request<LeadSearchTask>(`/api/lead-search-tasks/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteLeadSearchTask: (id: string) => request<{ deleted: boolean; task_id: string; message: string }>(`/api/lead-search-tasks/${id}`, { method: 'DELETE' }),
   runLeadSearchTask: (id: string) => request<{ run_id?: string; status: string; message: string }>(`/api/lead-search-tasks/${id}/run`, { method: 'POST' }),
+  pauseLeadSearchTask: (id: string) => request<{ message: string }>(`/api/lead-search-tasks/${id}/pause`, { method: 'POST' }),
+  resumeLeadSearchTask: (id: string) => request<{ message: string }>(`/api/lead-search-tasks/${id}/resume`, { method: 'POST' }),
+  cancelLeadSearchTask: (id: string) => request<{ message: string }>(`/api/lead-search-tasks/${id}/cancel`, { method: 'POST' }),
   runEnabledLeadSearchTasks: () => request<{ status: string; message: string }>('/api/lead-search-tasks/run-enabled', { method: 'POST' }),
   customerLeads: () => request<CustomerLead[]>('/api/customer-leads'),
   importCpph2aStrictLeads: (file: File) => { const form = new FormData(); form.append('file', file); return upload<StrictLeadImportResult>('/api/customer-leads/import-cpph-2a-strict', form) },
   exportStrictCustomerLeads: () => download('/api/customer-leads/strict-export', '严格客户名单.xlsx'),
+  exportCustomerLeadsCsv: (filters = '') => download(`/api/customer-leads/export.csv${filters ? `?${filters}` : ''}`, '客户线索.csv'),
+  importSeedLeads: (taskId: string, file: File) => { const form = new FormData(); form.append('task_id', taskId); form.append('file', file); return upload<{ inserted: number; updated: number; skipped: number; message: string }>('/api/customer-leads/import-seeds', form) },
+  batchReviewCustomerLeads: (lead_ids: string[], status: CustomerLead['status'], exclusion_reason?: string) => request<{ updated: number }>('/api/customer-leads/batch-review', { method: 'POST', body: JSON.stringify({ lead_ids, status, exclusion_reason }) }),
+  batchAddCustomerLeadsToCrm: (lead_ids: string[], priority: Customer['priority'] = 'MEDIUM', next_action?: string) => request<{ converted: number; failed: number; outcomes: { lead_id: string; ok: boolean; error?: string }[] }>('/api/customer-leads/batch-add-to-crm', { method: 'POST', body: JSON.stringify({ lead_ids, priority, next_action }) }),
   leadDiscoveryRuns: () => request<LeadDiscoveryRun[]>('/api/lead-discovery-runs'),
   reviewCustomerLead: (id: string, payload: { status: CustomerLead['status']; exclusion_reason?: string; notes?: string; watchlisted?: boolean }) => request<CustomerLead>(`/api/customer-leads/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   createDevelopmentTaskFromLead: (id: string, payload: { priority: Task['priority']; task_date: string; suggested_next_action?: string }) => request<Task>(`/api/customer-leads/${id}/development-task`, { method: 'POST', body: JSON.stringify(payload) }).then(asTask),
