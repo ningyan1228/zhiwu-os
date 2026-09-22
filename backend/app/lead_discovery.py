@@ -264,9 +264,41 @@ def _address_excerpt(text: str) -> str | None:
     return re.sub(r"\s+", " ", found.group(1)).strip(" ,;:")[:300] if found else None
 
 
+def _term_pattern(term: str) -> str | None:
+    """Match a public-web application phrase across ordinary spelling variants.
+
+    Product/application pages alternate between e.g. ``water-based`` and
+    ``water based``, and frequently use singular/plural nouns differently from
+    a TDS.  Treating those as different would discard genuine downstream
+    manufacturers before the human review stage.  This is intentionally a
+    phrase matcher, not a fuzzy matcher: every substantive word must remain in
+    the same order.
+    """
+    words = re.findall(r"[a-z0-9]+", term.casefold())
+    if not words:
+        return None
+    pieces: list[str] = []
+    for word in words:
+        # The product profiles describe industrial nouns (films, compounds,
+        # coatings). Accept their common singular form without broadly stemming
+        # unrelated words such as "glass".
+        if len(word) >= 4 and word.endswith("s") and not word.endswith("ss"):
+            pieces.append(rf"{re.escape(word[:-1])}s?")
+        else:
+            pieces.append(re.escape(word))
+    return r"\b" + r"[\s/_-]+".join(pieces) + r"\b"
+
+
 def _contains_terms(text: str, terms: list[str]) -> list[str]:
     lowered = text.casefold()
-    return [term for term in terms if term and term.casefold() in lowered]
+    hits: list[str] = []
+    for term in terms:
+        if not term:
+            continue
+        pattern = _term_pattern(term)
+        if pattern and re.search(pattern, lowered):
+            hits.append(term)
+    return hits
 
 
 def _country_match(text: str, countries: list[str]) -> list[str]:
@@ -394,6 +426,19 @@ def _directory_links(raw: str, base_url: str, limit: int) -> list[str]:
         if len(links) >= limit:
             break
     return links
+
+
+def _is_direct_company_seed(raw: str, text: str, host: str, evidence_terms: list[str]) -> bool:
+    """Tell a supplied company homepage from a member/exhibitor directory.
+
+    A TDS preset can safely include a short, reviewed list of public downstream
+    company pages. Such a page is a candidate itself; treating it only as a
+    directory loses it and follows unrelated social/media links instead.
+    """
+    if _non_entity_page_reason(raw, text, host):
+        return False
+    email = _public_business_email(raw, host)
+    return bool(_contains_terms(text, evidence_terms) and _looks_like_company_page(text, email))
 
 
 class RestStore:
@@ -562,9 +607,10 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
             elif not source_urls:
                 log.append("未找到与该任务关键词/国家匹配的公开目录入口；为避免抓取不可靠的搜索页面，本次未发起搜索。")
 
-            # User-supplied public exhibitor, association or business-directory
-            # pages are a useful key-free source. We first inspect the directory
-            # page itself, then only follow public outbound company links.
+            # User-supplied public directories are useful key-free sources.
+            # TDS presets also include a short reviewed set of public downstream
+            # company pages. A matching company page is added as a candidate
+            # itself; a directory page contributes its public outbound links.
             for directory_url, directory_label in source_urls[:5]:
                 allowed, reason = _is_public_url(directory_url)
                 if not allowed:
@@ -577,12 +623,22 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     final_directory_url = str(response.url)
                     if response.status_code >= 400 or "html" not in response.headers.get("content-type", "").lower():
                         skipped += 1; log.append(f"跳过目录 {directory_url}：网页不可用或不是 HTML"); continue
-                    for candidate in _directory_links(response.text[:1_000_000], final_directory_url, limit):
-                        if candidate not in [url for url, _ in candidates]:
-                            candidates.append((candidate, "行业目录"))
-                        if len(candidates) >= limit:
-                            break
-                    log.append(f"读取公开目录：{directory_label}（{directory_url}）")
+                    directory_text = _normalise_text(response.text[:1_000_000])
+                    directory_host = _host(final_directory_url)
+                    evidence_terms = list(profile["evidence_terms"])
+                    if _is_direct_company_seed(response.text[:1_000_000], directory_text, directory_host, evidence_terms):
+                        if final_directory_url not in candidate_urls:
+                            candidates.append((final_directory_url, "已核验官网种子"))
+                            candidate_urls.add(final_directory_url)
+                        log.append(f"读取官网种子：{directory_label}（{final_directory_url}）")
+                    else:
+                        for candidate in _directory_links(response.text[:1_000_000], final_directory_url, limit):
+                            if candidate not in candidate_urls:
+                                candidates.append((candidate, "行业目录"))
+                                candidate_urls.add(candidate)
+                            if len(candidates) >= limit:
+                                break
+                        log.append(f"读取公开目录：{directory_label}（{directory_url}）")
                 except httpx.HTTPError as exc:
                     skipped += 1; log.append(f"跳过目录 {directory_url}：读取失败 {exc.__class__.__name__}")
                 if len(candidates) >= limit:

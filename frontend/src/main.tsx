@@ -514,7 +514,22 @@ function LeadDiscovery({ products, tasks, leads, runs, onChanged }: { products: 
     setPresetNotice('')
     try {
       const existing = tasks.find(task => task.task_name === preset.task.task_name)
-      const task = existing || await api.createLeadSearchTask(preset.task)
+      // Preset upgrades may add synonyms and reviewed public company seeds.
+      // Keep user-added values while extending only the app-owned TDS task.
+      const mergeTerms = (current: string[] = [], additions: string[] = []) => [...new Set([...current, ...additions])]
+      const upgraded = existing ? {
+        ...existing,
+        product_keywords: mergeTerms(existing.product_keywords, preset.task.product_keywords),
+        application_keywords: mergeTerms(existing.application_keywords, preset.task.application_keywords),
+        target_countries: mergeTerms(existing.target_countries, preset.task.target_countries),
+        target_company_types: mergeTerms(existing.target_company_types, preset.task.target_company_types),
+        profile_exclusion_rules: mergeTerms(existing.profile_exclusion_rules, preset.task.profile_exclusion_rules),
+        source_urls: mergeTerms(existing.source_urls || [], preset.task.source_urls),
+      } : null
+      const changed = Boolean(existing && JSON.stringify(upgraded) !== JSON.stringify(existing))
+      const task = existing
+        ? changed ? await api.updateLeadSearchTask(existing.id, upgraded!) : existing
+        : await api.createLeadSearchTask(preset.task)
       const health = await api.systemHealth()
       if (!health.search_configured && !task.source_urls?.length) {
         setPresetNotice(`“${preset.title}”的应用画像已创建。服务器尚未配置 Brave Search API Key；请补充后再点击“开始查找”，以免产生空搜索。`)

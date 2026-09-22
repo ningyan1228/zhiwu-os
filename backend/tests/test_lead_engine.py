@@ -7,7 +7,7 @@ os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 
 from app.lead_analyzer import LeadAnalyzer
-from app.lead_discovery import _is_public_url, _public_business_email, _score
+from app.lead_discovery import _contains_terms, _is_direct_company_seed, _is_public_url, _public_business_email, _score
 from app.main import LeadSearchTaskIn, lead_task_values_from_product_profile
 
 
@@ -34,6 +34,18 @@ class LeadEngineUnitTests(unittest.TestCase):
         result = asyncio.run(LeadAnalyzer().analyze(company="Example", task_name="ELO", rule_score=62, evidence="public evidence"))
         self.assertEqual(result.confidence_score, 62)
         self.assertEqual(result.score_adjustment, 0)
+
+    def test_application_terms_allow_hyphens_and_singular_plural_variants(self):
+        evidence = "We manufacture water-based flexographic ink for BOPP film printing."
+        hits = _contains_terms(evidence, ["water based flexographic inks", "BOPP films", "PVC compounds"])
+        self.assertEqual(hits, ["water based flexographic inks", "BOPP films"])
+
+    def test_matching_company_seed_is_not_treated_as_a_directory(self):
+        raw = "<title>Example Ink | Water Based Flexographic Inks</title><p>We are a manufacturer of water-based flexographic inks.</p><a href='mailto:sales@example-ink.com'>sales@example-ink.com</a>"
+        text = "Example Ink We are a manufacturer of water-based flexographic inks sales@example-ink.com"
+        self.assertTrue(_is_direct_company_seed(raw, text, "example-ink.com", ["water based flexographic inks"]))
+        directory = "<title>Association Members</title><p>Industry association member directory</p>"
+        self.assertFalse(_is_direct_company_seed(directory, "Industry association member directory", "association.example.org", ["water based flexographic inks"]))
 
     def test_task_snapshot_uses_enabled_keywords_and_sources(self):
         from unittest.mock import patch
