@@ -93,6 +93,30 @@ CURATED_PUBLIC_SEEDS = (
         "signals": {"packaging", "film", "barrier", "ppc", "pha", "cpp", "cpo", "pvdc", "coating"},
         "label": "菲律宾制造商协会公开会员目录",
     },
+    {
+        "url": "https://www.aipma.net/members-directory/",
+        "countries": {"india"},
+        "signals": {"pvc", "compound", "cable", "film", "sheet", "packaging", "bopp", "opp", "coating"},
+        "label": "印度塑料制造商协会公开会员目录",
+    },
+    {
+        "url": "https://vpas.vn/",
+        "countries": {"vietnam"},
+        "signals": {"pvc", "compound", "cable", "film", "sheet", "packaging", "bopp", "opp", "coating"},
+        "label": "越南塑料协会公开会员入口",
+    },
+    {
+        "url": "https://www.faidelhi.org/about/list-of-web-members/",
+        "countries": {"india"},
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "印度肥料协会公开会员目录",
+    },
+    {
+        "url": "https://fiam.org.my/index.php?Itemid=118&cat_id=1&option=com_mtree&view=listcats",
+        "countries": {"malaysia"},
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "马来西亚肥料工业协会公开会员目录",
+    },
 )
 
 
@@ -583,8 +607,9 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
         source_urls = [(str(value).strip(), "自定义公开目录") for value in (task.get("source_urls") or []) if str(value).strip()]
         source_urls.extend((url, label) for url, label in _curated_seed_urls(task) if url not in [item[0] for item in source_urls])
         official_key = str(getattr(cfg, "brave_search_api_key", "") or "").strip()
+        strategy = str(task.get("discovery_strategy") or "public_seed_crawl")
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
-            if official_key:
+            if strategy == "search_plus_crawl" and official_key:
                 for query in queries:
                     try:
                         remaining = limit - len(candidates)
@@ -604,14 +629,22 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                         break
                     await asyncio.sleep(delay)
                 log.append(f"官方搜索完成：{len(queries)} 组查询，{search_request_count} 次 API 请求，得到 {len(candidates)} 个待核验官网候选。")
+            elif strategy == "search_plus_crawl" and not official_key:
+                log.append("任务设置为“搜索 API + 官网核验”，但服务器未配置搜索 Key；本次仅使用公开目录和官网种子。")
             elif not source_urls:
-                log.append("未找到与该任务关键词/国家匹配的公开目录入口；为避免抓取不可靠的搜索页面，本次未发起搜索。")
+                log.append("纯爬虫模式未找到与该任务关键词/国家匹配的公开目录入口；请补充合规公开目录或官网种子。")
+            else:
+                log.append("纯爬虫模式：不调用 GPT、Brave 或搜索结果页，仅从公开目录和已核验官网种子发现企业。")
 
             # User-supplied public directories are useful key-free sources.
             # TDS presets also include a short reviewed set of public downstream
             # company pages. A matching company page is added as a candidate
             # itself; a directory page contributes its public outbound links.
-            for directory_url, directory_label in source_urls[:5]:
+            # A preset may combine several reviewed company sites and several
+            # association directories. Read enough distinct entrances for
+            # coverage, while retaining a finite, low-frequency work budget.
+            source_limit = min(20, max(12, (limit + 4) // 4))
+            for directory_url, directory_label in source_urls[:source_limit]:
                 allowed, reason = _is_public_url(directory_url)
                 if not allowed:
                     skipped += 1; log.append(f"跳过目录 {directory_url}：{reason}"); continue

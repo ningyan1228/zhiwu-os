@@ -7,7 +7,7 @@ os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 
 from app.lead_analyzer import LeadAnalyzer
-from app.lead_discovery import _contains_terms, _is_direct_company_seed, _is_public_url, _public_business_email, _score
+from app.lead_discovery import _contains_terms, _curated_seed_urls, _is_direct_company_seed, _is_public_url, _public_business_email, _score
 from app.main import LeadSearchTaskIn, lead_task_values_from_product_profile
 
 
@@ -66,6 +66,12 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertIn("raw material supplier", result["profile_exclusion_rules"])
         self.assertIn("https://directory.example.org/members", result["source_urls"])
         self.assertNotIn("https://elsewhere.example.org", result["source_urls"])
+
+    def test_pure_crawler_is_the_default_and_uses_sector_entrances(self):
+        task = LeadSearchTaskIn(task_name="Fertilizer Malaysia", application_keywords=["controlled release fertilizer"], target_countries=["Malaysia"])
+        self.assertEqual(task.discovery_strategy, "public_seed_crawl")
+        sources = _curated_seed_urls({"task_name": "Fertilizer", "application_keywords": ["controlled release fertilizer"], "target_countries": ["Malaysia"]})
+        self.assertIn(("https://fiam.org.my/index.php?Itemid=118&cat_id=1&option=com_mtree&view=listcats", "马来西亚肥料工业协会公开会员目录"), sources)
 
 
 if __name__ == "__main__":

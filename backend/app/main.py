@@ -390,6 +390,9 @@ class TaskIn(BaseModel):
 class LeadSearchTaskIn(BaseModel):
     task_name: str = Field(min_length=1, max_length=200)
     discovery_mode: Literal["需求客户", "供应工厂"] = "需求客户"
+    # The default deliberately needs no commercial search account.  Search API
+    # discovery remains opt-in for users that later choose to configure one.
+    discovery_strategy: Literal["public_seed_crawl", "search_plus_crawl"] = "public_seed_crawl"
     product_id: str | None = None
     product_keywords: list[str] = []
     application_keywords: list[str] = []

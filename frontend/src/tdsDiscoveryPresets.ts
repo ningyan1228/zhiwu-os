@@ -26,6 +26,7 @@ export const tdsDiscoveryPresets: TdsDiscoveryPreset[] = [
     task: {
       task_name: 'TDS预设｜NL-W1201｜水性 PP/OPP 涂层客户',
       discovery_mode: '需求客户',
+      discovery_strategy: 'public_seed_crawl',
       product_id: null,
       product_keywords: ['NL-W1201', 'water-based polyolefin emulsion'],
       application_keywords: ['water based flexographic inks', 'waterborne flexographic inks', 'water based printing inks', 'water based inks', 'BOPP films', 'OPP films', 'polypropylene coatings', 'waterborne primers'],
@@ -53,6 +54,7 @@ export const tdsDiscoveryPresets: TdsDiscoveryPreset[] = [
     task: {
       task_name: 'TDS预设｜ELO｜柔性 PVC 与配方改性客户',
       discovery_mode: '需求客户',
+      discovery_strategy: 'public_seed_crawl',
       product_id: null,
       product_keywords: ['Epoxidized Linseed Oil', 'ELO bio-based plasticizer'],
       application_keywords: ['flexible PVC compounds', 'PVC compounds', 'PVC cable compounds', 'PVC films and sheets', 'PVC artificial leather', 'PVC flooring', 'industrial sealants'],
@@ -60,7 +62,7 @@ export const tdsDiscoveryPresets: TdsDiscoveryPreset[] = [
       excluded_countries: ['China'],
       target_company_types: ['PVC compound manufacturer', 'cable compound manufacturer', 'PVC film manufacturer', 'artificial leather manufacturer', 'manufacturer', 'formulator'],
       profile_exclusion_rules: ['trading company', 'chemical raw material supplier', 'wholesaler', 'marketplace', 'association', 'directory'],
-      source_urls: ['https://www.pvccompound.in/', 'https://www.periwalpolymers.com/', 'https://www.konnarkpolymer.com/', 'https://www.devpolymer.com/'],
+      source_urls: ['https://www.pvccompound.in/', 'https://www.periwalpolymers.com/', 'https://www.konnarkpolymer.com/', 'https://www.devpolymer.com/', 'https://www.snasb.com/', 'https://polymer-resources.com/', 'https://uniworthindiacorp.com/', 'https://aromapolymers.in/', 'https://www.takkarpolychem.com/', 'https://sankhlavinyl.com/'],
       search_language: 'English',
       max_results: 50,
       daily_enabled: false,
@@ -78,6 +80,7 @@ export const tdsDiscoveryPresets: TdsDiscoveryPreset[] = [
     task: {
       task_name: 'TDS预设｜缓释肥包膜剂｜控释肥与包膜尿素客户',
       discovery_mode: '需求客户',
+      discovery_strategy: 'public_seed_crawl',
       product_id: null,
       product_keywords: ['slow release fertilizer coating agent', 'fertilizer coating material'],
       application_keywords: ['polymer coated urea', 'controlled release fertilizer', 'coated NPK fertilizer', 'slow release fertilizer', 'fertilizer coating'],
@@ -85,7 +88,7 @@ export const tdsDiscoveryPresets: TdsDiscoveryPreset[] = [
       excluded_countries: ['China'],
       target_company_types: ['controlled release fertilizer manufacturer', 'coated urea manufacturer', 'fertilizer manufacturer', 'NPK manufacturer', 'manufacturer'],
       profile_exclusion_rules: ['fertilizer retailer', 'agricultural store', 'trading company', 'wholesaler', 'marketplace', 'association', 'directory'],
-      source_urls: ['https://www.smart-fert.com/products/', 'https://twinarrow.com.my/', 'https://www.crfagritech.com/', 'https://www.uregold.com/'],
+      source_urls: ['https://www.smart-fert.com/products/', 'https://twinarrow.com.my/', 'https://www.crfagritech.com/', 'https://www.uregold.com/', 'https://www.skspecialties.com.my/product/', 'https://www.growchem.com.my/growpol/', 'https://www.plantsafe.com.my/', 'https://www.hapseng.com.my/'],
       search_language: 'English',
       max_results: 50,
       daily_enabled: false,

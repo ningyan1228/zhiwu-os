@@ -40,4 +40,4 @@ docker compose up --build
 
 ## 外贸客户线索采集 MVP
 
-现有 CRM 已扩展为“公开目录/用户种子 → 官网核验 → 规则或可选 AI 评分 → 人工审核 → CRM → CSV 导出”的真实服务端闭环。请在既有迁移之后执行 [`backend/supabase/v1_27_foreign_trade_lead_engine.sql`](backend/supabase/v1_27_foreign_trade_lead_engine.sql)，并阅读 [外贸线索模块运行与部署说明](docs/FOREIGN_TRADE_LEAD_ENGINE.md)。
+现有 CRM 已扩展为“公开目录/用户种子 → 官网核验 → 规则或可选 AI 评分 → 人工审核 → CRM → CSV 导出”的真实服务端闭环。默认使用不依赖搜索 Key 的纯爬虫模式；请在既有迁移之后依次执行 [`backend/supabase/v1_27_foreign_trade_lead_engine.sql`](backend/supabase/v1_27_foreign_trade_lead_engine.sql) 和 [`backend/supabase/v1_28_pure_crawler_discovery_strategy.sql`](backend/supabase/v1_28_pure_crawler_discovery_strategy.sql)，并阅读 [外贸线索模块运行与部署说明](docs/FOREIGN_TRADE_LEAD_ENGINE.md)。
