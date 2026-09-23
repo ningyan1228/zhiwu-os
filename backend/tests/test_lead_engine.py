@@ -9,6 +9,7 @@ os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 from app.lead_analyzer import LeadAnalyzer
 from app.lead_discovery import _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
 from app.customer_development import canonical_domain, draft_email, nl_fc_pu_application_terms, nl_fc_pu_queries, public_http_url, score_lead
+from app.tds_discovery import application_search_terms, extract_explicit_applications
 from app.main import LeadSearchTaskIn, create_lead_search_task, lead_task_values_from_product_profile
 
 
@@ -125,6 +126,17 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertIn('Example Fertilizantes', subject)
         self.assertGreaterEqual(len(body.split()), 80)
         self.assertLessEqual(len(body.split()), 130)
+
+    def test_tds_application_extraction_requires_an_explicit_use_marker(self):
+        applications = extract_explicit_applications([
+            "Product name: Internal Grade X\nApplications: controlled release fertilizer coating; coated urea.\nStorage: keep dry.",
+            "This material has good appearance.\nNo application declaration on this page.",
+        ])
+        self.assertTrue(applications)
+        self.assertTrue(all(item["evidence_status"] == "TDS明确" for item in applications))
+        self.assertFalse(any("Internal Grade X" == item["application_name"] for item in applications))
+        terms = application_search_terms({"application_name": "coated urea", "target_company_types": ["manufacturer"]}, "Brazil")
+        self.assertTrue(all("Internal Grade X" not in item for item in terms))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from .strict_lead_import import import_cpph_strict_records
 from .customer_development import NL_FC_PU_CAMPAIGN, canonical_domain, draft_email, html_text, nl_fc_pu_application_terms, nl_fc_pu_queries, normalize_company_name, public_email, public_http_url, robots_permit, score_lead
+from .tds_discovery import application_search_terms, content_sha256, extract_explicit_applications, parse_tds_upload
 
 class Settings(BaseSettings):
     supabase_url: str
@@ -454,6 +455,33 @@ class DevelopmentLeadStatusIn(BaseModel):
 class OutreachDraftApprovalIn(BaseModel):
     approval_state: Literal["已审核", "已拒绝"]
     approval_note: str | None = Field(default=None, max_length=1000)
+
+class TdsApplicationIn(BaseModel):
+    application_name: str = Field(min_length=1, max_length=180)
+    description: str | None = Field(default=None, max_length=2000)
+    substrate_or_object: str | None = Field(default=None, max_length=1000)
+    material_function: str | None = Field(default=None, max_length=1000)
+    process_conditions: str | None = Field(default=None, max_length=3000)
+    limitations: str | None = Field(default=None, max_length=3000)
+    evidence_excerpt: str | None = Field(default=None, max_length=2000)
+    evidence_page: int | None = Field(default=None, ge=1)
+    evidence_status: Literal["TDS明确", "推测待确认", "用户补充"] = "用户补充"
+    target_company_types: list[str] = []
+    official_business_evidence: str | None = Field(default=None, max_length=2000)
+    exclusion_notes: str | None = Field(default=None, max_length=2000)
+    search_terms: list[str] = []
+    local_search_terms: list[str] = []
+    selected: bool = False
+    enabled: bool = True
+    revision_note: str | None = Field(default=None, max_length=1000)
+
+class ApplicationDiscoveryTaskIn(BaseModel):
+    tds_document_id: str
+    application_ids: list[str] = Field(min_length=1, max_length=20)
+    target_region: str | None = Field(default=None, max_length=100)
+    task_name: str | None = Field(default=None, max_length=240)
+    candidate_limit: int = Field(default=20, ge=1, le=500)
+    search_budget: int = Field(default=0, ge=0, le=10000)
 
 class ProductKeywordIn(BaseModel):
     product_id: str
@@ -1294,6 +1322,115 @@ async def import_cpph_2a_strict_leads(
 @app.get("/api/customer-leads")
 async def list_customer_leads(authorization: str | None = Header(default=None), limit: int = Query(300, le=500)):
     return await supabase(f"customer_leads?select=*&order=discovered_at.desc&limit={limit}", bearer(authorization))
+
+async def tds_document(token: str, document_id: str) -> dict[str, Any]:
+    rows = await supabase(f"tds_documents?id=eq.{document_id}&select=*&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "TDS 文档不存在")
+    return rows[0]
+
+@app.get("/api/tds-documents")
+async def list_tds_documents(authorization: str | None = Header(default=None)):
+    return await supabase("tds_documents?select=*&order=parsed_at.desc", bearer(authorization))
+
+@app.post("/api/tds-documents/parse", status_code=201)
+async def parse_tds_document(
+    file: UploadFile = File(...), product_id: str | None = Form(default=None), document_version: str | None = Form(default=None),
+    authorization: str | None = Header(default=None),
+):
+    """Parse a user-uploaded PDF/DOCX without inferring unsupported uses."""
+    token = bearer(authorization)
+    filename = (file.filename or "").strip()
+    if not filename.casefold().endswith((".pdf", ".docx")):
+        raise HTTPException(422, "请上传 PDF 或 DOCX 格式的 TDS。")
+    content = await file.read()
+    if not content or len(content) > 15 * 1024 * 1024:
+        raise HTTPException(422, "TDS 文件必须在 1 字节到 15 MB 之间。")
+    if product_id:
+        product = await supabase(f"products?id=eq.{product_id}&archived_at=is.null&select=id&limit=1", token)
+        if not product:
+            raise HTTPException(422, "关联的内部产品不存在。内部牌号仅作关联，不会进入搜索词。")
+    digest = content_sha256(content)
+    existing = await supabase(f"tds_documents?content_sha256=eq.{digest}&select=*&limit=1", token)
+    if existing:
+        applications = await supabase(f"tds_applications?tds_document_id=eq.{existing[0]['id']}&select=*&order=created_at.asc", token)
+        return {"document": existing[0], "applications": applications, "reused": True, "message": "该 TDS 已解析过，已保留原有应用与修改记录。"}
+    parsed = parse_tds_upload(filename, content)
+    mime_type = "application/pdf" if filename.casefold().endswith(".pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    values = {
+        "product_id": product_id, "original_file_name": filename[:300], "document_version": (document_version or "").strip() or None,
+        "mime_type": mime_type, "byte_size": len(content), "content_sha256": digest, "parse_status": parsed.status,
+        "parse_error": parsed.error, "extracted_text": parsed.text[:500000] or None,
+        "extracted_summary": re.sub(r"\s+", " ", parsed.text).strip()[:1600] or None,
+    }
+    document = (await supabase("tds_documents", token, "POST", values))[0]
+    applications: list[dict[str, Any]] = []
+    if parsed.status == "已解析":
+        for proposal in extract_explicit_applications(parsed.pages):
+            applications.append((await supabase("tds_applications", token, "POST", {"tds_document_id": document["id"], **proposal}))[0])
+    message = "已从 TDS 原文提取待确认应用。请逐项编辑并确认；未确认的应用不会进入搜索。" if applications else (parsed.error or "未识别到明确应用；请依据 TDS 原文手动添加应用。")
+    return {"document": document, "applications": applications, "reused": False, "message": message}
+
+@app.get("/api/tds-documents/{document_id}/applications")
+async def list_tds_applications(document_id: str, authorization: str | None = Header(default=None)):
+    token = bearer(authorization); await tds_document(token, document_id)
+    return await supabase(f"tds_applications?tds_document_id=eq.{document_id}&select=*&order=created_at.asc", token)
+
+@app.post("/api/tds-documents/{document_id}/applications", status_code=201)
+async def create_tds_application(document_id: str, payload: TdsApplicationIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization); await tds_document(token, document_id)
+    values = payload.model_dump(exclude_none=True)
+    values.update({"tds_document_id": document_id, "updated_at": datetime.now().isoformat()})
+    return (await supabase("tds_applications", token, "POST", values))[0]
+
+@app.patch("/api/tds-applications/{application_id}")
+async def update_tds_application(application_id: str, payload: TdsApplicationIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    existing = await supabase(f"tds_applications?id=eq.{application_id}&select=id&limit=1", token)
+    if not existing:
+        raise HTTPException(404, "TDS 应用不存在")
+    values = payload.model_dump(exclude_none=True); values["updated_at"] = datetime.now().isoformat()
+    return (await supabase(f"tds_applications?id=eq.{application_id}", token, "PATCH", values))[0]
+
+@app.get("/api/application-discovery-tasks")
+async def list_application_discovery_tasks(authorization: str | None = Header(default=None)):
+    return await supabase("application_discovery_tasks?select=*&order=created_at.desc", bearer(authorization))
+
+@app.post("/api/application-discovery-tasks", status_code=201)
+async def create_application_discovery_task(payload: ApplicationDiscoveryTaskIn, authorization: str | None = Header(default=None)):
+    """Freeze confirmed application cards.  Search execution is configured separately."""
+    token = bearer(authorization); await tds_document(token, payload.tds_document_id)
+    encoded_ids = ",".join(payload.application_ids)
+    applications = await supabase(f"tds_applications?id=in.({encoded_ids})&tds_document_id=eq.{payload.tds_document_id}&enabled=eq.true&selected=eq.true&select=*", token)
+    if len(applications) != len(set(payload.application_ids)):
+        raise HTTPException(422, "任务只能选择属于该 TDS、已启用且已确认选中的应用。")
+    snapshot = [{key: row.get(key) for key in ("id", "application_name", "description", "substrate_or_object", "material_function", "process_conditions", "limitations", "evidence_excerpt", "evidence_page", "evidence_status", "target_company_types", "official_business_evidence", "exclusion_notes", "search_terms", "local_search_terms")} for row in applications]
+    application_label = " / ".join(str(row["application_name"]) for row in applications[:2])
+    region = (payload.target_region or "").strip()
+    task_name = (payload.task_name or "").strip() or f"{application_label} · {region or '全球'}"
+    provider = "Brave Search API" if settings().brave_search_api_key else None
+    values = {"tds_document_id": payload.tds_document_id, "task_name": task_name, "target_region": region or None, "candidate_limit": payload.candidate_limit, "search_budget": payload.search_budget, "application_snapshot": snapshot, "status": "待运行" if provider else "待配置", "search_provider": provider, "provider_notice": None if provider else "尚未配置合规搜索服务；当前可保存应用、导入公开 CSV/PDF 和人工官网证据，但不会伪造自动搜索结果。"}
+    task = (await supabase("application_discovery_tasks", token, "POST", values))[0]
+    for application in applications:
+        terms = list(application.get("search_terms") or []) or application_search_terms(application, region)
+        for term in terms:
+            await supabase("application_discovery_queries", token, "POST", {"application_discovery_task_id": task["id"], "tds_application_id": application["id"], "query_text": term, "query_kind": "pdf_directory" if "filetype:pdf" in term else "web", "execution_status": "待运行" if provider else "待配置"})
+    queries = await supabase(f"application_discovery_queries?application_discovery_task_id=eq.{task['id']}&select=*&order=created_at.asc", token)
+    return {"task": task, "queries": queries, "message": "已锁定应用快照并生成可审查查询。" if provider else values["provider_notice"]}
+
+@app.get("/api/application-discovery-tasks/{task_id}/workspace")
+async def application_discovery_workspace(task_id: str, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    rows = await supabase(f"application_discovery_tasks?id=eq.{task_id}&select=*&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "应用客户发现任务不存在")
+    task = rows[0]
+    queries, matches, leads = await asyncio.gather(
+        supabase(f"application_discovery_queries?application_discovery_task_id=eq.{task_id}&select=*&order=created_at.asc", token),
+        supabase(f"lead_application_matches?application_discovery_task_id=eq.{task_id}&select=*&order=evidence_strength.desc", token),
+        supabase(f"customer_leads?application_discovery_task_id=eq.{task_id}&select=*&order=match_score.desc,discovered_at.desc", token),
+    )
+    return {"task": task, "queries": queries, "matches": matches, "leads": leads}
 
 async def development_campaign(token: str, campaign_id: str) -> dict[str, Any]:
     rows = await supabase(f"development_campaigns?id=eq.{campaign_id}&select=*&limit=1", token)
