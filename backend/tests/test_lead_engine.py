@@ -244,6 +244,16 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertEqual(provider, "内置公开行业目录纯爬虫")
         self.assertIn("2 个", notice)
 
+    def test_curated_sources_keep_fertilizer_out_of_generic_coating_directories(self):
+        fertilizer = _curated_seed_urls({"application_keywords": ["fertilizer coating", "controlled release fertilizer"]})
+        self.assertEqual(len(fertilizer), 2)
+        self.assertTrue(all("肥料" in label for _, label in fertilizer))
+        elo = _curated_seed_urls({"application_keywords": ["polymer compound", "industrial coating", "adhesive", "sealant", "printing ink"]})
+        labels = [label for _, label in elo]
+        self.assertTrue(any("油墨" in label for label in labels))
+        self.assertTrue(any("胶黏剂" in label for label in labels))
+        self.assertFalse(any("肥料" in label for label in labels))
+
 
 if __name__ == "__main__":
     unittest.main()

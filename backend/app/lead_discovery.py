@@ -71,51 +71,73 @@ SUPPLIER_EXCLUSION_SIGNALS = (
 CURATED_PUBLIC_SEEDS = (
     {
         "url": "https://ifca.net.in/members.php",
+        "sector": "packaging",
         "countries": {"india"},
         "signals": {"packaging", "film", "barrier", "ppc", "pha", "cpp", "cpo", "pvdc", "coating"},
         "label": "印度软包装协会公开会员目录",
     },
     {
         "url": "https://ifibca.org/members/",
+        "sector": "packaging",
         "countries": {"india"},
         "signals": {"packaging", "film", "barrier", "ppc", "pha", "cpp", "cpo", "pvdc", "coating"},
         "label": "印度包装协会公开会员目录",
     },
     {
         "url": "https://nvc.nl/_members.php?entrant=2&order=city&ordermode=DESC",
+        "sector": "packaging",
         "countries": {"netherlands", "europe"},
         "signals": {"packaging", "film", "barrier", "ppc", "pha", "cpp", "cpo", "pvdc", "coating"},
         "label": "荷兰包装中心公开会员目录",
     },
     {
         "url": "https://scmap.org/members/memberlist/",
+        "sector": "packaging",
         "countries": {"philippines"},
         "signals": {"packaging", "film", "barrier", "ppc", "pha", "cpp", "cpo", "pvdc", "coating"},
         "label": "菲律宾制造商协会公开会员目录",
     },
     {
         "url": "https://www.aipma.net/members-directory/",
+        "sector": "plastics",
         "countries": {"india"},
         "signals": {"pvc", "compound", "cable", "film", "sheet", "packaging", "bopp", "opp", "coating"},
         "label": "印度塑料制造商协会公开会员目录",
     },
     {
         "url": "https://vpas.vn/",
+        "sector": "plastics",
         "countries": {"vietnam"},
         "signals": {"pvc", "compound", "cable", "film", "sheet", "packaging", "bopp", "opp", "coating"},
         "label": "越南塑料协会公开会员入口",
     },
     {
         "url": "https://www.faidelhi.org/about/list-of-web-members/",
+        "sector": "fertilizer",
         "countries": {"india"},
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "印度肥料协会公开会员目录",
     },
     {
         "url": "https://fiam.org.my/index.php?Itemid=118&cat_id=1&option=com_mtree&view=listcats",
+        "sector": "fertilizer",
         "countries": {"malaysia"},
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "马来西亚肥料工业协会公开会员目录",
+    },
+    {
+        "url": "https://www.eupia.org/about-us/association-membership/companies/",
+        "sector": "coatings",
+        "countries": {"europe"},
+        "signals": {"coating", "paint", "printing ink", "industrial ink", "ink manufacturer", "resin modification"},
+        "label": "欧洲印刷油墨协会公开会员公司目录",
+    },
+    {
+        "url": "https://www.feica.eu/about-feica/membership/feica-members/",
+        "sector": "adhesives",
+        "countries": {"europe"},
+        "signals": {"adhesive", "sealant", "resin modification"},
+        "label": "欧洲胶黏剂与密封剂协会公开会员公司目录",
     },
 )
 
@@ -617,9 +639,24 @@ def _curated_seed_urls(task: dict[str, Any]) -> list[tuple[str, str]]:
         [task.get("task_name") or "", *(task.get("product_keywords") or []), *(task.get("application_keywords") or [])]
     ).casefold()
     countries = {str(value).casefold() for value in (task.get("target_countries") or [])}
+    fertilizer_markers = ("fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk")
+    if any(marker in focus for marker in fertilizer_markers):
+        # Fertilizer coating is an application, not a coatings-industry lead.
+        # Give this strong vertical precedence over generic words like coating.
+        sectors = {"fertilizer"}
+    else:
+        sectors: set[str] = set()
+        if any(marker in focus for marker in ("packaging", "film", "bopp", "opp", "flexographic", "barrier")):
+            sectors.add("packaging")
+        if any(marker in focus for marker in ("plastic", "polymer", "compound", "polypropylene", " pp ", " pe ", "pvc")):
+            sectors.add("plastics")
+        if any(marker in focus for marker in ("coating", "paint", "printing ink", "industrial ink", "ink manufacturer")):
+            sectors.add("coatings")
+        if any(marker in focus for marker in ("adhesive", "sealant")):
+            sectors.add("adhesives")
     selected: list[tuple[str, str]] = []
     for seed in CURATED_PUBLIC_SEEDS:
-        matches_focus = any(signal in focus for signal in seed["signals"])
+        matches_focus = seed["sector"] in sectors and any(signal in focus for signal in seed["signals"])
         matches_country = not countries or bool(countries.intersection(seed["countries"]))
         if matches_focus and matches_country:
             selected.append((seed["url"], seed["label"]))
