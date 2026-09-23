@@ -1138,17 +1138,29 @@ async def delete_lead_search_task(task_id: str, authorization: str | None = Head
     """Cancel any active work, then soft-delete only the task configuration."""
     token = bearer(authorization)
     now = datetime.now().astimezone().isoformat()
-    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", token, "PATCH", {
-        "cancel_requested": True, "pause_requested": False, "run_state": "已取消",
-        "status": "暂停", "daily_enabled": False, "deleted_at": now, "updated_at": now,
-    })
+    try:
+        rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", token, "PATCH", {
+            "cancel_requested": True, "pause_requested": False, "run_state": "已取消",
+            "status": "暂停", "daily_enabled": False, "deleted_at": now, "updated_at": now,
+        })
+    except HTTPException:
+        # The task must remain removable even if a very old deployment has not
+        # yet received the optional cancellation columns.
+        rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", token, "PATCH", {
+            "status": "暂停", "daily_enabled": False, "deleted_at": now, "updated_at": now,
+        })
     if not rows: raise HTTPException(404, "Lead search task not found")
     # A worker checks cancel_requested between pages. Mark stuck or queued runs
     # terminal immediately so they cannot make the deleted task look permanent.
-    await supabase(f"lead_discovery_runs?task_id=eq.{task_id}&status=eq.%E8%BF%90%E8%A1%8C%E4%B8%AD", token, "PATCH", {
-        "status": "跳过", "finished_at": now,
-        "error_message": "用户删除任务配置，已取消未完成的公开网页核验。",
-    })
+    try:
+        await supabase(f"lead_discovery_runs?task_id=eq.{task_id}&status=eq.%E8%BF%90%E8%A1%8C%E4%B8%AD", token, "PATCH", {
+            "status": "跳过", "finished_at": now,
+            "error_message": "用户删除任务配置，已取消未完成的公开网页核验。",
+        })
+    except HTTPException:
+        # The task is already hidden; retaining an old run row must not turn a
+        # successful configuration deletion into a browser-visible 500.
+        pass
     ACTIVE_LEAD_TASKS.discard(task_id)
     return {"deleted": True, "task_id": task_id, "message": "已取消运行并删除任务；已有线索与运行记录已保留。"}
 
