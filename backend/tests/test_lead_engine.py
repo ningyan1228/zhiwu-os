@@ -190,10 +190,14 @@ class LeadEngineUnitTests(unittest.TestCase):
             "application_name": "water-based ink for BOPP film",
             "substrate_or_object": "BOPP packaging film",
             "material_function": "adhesion promoter",
+            "search_terms": ["water based flexographic ink manufacturer"],
+            "local_search_terms": ["fabricante tinta flexográfica base água"],
             "target_company_types": ["ink manufacturer", "flexible packaging converter"],
             "exclusion_notes": "exclude resin suppliers",
         }]})
         self.assertIn("water-based ink for BOPP film", applications)
+        self.assertIn("water based flexographic ink manufacturer", applications)
+        self.assertIn("fabricante tinta flexográfica base água", applications)
         self.assertIn("ink manufacturer", company_types)
         self.assertEqual(exclusions, ["exclude resin suppliers"])
         self.assertFalse(any("NL-" in value for value in applications))
@@ -221,6 +225,24 @@ class LeadEngineUnitTests(unittest.TestCase):
             provider, notice = asyncio.run(application_discovery_provider("Bearer test", None, task))
         self.assertEqual(provider, "内置公开行业目录纯爬虫")
         self.assertIn("公开入口", notice)
+
+    def test_application_provider_uses_builtin_card_search_terms(self):
+        from unittest.mock import patch
+
+        async def fake_supabase(path, token, method="GET", payload=None):
+            if path.startswith("crawl_sources?"):
+                return []
+            raise AssertionError(path)
+
+        task = {"application_snapshot": [{
+            "application_name": "缓释肥与控释肥的喷涂包膜生产",
+            "search_terms": ["controlled release fertilizer", "fertilizer coating"],
+            "target_company_types": ["缓释肥制造商"],
+        }]}
+        with patch("app.main.supabase", fake_supabase):
+            provider, notice = asyncio.run(application_discovery_provider("Bearer test", None, task))
+        self.assertEqual(provider, "内置公开行业目录纯爬虫")
+        self.assertIn("2 个", notice)
 
 
 if __name__ == "__main__":

@@ -1461,7 +1461,24 @@ async def update_tds_application(application_id: str, payload: TdsApplicationIn,
 
 @app.get("/api/application-discovery-tasks")
 async def list_application_discovery_tasks(authorization: str | None = Header(default=None)):
-    return await supabase("application_discovery_tasks?select=*&order=created_at.desc", bearer(authorization))
+    token = bearer(authorization)
+    rows = await supabase("application_discovery_tasks?select=*&order=created_at.desc", token)
+    # A task may have been saved as "待配置" before a newly shipped curated
+    # source matcher became available. Re-evaluate it on refresh so the user
+    # does not have to delete and recreate an otherwise valid task.
+    for index, task in enumerate(rows):
+        if task.get("status") != "待配置":
+            continue
+        provider, notice = await application_discovery_provider(token, task.get("target_region"), task)
+        if not provider:
+            continue
+        updated = await supabase(f"application_discovery_tasks?id=eq.{task['id']}", token, "PATCH", {
+            "status": "待运行", "search_provider": provider, "provider_notice": notice,
+            "failure_message": None, "updated_at": datetime.now().astimezone().isoformat(),
+        })
+        if updated:
+            rows[index] = updated[0]
+    return rows
 
 async def application_discovery_provider(token: str, target_region: str | None, task: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
     """Return only a provider that can currently yield real public pages."""
@@ -1502,6 +1519,13 @@ def application_task_profile(task: dict[str, Any]) -> tuple[list[str], list[str]
             value = str(item.get(key) or "").strip()
             if value:
                 applications.append(value)
+        # Built-in cards retain short English/local-language application
+        # phrases for finding public industry entrances and matching official
+        # company pages. They describe the downstream use, never our grade.
+        for key in ("search_terms", "local_search_terms"):
+            applications.extend(
+                str(value).strip() for value in (item.get(key) or []) if str(value).strip()
+            )
         company_types.extend(str(value).strip() for value in (item.get("target_company_types") or []) if str(value).strip())
         if item.get("exclusion_notes"):
             exclusions.append(str(item["exclusion_notes"]).strip())
