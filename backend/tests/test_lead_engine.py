@@ -10,7 +10,7 @@ from app.lead_analyzer import LeadAnalyzer
 from app.lead_discovery import _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
 from app.customer_development import canonical_domain, draft_email, nl_fc_pu_application_terms, nl_fc_pu_queries, public_http_url, score_lead
 from app.tds_discovery import application_search_terms, extract_explicit_applications
-from app.main import LeadSearchTaskIn, create_lead_search_task, lead_task_values_from_product_profile
+from app.main import LeadSearchTaskIn, application_match_status, application_task_profile, create_lead_search_task, lead_task_values_from_product_profile
 
 
 class LeadEngineUnitTests(unittest.TestCase):
@@ -137,6 +137,29 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertFalse(any("Internal Grade X" == item["application_name"] for item in applications))
         terms = application_search_terms({"application_name": "coated urea", "target_company_types": ["manufacturer"]}, "Brazil")
         self.assertTrue(all("Internal Grade X" not in item for item in terms))
+
+    def test_application_task_profile_uses_applications_not_product_grade(self):
+        applications, company_types, exclusions = application_task_profile({"application_snapshot": [{
+            "application_name": "water-based ink for BOPP film",
+            "substrate_or_object": "BOPP packaging film",
+            "material_function": "adhesion promoter",
+            "target_company_types": ["ink manufacturer", "flexible packaging converter"],
+            "exclusion_notes": "exclude resin suppliers",
+        }]})
+        self.assertIn("water-based ink for BOPP film", applications)
+        self.assertIn("ink manufacturer", company_types)
+        self.assertEqual(exclusions, ["exclude resin suppliers"])
+        self.assertFalse(any("NL-" in value for value in applications))
+
+    def test_application_match_remains_pending_without_process_proof(self):
+        status, reason, pending = application_match_status({
+            "lead_layer": "直接需求候选",
+            "discovered_application_keywords": ["coated urea"],
+            "product_evidence_summary": "Official product page lists coated urea.",
+        }, {"application_name": "coated urea", "description": "controlled-release fertilizer"})
+        self.assertEqual(status, "应用相关但工艺未知")
+        self.assertIn("Official product page", reason)
+        self.assertIn("人工确认", pending)
 
 
 if __name__ == "__main__":

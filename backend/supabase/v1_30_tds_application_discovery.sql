@@ -58,6 +58,7 @@ create table if not exists public.application_discovery_tasks (
   status text not null default '草稿' check (status in ('草稿', '待配置', '待运行', '运行中', '已完成', '部分失败', '已取消')),
   search_provider text,
   provider_notice text,
+  legacy_lead_task_id uuid references public.lead_search_tasks(id) on delete set null,
   discovered_count integer not null default 0,
   verified_count integer not null default 0,
   matched_count integer not null default 0,
@@ -66,6 +67,12 @@ create table if not exists public.application_discovery_tasks (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Retry-safe for databases where an earlier editor selection created the
+-- table before this bridge column was introduced.
+alter table public.application_discovery_tasks
+  add column if not exists legacy_lead_task_id uuid
+  references public.lead_search_tasks(id) on delete set null;
 
 create table if not exists public.application_discovery_queries (
   id uuid primary key default gen_random_uuid(),
@@ -125,7 +132,7 @@ alter table public.lead_contacts
 create index if not exists tds_documents_owner_idx on public.tds_documents(owner_user_id, parsed_at desc);
 create index if not exists tds_applications_document_idx on public.tds_applications(tds_document_id, selected, enabled, created_at);
 create index if not exists application_discovery_tasks_owner_idx on public.application_discovery_tasks(owner_user_id, created_at desc);
-create index if not exists application_discovery_queries_task_idx on public.application_discovery_queries(application_discovery_task_id, created_at);
+create index if not exists application_discovery_queries_task_idx on public.application_discovery_queries(application_task_id, created_at);
 create index if not exists lead_application_matches_task_idx on public.lead_application_matches(application_task_id, evidence_strength desc);
 do $$
 begin

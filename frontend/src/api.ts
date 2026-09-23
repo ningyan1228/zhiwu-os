@@ -161,6 +161,7 @@ export const api = {
   updateTdsApplication: (id: string, payload: Omit<TdsApplication, 'id' | 'tds_document_id' | 'updated_at' | 'created_at'>) => request<TdsApplication>(`/api/tds-applications/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   applicationDiscoveryTasks: () => request<ApplicationDiscoveryTask[]>('/api/application-discovery-tasks'),
   createApplicationDiscoveryTask: (payload: { tds_document_id: string; application_ids: string[]; target_region?: string; task_name?: string; candidate_limit: number; search_budget: number }) => request<{ task: ApplicationDiscoveryTask; queries: ApplicationDiscoveryQuery[]; message: string }>('/api/application-discovery-tasks', { method: 'POST', body: JSON.stringify(payload) }),
+  runApplicationDiscoveryTask: (taskId: string) => request<{ status: string; message: string }>(`/api/application-discovery-tasks/${taskId}/run`, { method: 'POST' }),
   applicationDiscoveryWorkspace: (taskId: string) => request<ApplicationDiscoveryWorkspace>(`/api/application-discovery-tasks/${taskId}/workspace`),
   leadSearchTasks: () => request<LeadSearchTask[]>('/api/lead-search-tasks'),
   systemHealth: () => request<{ status: string; service: string; search_configured: boolean; ai_configured: boolean }>('/api/system/health'),

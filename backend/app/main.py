@@ -63,6 +63,7 @@ app = FastAPI(title="Zhiwu OS API", version="0.1.0")
 # Guards the short interval before a background discovery task writes its run
 # row.  The database check below remains the cross-request source of truth.
 ACTIVE_LEAD_TASKS: set[str] = set()
+ACTIVE_APPLICATION_TASKS: set[str] = set()
 LEAD_RUN_STALE_AFTER = timedelta(hours=6)
 app.add_middleware(CORSMiddleware, allow_origins=settings().allowed_origins.split(","), allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -1396,6 +1397,162 @@ async def update_tds_application(application_id: str, payload: TdsApplicationIn,
 async def list_application_discovery_tasks(authorization: str | None = Header(default=None)):
     return await supabase("application_discovery_tasks?select=*&order=created_at.desc", bearer(authorization))
 
+async def application_discovery_provider(token: str, target_region: str | None) -> tuple[str | None, str | None]:
+    """Return only a provider that can currently yield real public pages."""
+    if settings().brave_search_api_key:
+        return "Brave Search API + 官网核验", None
+    sources = await supabase("crawl_sources?enabled=eq.true&select=start_url,country", token)
+    region = str(target_region or "").strip().casefold()
+    usable = [
+        row for row in sources
+        if row.get("start_url") and (
+            not region or region == "全球" or not row.get("country")
+            or str(row.get("country") or "").strip().casefold() == region
+        )
+    ]
+    if usable:
+        return "公开目录纯爬虫", f"已匹配 {len(usable)} 个已启用公开入口；系统将逐页检查 robots.txt 并核验企业官网。"
+    return None, "当前目标地区没有已启用的公开目录入口，且未配置搜索 API；任务可以保存，但不会伪造候选公司。"
+
+def application_task_profile(task: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    """Build an application-led profile without TDS filenames or product grades."""
+    applications: list[str] = []
+    company_types: list[str] = []
+    exclusions: list[str] = []
+    for item in task.get("application_snapshot") or []:
+        for key in ("application_name", "substrate_or_object", "material_function"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                applications.append(value)
+        company_types.extend(str(value).strip() for value in (item.get("target_company_types") or []) if str(value).strip())
+        if item.get("exclusion_notes"):
+            exclusions.append(str(item["exclusion_notes"]).strip())
+    return list(dict.fromkeys(applications)), list(dict.fromkeys(company_types)), list(dict.fromkeys(exclusions))
+
+async def ensure_application_legacy_task(token: str, task: dict[str, Any]) -> dict[str, Any]:
+    linked_id = task.get("legacy_lead_task_id")
+    if linked_id:
+        linked = await supabase(f"lead_search_tasks?id=eq.{linked_id}&deleted_at=is.null&select=*&limit=1", token)
+        if linked:
+            return linked[0]
+    provider, notice = await application_discovery_provider(token, task.get("target_region"))
+    if not provider:
+        await supabase(f"application_discovery_tasks?id=eq.{task['id']}", token, "PATCH", {
+            "status": "待配置", "search_provider": None, "provider_notice": notice,
+            "updated_at": datetime.now().astimezone().isoformat(),
+        })
+        raise HTTPException(422, notice)
+    application_keywords, company_types, exclusions = application_task_profile(task)
+    if not application_keywords:
+        raise HTTPException(422, "任务没有可用于发现客户的已确认应用。")
+    region = str(task.get("target_region") or "").strip()
+    payload = LeadSearchTaskIn(
+        task_name=f"应用发现｜{str(task['task_name'])[:150]}｜{str(task['id'])[:8]}",
+        discovery_mode="需求客户",
+        discovery_strategy="search_plus_crawl" if settings().brave_search_api_key else "public_seed_crawl",
+        product_keywords=[],
+        application_keywords=application_keywords,
+        target_countries=[] if not region or region == "全球" else [region],
+        target_company_types=company_types,
+        profile_exclusion_rules=exclusions,
+        max_results=int(task.get("candidate_limit") or 20),
+        daily_enabled=False,
+    )
+    values = await lead_task_values_from_product_profile(payload, token)
+    if not settings().brave_search_api_key and not values.get("source_urls"):
+        raise HTTPException(422, "没有匹配当前地区的公开目录入口，无法开始真实采集。")
+    existing = await supabase(f"lead_search_tasks?task_name=eq.{quote(payload.task_name, safe='')}&deleted_at=is.null&select=*&limit=1", token)
+    legacy = existing[0] if existing else (await supabase("lead_search_tasks", token, "POST", values))[0]
+    await supabase(f"application_discovery_tasks?id=eq.{task['id']}", token, "PATCH", {
+        "legacy_lead_task_id": legacy["id"], "search_provider": provider, "provider_notice": notice,
+        "updated_at": datetime.now().astimezone().isoformat(),
+    })
+    return legacy
+
+def application_match_status(lead: dict[str, Any], application: dict[str, Any]) -> tuple[str, str, str]:
+    evidence = str(lead.get("product_evidence_summary") or lead.get("verification_conclusion") or "").strip()
+    hits = [str(value).strip() for value in (lead.get("discovered_application_keywords") or []) if str(value).strip()]
+    searchable = " ".join(str(application.get(key) or "") for key in ("application_name", "substrate_or_object", "material_function", "description")).casefold()
+    related = [hit for hit in hits if hit.casefold() in searchable or any(part in hit.casefold() for part in searchable.split() if len(part) >= 4)]
+    layer = str(lead.get("lead_layer") or "")
+    if layer == "排除":
+        status = "不匹配"
+    elif related and layer == "直接需求候选":
+        status = "应用相关但工艺未知"
+    elif layer == "间接应用链":
+        status = "间接渠道"
+    else:
+        status = "资料不足"
+    reason = evidence or (f"官网公开内容命中应用词：{', '.join(related[:5])}。" if related else "已发现企业官网，但尚无足够证据确认该具体应用。")
+    pending = "需人工确认该企业是否自行使用相关材料/工艺、对应产品线以及采购或技术对接部门。"
+    return status, reason[:2000], pending
+
+async def sync_application_discovery_results(token: str, task: dict[str, Any], result: dict[str, Any]) -> None:
+    legacy_id = task.get("legacy_lead_task_id")
+    leads = await supabase(f"customer_leads?task_id=eq.{legacy_id}&select=*&order=match_score.desc,discovered_at.desc", token)
+    contacts = 0
+    verified = 0
+    matched = 0
+    app_counts: dict[str, int] = {}
+    for lead in leads:
+        await supabase(f"customer_leads?id=eq.{lead['id']}", token, "PATCH", {"application_discovery_task_id": task["id"]})
+        if lead.get("official_website") or lead.get("official_homepage_url"):
+            verified += 1
+        if lead.get("public_business_email") or lead.get("public_business_phone") or lead.get("contact_page_url"):
+            contacts += 1
+        if lead.get("lead_layer") not in {"排除", "供应工厂候选"}:
+            matched += 1
+        for application in task.get("application_snapshot") or []:
+            application_id = application.get("id")
+            if not application_id:
+                continue
+            status, reason, pending = application_match_status(lead, application)
+            if status != "资料不足":
+                app_counts[application_id] = app_counts.get(application_id, 0) + 1
+            existing = await supabase(f"lead_application_matches?customer_lead_id=eq.{lead['id']}&application_task_id=eq.{task['id']}&tds_application_id=eq.{application_id}&select=id&limit=1", token)
+            values = {
+                "customer_lead_id": lead["id"], "application_task_id": task["id"],
+                "tds_application_id": application_id, "application_snapshot": application,
+                "match_status": status, "matching_reason": reason, "pending_confirmation": pending,
+                "evidence_strength": max(0, min(100, int(lead.get("match_score") or 0))),
+                "updated_at": datetime.now().astimezone().isoformat(),
+            }
+            if existing:
+                await supabase(f"lead_application_matches?id=eq.{existing[0]['id']}", token, "PATCH", values)
+            else:
+                await supabase("lead_application_matches", token, "POST", values)
+    for application in task.get("application_snapshot") or []:
+        application_id = application.get("id")
+        if application_id:
+            await supabase(f"application_discovery_queries?application_task_id=eq.{task['id']}&tds_application_id=eq.{application_id}", token, "PATCH", {
+                "execution_status": "已运行", "result_count": app_counts.get(application_id, 0), "error_message": None,
+            })
+    status = "已完成" if leads else "部分失败"
+    await supabase(f"application_discovery_tasks?id=eq.{task['id']}", token, "PATCH", {
+        "status": status, "discovered_count": len(leads), "verified_count": verified,
+        "matched_count": matched, "contact_count": contacts,
+        "failure_message": None if leads else "本轮公开入口未发现可核验企业；可补充公开目录后再次运行。",
+        "updated_at": datetime.now().astimezone().isoformat(),
+    })
+
+async def run_application_discovery_in_background(token: str, task_id: str, legacy_id: str) -> None:
+    try:
+        result = await _run_lead_task_for_user(token, legacy_id, "manual")
+        rows = await supabase(f"application_discovery_tasks?id=eq.{task_id}&select=*&limit=1", token)
+        if rows:
+            await sync_application_discovery_results(token, rows[0], result)
+    except Exception as exc:
+        message = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        await supabase(f"application_discovery_tasks?id=eq.{task_id}", token, "PATCH", {
+            "status": "部分失败", "failure_message": str(message)[:1000],
+            "updated_at": datetime.now().astimezone().isoformat(),
+        })
+        await supabase(f"application_discovery_queries?application_task_id=eq.{task_id}", token, "PATCH", {
+            "execution_status": "失败", "error_message": str(message)[:1000],
+        })
+    finally:
+        ACTIVE_APPLICATION_TASKS.discard(task_id)
+
 @app.post("/api/application-discovery-tasks", status_code=201)
 async def create_application_discovery_task(payload: ApplicationDiscoveryTaskIn, authorization: str | None = Header(default=None)):
     """Freeze confirmed application cards.  Search execution is configured separately."""
@@ -1408,15 +1565,36 @@ async def create_application_discovery_task(payload: ApplicationDiscoveryTaskIn,
     application_label = " / ".join(str(row["application_name"]) for row in applications[:2])
     region = (payload.target_region or "").strip()
     task_name = (payload.task_name or "").strip() or f"{application_label} · {region or '全球'}"
-    provider = "Brave Search API" if settings().brave_search_api_key else None
+    provider, provider_notice = await application_discovery_provider(token, region)
     values = {"tds_document_id": payload.tds_document_id, "task_name": task_name, "target_region": region or None, "candidate_limit": payload.candidate_limit, "search_budget": payload.search_budget, "application_snapshot": snapshot, "status": "待运行" if provider else "待配置", "search_provider": provider, "provider_notice": None if provider else "尚未配置合规搜索服务；当前可保存应用、导入公开 CSV/PDF 和人工官网证据，但不会伪造自动搜索结果。"}
+    values["provider_notice"] = provider_notice
     task = (await supabase("application_discovery_tasks", token, "POST", values))[0]
     for application in applications:
         terms = list(application.get("search_terms") or []) or application_search_terms(application, region)
         for term in terms:
-            await supabase("application_discovery_queries", token, "POST", {"application_discovery_task_id": task["id"], "tds_application_id": application["id"], "query_text": term, "query_kind": "pdf_directory" if "filetype:pdf" in term else "web", "execution_status": "待运行" if provider else "待配置"})
-    queries = await supabase(f"application_discovery_queries?application_discovery_task_id=eq.{task['id']}&select=*&order=created_at.asc", token)
+            await supabase("application_discovery_queries", token, "POST", {"application_task_id": task["id"], "tds_application_id": application["id"], "query_text": term, "query_kind": "pdf_directory" if "filetype:pdf" in term else "web", "execution_status": "待运行" if provider else "待配置"})
+    queries = await supabase(f"application_discovery_queries?application_task_id=eq.{task['id']}&select=*&order=created_at.asc", token)
     return {"task": task, "queries": queries, "message": "已锁定应用快照并生成可审查查询。" if provider else values["provider_notice"]}
+
+@app.post("/api/application-discovery-tasks/{task_id}/run")
+async def run_application_discovery_task(task_id: str, background_tasks: BackgroundTasks, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    rows = await supabase(f"application_discovery_tasks?id=eq.{task_id}&select=*&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "应用客户发现任务不存在")
+    if task_id in ACTIVE_APPLICATION_TASKS:
+        return {"status": "运行中", "message": "该应用任务正在逐页采集和核验，请稍后刷新。"}
+    ACTIVE_APPLICATION_TASKS.add(task_id)
+    try:
+        legacy = await ensure_application_legacy_task(token, rows[0])
+        now = datetime.now().astimezone().isoformat()
+        await supabase(f"application_discovery_tasks?id=eq.{task_id}", token, "PATCH", {"status": "运行中", "failure_message": None, "updated_at": now})
+        await supabase(f"application_discovery_queries?application_task_id=eq.{task_id}", token, "PATCH", {"execution_status": "待运行", "error_message": None})
+        background_tasks.add_task(run_application_discovery_in_background, token, task_id, legacy["id"])
+    except Exception:
+        ACTIVE_APPLICATION_TASKS.discard(task_id)
+        raise
+    return {"status": "已开始", "message": "已开始真实采集：公开入口 → 企业官网 → 业务证据 → 公开联系方式。完成后会自动回写客户清单。"}
 
 @app.get("/api/application-discovery-tasks/{task_id}/workspace")
 async def application_discovery_workspace(task_id: str, authorization: str | None = Header(default=None)):
@@ -1426,7 +1604,7 @@ async def application_discovery_workspace(task_id: str, authorization: str | Non
         raise HTTPException(404, "应用客户发现任务不存在")
     task = rows[0]
     queries, matches, leads = await asyncio.gather(
-        supabase(f"application_discovery_queries?application_discovery_task_id=eq.{task_id}&select=*&order=created_at.asc", token),
+        supabase(f"application_discovery_queries?application_task_id=eq.{task_id}&select=*&order=created_at.asc", token),
         supabase(f"lead_application_matches?application_task_id=eq.{task_id}&select=*&order=evidence_strength.desc", token),
         supabase(f"customer_leads?application_discovery_task_id=eq.{task_id}&select=*&order=match_score.desc,discovered_at.desc", token),
     )
@@ -1849,6 +2027,7 @@ async def export_strict_customer_leads(authorization: str | None = Header(defaul
 @app.get("/api/customer-leads/export.csv")
 async def export_customer_leads_csv(
     authorization: str | None = Header(default=None),
+    application_task_id: str | None = Query(default=None),
     country: str | None = Query(default=None),
     min_score: int | None = Query(default=None, ge=0, le=100),
     max_score: int | None = Query(default=None, ge=0, le=100),
@@ -1859,18 +2038,21 @@ async def export_customer_leads_csv(
     leads = await supabase("customer_leads?select=*&order=discovered_at.desc&limit=500", bearer(authorization))
     keyword = (product_keyword or "").casefold().strip()
     filtered = [lead for lead in leads if
+        (not application_task_id or lead.get("application_discovery_task_id") == application_task_id) and
         (not country or str(lead.get("country") or "").casefold() == country.casefold()) and
         (min_score is None or int(lead.get("match_score") or 0) >= min_score) and
         (max_score is None or int(lead.get("match_score") or 0) <= max_score) and
         (not review_status or lead.get("status") == review_status) and
         (not keyword or keyword in " ".join(str(value) for value in ((lead.get("discovered_product_keywords") or []) + (lead.get("discovered_application_keywords") or []))).casefold())]
-    headings = ["公司名称", "国家/地区", "官网", "根域名", "公司类型", "匹配分", "置信度", "公开业务邮箱", "公开电话", "来源", "审核状态", "CRM 状态", "匹配产品/应用", "评分依据", "推荐开发角度", "发现时间"]
+    headings = ["公司名称", "国家/地区", "官网", "根域名", "公司类型", "匹配分", "置信度", "公开业务邮箱", "公开电话", "首个来源", "全部来源链接", "审核状态", "CRM 状态", "匹配产品/应用", "官网业务证据", "评分/匹配理由", "待确认事项", "推荐开发角度", "发现时间"]
     from io import StringIO
     buffer = StringIO(newline="")
     writer = csv.writer(buffer)
     writer.writerow(headings)
     for lead in filtered:
-        writer.writerow([lead.get("company_name"), lead.get("country"), lead.get("official_website") or lead.get("website"), lead.get("root_domain") or lead.get("website_domain"), lead.get("company_type"), lead.get("match_score"), lead.get("confidence_score"), lead.get("public_business_email"), lead.get("public_business_phone"), lead.get("source_url"), lead.get("status"), lead.get("lead_status") or lead.get("status"), "; ".join((lead.get("discovered_product_keywords") or []) + (lead.get("discovered_application_keywords") or [])), "；".join(lead.get("score_reasons") or []), lead.get("recommended_pitch") or lead.get("possible_need"), lead.get("discovered_at")])
+        source_urls = lead.get("source_urls") if isinstance(lead.get("source_urls"), list) else []
+        pending = lead.get("confirmation_note") or "；".join(lead.get("missing_requirements") or [])
+        writer.writerow([lead.get("company_name"), lead.get("country"), lead.get("official_website") or lead.get("website"), lead.get("root_domain") or lead.get("website_domain"), lead.get("company_type"), lead.get("match_score"), lead.get("confidence_score"), lead.get("public_business_email"), lead.get("public_business_phone"), lead.get("source_url"), "\n".join(str(url) for url in source_urls), lead.get("status"), lead.get("lead_status") or lead.get("status"), "; ".join((lead.get("discovered_product_keywords") or []) + (lead.get("discovered_application_keywords") or [])), lead.get("product_evidence_summary") or lead.get("verification_conclusion"), "；".join(lead.get("score_reasons") or []), pending, lead.get("recommended_pitch") or lead.get("possible_need"), lead.get("discovered_at")])
     return Response(("\ufeff" + buffer.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=customer-leads.csv"})
 
 @app.get("/api/daily-logs")
