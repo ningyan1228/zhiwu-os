@@ -60,6 +60,22 @@ GENERIC_DOWNSTREAM_ENTITY_SIGNALS = (
     "formulation", "converter", "processing", "processor", "brand owner",
 )
 UPSTREAM_ROLE_SIGNALS = ("manufacturer", "supplier", "producer", "factory", "distributor", "trader")
+APPLICATION_EVIDENCE_PHRASES = (
+    # Fertilizer-coating downstream products and processes.
+    "controlled release fertilizer", "controlled-release fertilizer",
+    "slow release fertilizer", "slow-release fertilizer", "polymer coated fertilizer",
+    "polymer-coated fertilizer", "coated fertilizer", "coated urea",
+    "polymer coated urea", "polymer-coated urea", "polyurethane coated urea",
+    "coated npk", "coated compound fertilizer", "fertilizer coating",
+    "fluidized bed", "coated granules",
+    # Water-based polyolefin surface-treatment downstream applications.
+    "water based flexographic ink", "water-based flexographic ink",
+    "water based gravure ink", "water-based gravure ink", "bopp film",
+    "opp film", "polypropylene film", "flexible packaging",
+    # Epoxidized linseed-oil downstream applications.
+    "flexible pvc", "pvc compound", "cable compound", "pvc film",
+    "pvc sheet", "artificial leather", "industrial coating", "sealant",
+)
 SUPPLIER_EXCLUSION_SIGNALS = (
     "trading company", "trader", "distributor", "distribution", "wholesaler",
     "importer", "export agent", "directory", "association", "exhibition",
@@ -124,6 +140,58 @@ CURATED_PUBLIC_SEEDS = (
         "countries": {"malaysia"},
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "马来西亚肥料工业协会公开会员目录",
+    },
+    # Reviewed official downstream-company pages. These are manufacturers of
+    # coated/controlled-release fertilizer products, not coating-agent or
+    # equipment suppliers. They let key-free crawling reach real companies
+    # even when an association blocks robots or exposes no outbound links.
+    {
+        "url": "https://www.alliednutrients.com/controlled-release",
+        "sector": "fertilizer", "countries": set(),
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "Allied Nutrients 缓控释肥官方产品页",
+    },
+    {
+        "url": "https://www.kingentaglobal.com/polymer-coated-controlled-release-fertilizer-crf-technology/",
+        "sector": "fertilizer", "countries": set(),
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "Kingenta 聚合物包膜肥官方技术页",
+    },
+    {
+        "url": "https://www.lebanonturf.com/technologies/pcu",
+        "sector": "fertilizer", "countries": set(),
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "LebanonTurf 包膜尿素官方产品页",
+    },
+    {
+        "url": "https://compo-expert.com/product-groups/controlled-release-fertilizers/basacote",
+        "sector": "fertilizer", "countries": set(),
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "COMPO EXPERT 缓控释肥官方产品页",
+    },
+    {
+        "url": "https://www.profileproducts.com/products/gal-xeone/?solution=horticulture",
+        "sector": "fertilizer", "countries": set(),
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "Profile Products 聚合物包膜肥官方产品页",
+    },
+    {
+        "url": "https://www.simplot.com/professional-products/best/resources/news/gal-xeone-controlled-release-technology",
+        "sector": "fertilizer", "countries": set(),
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "Simplot 聚合物包膜肥官方技术页",
+    },
+    {
+        "url": "https://www.cotextech.com/",
+        "sector": "fertilizer", "countries": set(),
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "CoteX 聚合物包膜肥官方产品页",
+    },
+    {
+        "url": "https://www.uregold.com/",
+        "sector": "fertilizer", "countries": set(),
+        "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
+        "label": "UREGOLD 包膜尿素官方产品页",
     },
     {
         "url": "https://www.eupia.org/about-us/association-membership/companies/",
@@ -439,6 +507,11 @@ def _application_profile(task: dict[str, Any]) -> dict[str, tuple[str, ...] | st
     mode = str(task.get("discovery_mode") or "需求客户")
     product_terms = tuple(str(item).strip() for item in (task.get("product_keywords") or []) if str(item).strip())
     additions = tuple(str(item).strip() for item in (task.get("application_keywords") or []) if str(item).strip())
+    focus = " ".join(additions).casefold()
+    evidence_terms = tuple(dict.fromkeys([
+        *additions,
+        *(phrase for phrase in APPLICATION_EVIDENCE_PHRASES if phrase in focus),
+    ]))
     if mode == "供应工厂":
         # Supplier discovery intentionally uses material terms, but is restricted
         # to mainland China factory/manufacturer searches and never feeds CRM.
@@ -453,7 +526,7 @@ def _application_profile(task: dict[str, Any]) -> dict[str, tuple[str, ...] | st
         "mode": "需求客户",
         "label": "已确认的任务下游应用画像",
         "applications": tuple(dict.fromkeys(additions)),
-        "evidence_terms": additions,
+        "evidence_terms": evidence_terms,
         "target_roles": tuple(str(item).strip() for item in (task.get("target_company_types") or []) if str(item).strip()) or ("manufacturer", "formulator", "processor", "brand owner"),
     }
 
@@ -620,7 +693,7 @@ def _score(task: dict[str, Any], text: str, website: str, email: str | None, com
     if duplicate: reasons.append("疑似已存在于 CRM 或供应商中心；仅供核验，不计入新线索")
     need = "官网显示下游应用场景；需人工确认其配方体系、基材、现用材料与采购主体。"
     if applications:
-        need = f"官网显示 {', '.join(applications[:4])}；需确认是否涉及 PP/PE/TPO 基材，以及是否需要附着力促进方案。"
+        need = f"官网显示 {', '.join(applications[:4])}；需确认实际生产工艺、现用材料、技术指标和采购决策部门。"
     return min(score, 100), reasons, need
 
 
@@ -660,7 +733,10 @@ def _curated_seed_urls(task: dict[str, Any]) -> list[tuple[str, str]]:
     selected: list[tuple[str, str]] = []
     for seed in CURATED_PUBLIC_SEEDS:
         matches_focus = seed["sector"] in sectors and any(signal in focus for signal in seed["signals"])
-        matches_country = not countries or bool(countries.intersection(seed["countries"]))
+        # Official global company pages remain useful for a regional task: the
+        # page itself can expose regional subsidiaries or contact routes. A
+        # country-specific association remains restricted to its own region.
+        matches_country = not countries or not seed["countries"] or bool(countries.intersection(seed["countries"]))
         if matches_focus and matches_country:
             selected.append((seed["url"], seed["label"]))
     return selected
@@ -879,6 +955,13 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     if found_applications and not evidence_url:
                         application_hits = found_applications
                         evidence_url, evidence_text = page_url, page_text
+                # Curated official-company seeds are manually reviewed as
+                # downstream product makers. Once their own page also contains
+                # a task-specific application phrase, promote them to direct
+                # demand candidates. Association pages and arbitrary outbound
+                # links never receive this shortcut.
+                if not supplier_mode and application_hits and source_type == "已核验官网种子":
+                    business_role, role_problem = "直接需求候选", None
                 if not contact_source and (email_source or phone_source):
                     contact_source = email_source or phone_source
                 customer_dup, supplier_dup = await _duplicates(store, task, company, host, email)
@@ -933,7 +1016,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     terms = application_hits
                     evidence_summary = f"官方页面出现：{', '.join(terms[:5])}。"
                     need = (f"官方资料显示 {', '.join(terms[:5])}；需确认产线、产品规格、产能、MOQ、TDS/SDS 与出口能力。"
-                            if supplier_mode else f"官方资料显示 {', '.join(terms[:5])}；需确认 PP/PE/TPO 基材、配方体系与具体工艺。")
+                            if supplier_mode else f"官方资料显示 {', '.join(terms[:5])}；需确认实际生产工艺、现用材料、技术指标和采购决策部门。")
                 if excluded:
                     reasons.append("不属于可开发企业主体，已进入排除名单")
                 elif missing:

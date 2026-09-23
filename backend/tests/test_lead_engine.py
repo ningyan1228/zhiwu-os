@@ -7,7 +7,7 @@ os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 
 from app.lead_analyzer import LeadAnalyzer
-from app.lead_discovery import _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
+from app.lead_discovery import _application_profile, _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
 from app.customer_development import canonical_domain, draft_email, nl_fc_pu_application_terms, nl_fc_pu_queries, public_http_url, score_lead
 from app.tds_discovery import application_search_terms, extract_explicit_applications
 from app.tds_presets import BUILTIN_TDS_PRESETS, builtin_tds_preset_summaries
@@ -42,6 +42,18 @@ class LeadEngineUnitTests(unittest.TestCase):
         evidence = "We manufacture water-based flexographic ink for BOPP film printing."
         hits = _contains_terms(evidence, ["water based flexographic inks", "BOPP films", "PVC compounds"])
         self.assertEqual(hits, ["water based flexographic inks", "BOPP films"])
+
+    def test_application_profile_extracts_short_official_evidence_phrases(self):
+        profile = _application_profile({
+            "discovery_mode": "需求客户",
+            "application_keywords": [
+                "controlled release fertilizer manufacturer coating line",
+                "polyurethane coated urea manufacturer",
+            ],
+            "target_company_types": ["缓释肥制造商"],
+        })
+        self.assertIn("controlled release fertilizer", profile["evidence_terms"])
+        self.assertIn("coated urea", profile["evidence_terms"])
 
     def test_matching_company_seed_is_not_treated_as_a_directory(self):
         raw = "<title>Example Ink | Water Based Flexographic Inks</title><p>We are a manufacturer of water-based flexographic inks.</p><a href='mailto:sales@example-ink.com'>sales@example-ink.com</a>"
@@ -246,8 +258,9 @@ class LeadEngineUnitTests(unittest.TestCase):
 
     def test_curated_sources_keep_fertilizer_out_of_generic_coating_directories(self):
         fertilizer = _curated_seed_urls({"application_keywords": ["fertilizer coating", "controlled release fertilizer"]})
-        self.assertEqual(len(fertilizer), 2)
+        self.assertGreaterEqual(len(fertilizer), 10)
         self.assertTrue(all("肥料" in label for _, label in fertilizer))
+        self.assertTrue(any("alliednutrients.com" in url for url, _ in fertilizer))
         elo = _curated_seed_urls({"application_keywords": ["polymer compound", "industrial coating", "adhesive", "sealant", "printing ink"]})
         labels = [label for _, label in elo]
         self.assertTrue(any("油墨" in label for label in labels))
