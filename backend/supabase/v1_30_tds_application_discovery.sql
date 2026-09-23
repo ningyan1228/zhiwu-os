@@ -126,7 +126,7 @@ create index if not exists tds_documents_owner_idx on public.tds_documents(owner
 create index if not exists tds_applications_document_idx on public.tds_applications(tds_document_id, selected, enabled, created_at);
 create index if not exists application_discovery_tasks_owner_idx on public.application_discovery_tasks(owner_user_id, created_at desc);
 create index if not exists application_discovery_queries_task_idx on public.application_discovery_queries(application_discovery_task_id, created_at);
-create index if not exists lead_application_matches_task_idx on public.lead_application_matches(application_discovery_task_id, evidence_strength desc);
+create index if not exists lead_application_matches_task_idx on public.lead_application_matches(application_task_id, evidence_strength desc);
 do $$
 begin
   if exists (

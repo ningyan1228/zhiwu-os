@@ -1427,7 +1427,7 @@ async def application_discovery_workspace(task_id: str, authorization: str | Non
     task = rows[0]
     queries, matches, leads = await asyncio.gather(
         supabase(f"application_discovery_queries?application_discovery_task_id=eq.{task_id}&select=*&order=created_at.asc", token),
-        supabase(f"lead_application_matches?application_discovery_task_id=eq.{task_id}&select=*&order=evidence_strength.desc", token),
+        supabase(f"lead_application_matches?application_task_id=eq.{task_id}&select=*&order=evidence_strength.desc", token),
         supabase(f"customer_leads?application_discovery_task_id=eq.{task_id}&select=*&order=match_score.desc,discovered_at.desc", token),
     )
     return {"task": task, "queries": queries, "matches": matches, "leads": leads}
