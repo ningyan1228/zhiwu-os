@@ -97,8 +97,21 @@ create table if not exists public.lead_application_matches (
   unique(customer_lead_id, application_task_id, tds_application_id)
 );
 
-alter table public.customer_leads
-  add column if not exists application_discovery_task_id uuid references public.application_discovery_tasks(id) on delete set null;
+-- Use an explicit catalog check here.  Some SQL-editor retries can see a
+-- partially selected migration; this block either adds the column or proves
+-- it is already present before the index below is attempted.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'customer_leads'
+      and column_name = 'application_discovery_task_id'
+  ) then
+    alter table public.customer_leads
+      add column application_discovery_task_id uuid
+      references public.application_discovery_tasks(id) on delete set null;
+  end if;
+end $$;
 
 alter table public.lead_contacts
   add column if not exists phone text,
@@ -114,7 +127,18 @@ create index if not exists tds_applications_document_idx on public.tds_applicati
 create index if not exists application_discovery_tasks_owner_idx on public.application_discovery_tasks(owner_user_id, created_at desc);
 create index if not exists application_discovery_queries_task_idx on public.application_discovery_queries(application_discovery_task_id, created_at);
 create index if not exists lead_application_matches_task_idx on public.lead_application_matches(application_discovery_task_id, evidence_strength desc);
-create index if not exists customer_leads_application_task_idx on public.customer_leads(user_id, application_discovery_task_id, discovered_at desc);
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'customer_leads'
+      and column_name = 'application_discovery_task_id'
+  ) then
+    execute 'create index if not exists customer_leads_application_task_idx on public.customer_leads(user_id, application_discovery_task_id, discovered_at desc)';
+  else
+    raise exception 'application_discovery_task_id was not added to public.customer_leads';
+  end if;
+end $$;
 
 alter table public.tds_documents enable row level security;
 alter table public.tds_applications enable row level security;
