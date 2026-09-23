@@ -678,6 +678,9 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     break
                 await asyncio.sleep(delay)
 
+            log.append(
+                f"入口读取完成：已读取 {min(len(source_urls), source_limit)} 个公开入口，得到 {len(candidates)} 个待核验官网候选，入口阶段跳过 {skipped} 个。"
+            )
             for source_url, source_type in candidates[:limit]:
                 # Read control flags between companies, never in the middle of
                 # a request. This gives pause/cancel deterministic and safe
