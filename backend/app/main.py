@@ -1120,7 +1120,18 @@ async def lead_task_values_from_product_profile(payload: LeadSearchTaskIn, token
 @app.post("/api/lead-search-tasks", status_code=201)
 async def create_lead_search_task(payload: LeadSearchTaskIn, authorization: str | None = Header(default=None)):
     token = bearer(authorization)
-    rows = await supabase("lead_search_tasks", token, "POST", await lead_task_values_from_product_profile(payload, token))
+    values = await lead_task_values_from_product_profile(payload, token)
+    # Task names are unique per user. A soft-deleted preset must therefore be
+    # restored in place when its card is clicked again, not inserted anew.
+    name = quote(payload.task_name, safe="")
+    deleted = await supabase(f"lead_search_tasks?task_name=eq.{name}&deleted_at=not.is.null&select=id&limit=1", token)
+    if deleted:
+        rows = await supabase(f"lead_search_tasks?id=eq.{deleted[0]['id']}&deleted_at=not.is.null", token, "PATCH", {
+            **values, "deleted_at": None, "cancel_requested": False, "pause_requested": False,
+            "run_state": "待运行", "updated_at": datetime.now().astimezone().isoformat(),
+        })
+        return rows[0]
+    rows = await supabase("lead_search_tasks", token, "POST", values)
     return rows[0]
 
 @app.patch("/api/lead-search-tasks/{task_id}")

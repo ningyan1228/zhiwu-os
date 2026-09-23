@@ -8,7 +8,7 @@ os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 
 from app.lead_analyzer import LeadAnalyzer
 from app.lead_discovery import _contains_terms, _curated_seed_urls, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
-from app.main import LeadSearchTaskIn, lead_task_values_from_product_profile
+from app.main import LeadSearchTaskIn, create_lead_search_task, lead_task_values_from_product_profile
 
 
 class LeadEngineUnitTests(unittest.TestCase):
@@ -80,6 +80,29 @@ class LeadEngineUnitTests(unittest.TestCase):
         ]
         found = _existing_discovery_lead(rows, "https://example.com/products", "example.com", "Example", None)
         self.assertEqual(found["id"], "exact-source")
+
+    def test_recreates_a_soft_deleted_task_by_restoring_it(self):
+        from unittest.mock import patch
+
+        calls = []
+
+        async def fake_supabase(path, token, method="GET", payload=None):
+            calls.append((path, method, payload))
+            if path.startswith("crawl_sources?"):
+                return []
+            if path.startswith("lead_search_tasks?task_name="):
+                return [{"id": "deleted-task"}]
+            if path.startswith("lead_search_tasks?id=eq.deleted-task") and method == "PATCH":
+                return [{"id": "deleted-task", "task_name": "TDS preset"}]
+            raise AssertionError((path, method, payload))
+
+        payload = LeadSearchTaskIn(task_name="TDS preset", application_keywords=["controlled release fertilizer"])
+        with patch("app.main.supabase", fake_supabase):
+            result = asyncio.run(create_lead_search_task(payload, "Bearer test"))
+        self.assertEqual(result["id"], "deleted-task")
+        restore = next(item for item in calls if item[1] == "PATCH")
+        self.assertIsNone(restore[2]["deleted_at"])
+        self.assertFalse(restore[2]["cancel_requested"])
 
 
 if __name__ == "__main__":
