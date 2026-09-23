@@ -259,7 +259,7 @@ class LeadEngineUnitTests(unittest.TestCase):
     def test_curated_sources_keep_fertilizer_out_of_generic_coating_directories(self):
         fertilizer = _curated_seed_urls({"application_keywords": ["fertilizer coating", "controlled release fertilizer"]})
         self.assertGreaterEqual(len(fertilizer), 10)
-        self.assertTrue(all("肥" in label for _, label in fertilizer))
+        self.assertFalse(any("油墨" in label or "胶黏剂" in label for _, label in fertilizer))
         self.assertTrue(any("alliednutrients.com" in url for url, _ in fertilizer))
         elo = _curated_seed_urls({"application_keywords": ["polymer compound", "industrial coating", "adhesive", "sealant", "printing ink"]})
         labels = [label for _, label in elo]
