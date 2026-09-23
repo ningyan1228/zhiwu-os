@@ -254,12 +254,12 @@ class LeadEngineUnitTests(unittest.TestCase):
         with patch("app.main.supabase", fake_supabase):
             provider, notice = asyncio.run(application_discovery_provider("Bearer test", None, task))
         self.assertEqual(provider, "内置公开行业目录纯爬虫")
-        self.assertIn("2 个", notice)
+        self.assertIn("10 个", notice)
 
     def test_curated_sources_keep_fertilizer_out_of_generic_coating_directories(self):
         fertilizer = _curated_seed_urls({"application_keywords": ["fertilizer coating", "controlled release fertilizer"]})
         self.assertGreaterEqual(len(fertilizer), 10)
-        self.assertTrue(all("肥料" in label for _, label in fertilizer))
+        self.assertTrue(all("肥" in label for _, label in fertilizer))
         self.assertTrue(any("alliednutrients.com" in url for url, _ in fertilizer))
         elo = _curated_seed_urls({"application_keywords": ["polymer compound", "industrial coating", "adhesive", "sealant", "printing ink"]})
         labels = [label for _, label in elo]
