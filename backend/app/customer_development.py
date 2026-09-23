@@ -107,6 +107,21 @@ def nl_fc_pu_queries() -> list[tuple[str, str, str]]:
     return queries
 
 
+def nl_fc_pu_application_terms() -> tuple[str, ...]:
+    """Terms that can support an NL-FC-PU application fact on Brazil sites.
+
+    Portuguese is intentionally included because the initial campaign is for
+    Brazil. A hit creates evidence for human review; it is never a purchase
+    intent or a reason to contact a company automatically.
+    """
+    return (
+        "controlled release fertilizer", "controlled release urea",
+        "coated fertilizer", "polymer coated urea", "fertilizer coating",
+        "fertilizante de liberação controlada", "fertilizante revestido",
+        "ureia revestida", "ureia protegida", "revestimento de fertilizante",
+    )
+
+
 @dataclass(frozen=True)
 class DevelopmentScore:
     score: int

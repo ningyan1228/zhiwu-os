@@ -19,7 +19,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from .strict_lead_import import import_cpph_strict_records
-from .customer_development import NL_FC_PU_CAMPAIGN, canonical_domain, draft_email, html_text, nl_fc_pu_queries, normalize_company_name, public_email, public_http_url, robots_permit, score_lead
+from .customer_development import NL_FC_PU_CAMPAIGN, canonical_domain, draft_email, html_text, nl_fc_pu_application_terms, nl_fc_pu_queries, normalize_company_name, public_email, public_http_url, robots_permit, score_lead
 
 class Settings(BaseSettings):
     supabase_url: str
@@ -1463,14 +1463,18 @@ async def verify_development_lead_official_site(lead_id: str, authorization: str
         raise HTTPException(422, f"官网返回 HTTP {response.status_code}")
     final_url = str(response.url); domain = canonical_domain(final_url); text = html_text(response.text)[:30000]
     lower = text.casefold(); excerpts: list[tuple[str, str]] = []
-    application_hits = [term for term in campaign.get("applications") or [] if str(term).casefold() in lower]
+    application_terms = list(campaign.get("applications") or [])
+    if campaign.get("product_code") == "NL-FC-PU":
+        application_terms.extend(nl_fc_pu_application_terms())
+    application_hits = [term for term in dict.fromkeys(application_terms) if str(term).casefold() in lower]
     if application_hits:
         excerpts.append(("应用或产品", f"官网出现与开发活动相关的应用词：{', '.join(application_hits[:4])}。"))
-    identity_terms = ("manufacturer", "manufacturing", "producer", "factory", "blender", "formulator")
+    identity_terms = ("manufacturer", "manufacturing", "producer", "factory", "blender", "formulator", "fabricante", "fabricação", "produção", "produtor")
     identity_hit = next((term for term in identity_terms if term in lower), None)
     if identity_hit:
         excerpts.append(("客户身份", f"官网出现客户身份词：{identity_hit}。"))
-    if str(campaign["target_country"]).casefold() in lower:
+    country_terms = (str(campaign["target_country"]).casefold(), "brasil") if str(campaign["target_country"]).casefold() == "brazil" else (str(campaign["target_country"]).casefold(),)
+    if any(term in lower for term in country_terms):
         excerpts.append(("国家或地址", f"官网文本出现目标国家：{campaign['target_country']}。"))
     email = public_email(response.text, domain)
     if email:

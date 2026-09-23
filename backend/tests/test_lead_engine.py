@@ -8,7 +8,7 @@ os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 
 from app.lead_analyzer import LeadAnalyzer
 from app.lead_discovery import _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
-from app.customer_development import canonical_domain, draft_email, nl_fc_pu_queries, public_http_url, score_lead
+from app.customer_development import canonical_domain, draft_email, nl_fc_pu_application_terms, nl_fc_pu_queries, public_http_url, score_lead
 from app.main import LeadSearchTaskIn, create_lead_search_task, lead_task_values_from_product_profile
 
 
@@ -114,6 +114,7 @@ class LeadEngineUnitTests(unittest.TestCase):
         queries = nl_fc_pu_queries()
         self.assertTrue(any('controlled release urea' in query[0] for query in queries))
         self.assertTrue(any(query[1] == 'maps' for query in queries))
+        self.assertIn('fertilizante revestido', nl_fc_pu_application_terms())
         score = score_lead(target_country='Brazil', lead_country='Brazil', evidence_roles={'应用或产品', '客户身份', '近期活动'}, has_official_website=True, has_public_contact=True, duplicate=False, rejected=False)
         self.assertEqual(score.score, 100)
         self.assertEqual(canonical_domain('https://www.example.com/contact'), 'example.com')
