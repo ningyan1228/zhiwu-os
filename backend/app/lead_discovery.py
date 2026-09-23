@@ -611,13 +611,18 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
     cfg = settings()
     user_agent = getattr(cfg, "lead_discovery_user_agent", "ZhiwuOSLeadDiscovery/1.0 (+https://work.101921.xyz)")
     delay = max(float(getattr(cfg, "lead_discovery_delay_seconds", 1.0)), 0.5)
+    # A queued BackgroundTask can start after its task was deleted. Never create
+    # a new run for it, and never clear a cancellation request set by deletion.
+    control = await store.request(f"lead_search_tasks?id=eq.{task['id']}&select=deleted_at,cancel_requested&limit=1")
+    if not control or control[0].get("deleted_at") or control[0].get("cancel_requested"):
+        return {"status": "已取消", "discovered_count": 0, "inserted_count": 0, "skipped_count": 0, "log": ["任务已删除或取消，未启动新的公开网页核验。"]}
     run_rows = await store.request("lead_discovery_runs", "POST", {"user_id": task["user_id"], "task_id": task["id"], "trigger_type": trigger, "status": "运行中"})
     run = run_rows[0]
     log: list[str] = []
     inserted = skipped = discovered = 0
     try:
         await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {
-            "run_state": "搜索中", "pause_requested": False, "cancel_requested": False,
+            "run_state": "搜索中", "pause_requested": False,
             "current_url": None, "last_progress": {"discovered": 0, "inserted": 0, "skipped": 0},
         })
         limit = max(1, min(int(task.get("max_results") or 50), 1000))

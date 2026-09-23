@@ -1135,14 +1135,22 @@ async def update_lead_search_task(task_id: str, payload: LeadSearchTaskIn, autho
 
 @app.delete("/api/lead-search-tasks/{task_id}")
 async def delete_lead_search_task(task_id: str, authorization: str | None = Header(default=None)):
-    """Soft-delete configuration only; discovered leads and run history remain."""
+    """Cancel any active work, then soft-delete only the task configuration."""
     token = bearer(authorization)
-    active = await supabase(f"lead_discovery_runs?task_id=eq.{task_id}&status=eq.%E8%BF%90%E8%A1%8C%E4%B8%AD&select=id&limit=1", token)
-    if active:
-        raise HTTPException(409, "该任务正在运行，请等待完成后再删除")
-    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", token, "PATCH", {"status": "暂停", "daily_enabled": False, "deleted_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()})
+    now = datetime.now().astimezone().isoformat()
+    rows = await supabase(f"lead_search_tasks?id=eq.{task_id}&deleted_at=is.null", token, "PATCH", {
+        "cancel_requested": True, "pause_requested": False, "run_state": "已取消",
+        "status": "暂停", "daily_enabled": False, "deleted_at": now, "updated_at": now,
+    })
     if not rows: raise HTTPException(404, "Lead search task not found")
-    return {"deleted": True, "task_id": task_id, "message": "任务已删除；已有线索与运行记录已保留。"}
+    # A worker checks cancel_requested between pages. Mark stuck or queued runs
+    # terminal immediately so they cannot make the deleted task look permanent.
+    await supabase(f"lead_discovery_runs?task_id=eq.{task_id}&status=eq.%E8%BF%90%E8%A1%8C%E4%B8%AD", token, "PATCH", {
+        "status": "跳过", "finished_at": now,
+        "error_message": "用户删除任务配置，已取消未完成的公开网页核验。",
+    })
+    ACTIVE_LEAD_TASKS.discard(task_id)
+    return {"deleted": True, "task_id": task_id, "message": "已取消运行并删除任务；已有线索与运行记录已保留。"}
 
 @app.get("/api/lead-discovery-runs")
 async def list_lead_discovery_runs(authorization: str | None = Header(default=None), limit: int = Query(50, le=100)):
