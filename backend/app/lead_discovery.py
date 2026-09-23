@@ -483,6 +483,38 @@ class RestStore:
             raise RuntimeError(f"Supabase {response.status_code}: {response.text[:300]}")
         return response.json() if response.content else None
 
+    async def upsert(self, path: str, payload: Any) -> Any:
+        """Use PostgREST's atomic conflict resolution for crawler writes.
+
+        A manual retry commonly re-visits the same official seed URL.  A
+        read-then-insert sequence races both retries and previous runs, so the
+        database unique key must resolve this case instead of terminating the
+        full discovery run.
+        """
+        headers = {**self.headers, "Prefer": "resolution=merge-duplicates,return=representation"}
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=5.0)) as client:
+            response = await client.post(f"{self.base}/rest/v1/{path}", headers=headers, json=payload)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Supabase {response.status_code}: {response.text[:300]}")
+        return response.json() if response.content else None
+
+
+def _existing_discovery_lead(rows: list[dict[str, Any]], source_url: str, domain: str, company: str, email: str | None) -> dict[str, Any] | None:
+    """Prefer exact task/source evidence over weaker identity de-duplication."""
+    exact = next((row for row in rows if row.get("source_url") == source_url), None)
+    if exact:
+        return exact
+    company_key = re.sub(r"[^a-z0-9]", "", company.casefold())
+    return next(
+        (
+            row for row in rows
+            if row.get("website_domain") == domain
+            or (company_key and re.sub(r"[^a-z0-9]", "", str(row.get("company_name") or "").casefold()) == company_key)
+            or (email and str(row.get("public_business_email") or "").casefold() == email.casefold())
+        ),
+        None,
+    )
+
 
 async def _duplicates(store: RestStore, task: dict[str, Any], company: str, domain: str, email: str | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     customers = await store.request("customers?select=id,company_name,email,website&archived_at=is.null&import_reverted=eq.false&limit=500")
@@ -881,30 +913,16 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     "confirmation_note": "公开证据仅证明潜在功能匹配，不代表企业已采购、已批准或正在使用本任务产品。",
                 }
                 known = await store.request(f"customer_leads?user_id=eq.{task['user_id']}&select=id,source_url,website_domain,company_name,public_business_email&limit=500")
-                company_key = re.sub(r"[^a-z0-9]", "", company.casefold())
-                existing = [row for row in known if row.get("source_url") == final_url or row.get("website_domain") == host or (company_key and re.sub(r"[^a-z0-9]", "", str(row.get("company_name") or "").casefold()) == company_key) or (email and str(row.get("public_business_email") or "").casefold() == email.casefold())]
+                existing = _existing_discovery_lead(known, final_url, host, company, email)
                 if existing:
-                    await store.request(f"customer_leads?id=eq.{existing[0]['id']}", "PATCH", payload)
+                    await store.request(f"customer_leads?id=eq.{existing['id']}", "PATCH", payload)
                     log.append(f"更新已发现线索：{company}")
                 else:
-                    try:
-                        await store.request("customer_leads", "POST", payload)
-                        inserted += 1; log.append(f"加入待审核：{company}")
-                    except RuntimeError as exc:
-                        # Concurrent runs can discover the exact same page in
-                        # the tiny interval between their de-duplication reads.
-                        # The database unique key remains authoritative; turn
-                        # that benign race into an update instead of aborting
-                        # the entire discovery run.
-                        if "duplicate key value" not in str(exc):
-                            raise
-                        raced = await store.request(
-                            f"customer_leads?task_id=eq.{task['id']}&source_url=eq.{quote(final_url, safe='')}&select=id&limit=1"
-                        )
-                        if not raced:
-                            raise
-                        await store.request(f"customer_leads?id=eq.{raced[0]['id']}", "PATCH", payload)
-                        log.append(f"并发去重更新：{company}")
+                    # Match the schema's task_id + source_url key.  This is
+                    # atomic, so an old result or a concurrent retry cannot
+                    # abort all remaining company candidates.
+                    await store.upsert("customer_leads?on_conflict=task_id,source_url", payload)
+                    inserted += 1; log.append(f"加入待审核或更新同网址线索：{company}")
                 discovered += 1
                 await store.request(f"lead_search_tasks?id=eq.{task['id']}", "PATCH", {"run_state": "分析中", "last_progress": {"discovered": discovered, "inserted": inserted, "skipped": skipped, "current_url": final_url}})
                 await asyncio.sleep(delay)
