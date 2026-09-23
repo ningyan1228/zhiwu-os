@@ -31,8 +31,19 @@ export function TdsApplicationDiscovery({ onChanged }: Props) {
     const id = preferred || documentId || docs[0]?.id || ''
     setDocumentId(id)
     setApplications(id ? await api.tdsApplications(id) : [])
+    return existingTasks
   }
   useEffect(() => { void load().catch(error => setNotice(error instanceof Error ? error.message : '无法读取 TDS 工作台。')) }, [])
+  const hasRunningTask = tasks.some(item => item.status === '运行中')
+  useEffect(() => {
+    if (!hasRunningTask) return
+    const timer = window.setInterval(() => {
+      void load(documentId).then(updated => {
+        if (!updated.some(item => item.status === '运行中')) void onChanged().catch(error => console.info('任务完成后的工作区刷新失败。', error))
+      }).catch(error => setNotice(error instanceof Error ? error.message : '任务状态刷新失败。'))
+    }, 6000)
+    return () => window.clearInterval(timer)
+  }, [hasRunningTask, documentId])
   const work = async (job: () => Promise<string | void>) => {
     setBusy(true); setNotice('')
     try {
