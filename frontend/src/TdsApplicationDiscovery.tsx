@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Download, FileText, Play, Plus, RefreshCw, Search, Upload } from 'lucide-react'
 import { api } from './api'
-import type { ApplicationDiscoveryTask, TdsApplication, TdsDocument } from './types'
+import type { ApplicationDiscoveryTask, TdsApplication, TdsDocument, TdsPreset } from './types'
 
 type Props = { onChanged: () => Promise<void> }
 
@@ -11,6 +11,7 @@ const blankApplication = (name: string): Omit<TdsApplication, 'id' | 'tds_docume
 })
 
 export function TdsApplicationDiscovery({ onChanged }: Props) {
+  const [presets, setPresets] = useState<TdsPreset[]>([])
   const [documents, setDocuments] = useState<TdsDocument[]>([])
   const [applications, setApplications] = useState<TdsApplication[]>([])
   const [tasks, setTasks] = useState<ApplicationDiscoveryTask[]>([])
@@ -23,8 +24,8 @@ export function TdsApplicationDiscovery({ onChanged }: Props) {
   const [notice, setNotice] = useState('')
 
   const load = async (preferred?: string) => {
-    const [docs, existingTasks] = await Promise.all([api.tdsDocuments(), api.applicationDiscoveryTasks()])
-    setDocuments(docs); setTasks(existingTasks)
+    const [docs, existingTasks, availablePresets] = await Promise.all([api.tdsDocuments(), api.applicationDiscoveryTasks(), api.tdsPresets()])
+    setDocuments(docs); setTasks(existingTasks); setPresets(availablePresets)
     const id = preferred || documentId || docs[0]?.id || ''
     setDocumentId(id)
     setApplications(id ? await api.tdsApplications(id) : [])
@@ -37,6 +38,7 @@ export function TdsApplicationDiscovery({ onChanged }: Props) {
     finally { setBusy(false) }
   }
   const upload = (file?: File) => { if (!file) return; void work(async () => { const result = await api.parseTdsDocument(file, { document_version: version.trim() || undefined }); await load(result.document.id); return result.message }) }
+  const loadPreset = (preset: TdsPreset) => void work(async () => { const result = await api.bootstrapTdsPreset(preset.id); await load(result.document.id); return result.message })
   const update = (application: TdsApplication, values: Partial<TdsApplication>) => void work(async () => {
     const { id, tds_document_id, updated_at, created_at, ...payload } = { ...application, ...values }
     await api.updateTdsApplication(id, payload); await load(documentId); return '应用卡片已保存。'
@@ -47,9 +49,10 @@ export function TdsApplicationDiscovery({ onChanged }: Props) {
   const current = documents.find(item => item.id === documentId)
 
   return <section className="tds-discovery panel">
-    <div className="panel-title"><div><p className="eyebrow"><FileText size={13}/> TDS-FIRST CUSTOMER DISCOVERY</p><h2>从 TDS 创建客户发现任务</h2><p>先确认材料的具体应用，再寻找可能使用该材料的企业。内部牌号仅可关联资料，不进入默认任务名或搜索词。</p></div></div>
+    <div className="panel-title"><div><p className="eyebrow"><FileText size={13}/> TDS-FIRST CUSTOMER DISCOVERY</p><h2>三份重点 TDS 已内置</h2><p>直接选择产品，审核文档原文支持的具体应用，再寻找可能实际使用该材料的企业。无需重复上传；内部牌号只关联资料，不进入搜索词。</p></div></div>
     {notice && <p className="compliance-note">{notice}</p>}
-    <section className="tds-upload-row"><div><b>1. 上传 TDS</b><p>支持可复制文本 PDF、DOCX；扫描 PDF 会明确提示需要 OCR，不会填入演示应用。</p><label className="secondary import-lead-button"><Upload size={15}/> 选择 TDS 文件<input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={busy} onChange={event => { upload(event.target.files?.[0]); event.currentTarget.value = '' }}/></label></div><label>版本（可选）<input value={version} disabled={busy} onChange={event => setVersion(event.target.value)} placeholder="例如 Rev. 2026-09"/></label></section>
+    <section className="tds-builtin-area"><header><div><h3>1. 选择内置 TDS</h3><p>应用、目标企业类型和官网核实条件均已根据你提供的原文件预置；载入后仍由你逐项确认。</p></div></header><div className="tds-preset-grid">{presets.map(preset => { const active = current?.original_file_name === preset.original_file_name; return <article className="tds-preset-card" key={preset.id}><div><span>{preset.material}</span><h3>{preset.title}</h3><p>{preset.summary}</p></div><dl><div><dt>已核对应用</dt><dd>{preset.applications.map(item => item.application_name).join('；')}</dd></div><div><dt>原始文件</dt><dd>{preset.original_file_name}</dd></div></dl><button className={active ? 'secondary' : 'primary'} disabled={busy} onClick={() => loadPreset(preset)}>{active ? '重新载入并保留修改' : `载入 ${preset.application_count} 项应用`}</button></article> })}</div></section>
+    <details className="tds-optional-upload"><summary><Upload size={14}/> 新增其他 TDS（可选）</summary><section className="tds-upload-row"><div><b>仅供以后新增产品</b><p>支持可复制文本 PDF、DOCX；扫描 PDF 会明确提示需要 OCR，不会填入演示应用。</p><label className="secondary import-lead-button"><Upload size={15}/> 选择新 TDS 文件<input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={busy} onChange={event => { upload(event.target.files?.[0]); event.currentTarget.value = '' }}/></label></div><label>版本（可选）<input value={version} disabled={busy} onChange={event => setVersion(event.target.value)} placeholder="例如 Rev. 2026-09"/></label></section></details>
     {documents.length > 0 && <section className="tds-document-picker"><label>当前 TDS<select value={documentId} disabled={busy} onChange={event => void work(async () => { await load(event.target.value); return '' })}>{documents.map(item => <option value={item.id} key={item.id}>{item.original_file_name} · {item.parse_status}</option>)}</select></label>{current && <p><b>{current.parse_status}</b>{current.parse_error ? `：${current.parse_error}` : ` · ${current.extracted_summary || '已保存解析文本'}`}</p>}</section>}
     {documentId && <section className="tds-application-area"><header><div><h3>2. 审核具体应用</h3><p>只有你勾选的应用会进入任务。TDS 明确、推测待确认、用户补充三类保持区分。</p></div><span>{applications.filter(item => item.selected).length} 项已选</span></header><div className="tds-application-grid">{applications.map(item => <article key={item.id}><header><b>{item.application_name}</b><em className={`tds-evidence-${item.evidence_status}`}>{item.evidence_status}</em></header><p>{item.description || '未填写说明。'}</p><dl><div><dt>TDS 证据</dt><dd>{item.evidence_excerpt || '未提供；请补充后再确认。'}{item.evidence_page ? `（第 ${item.evidence_page} 页）` : ''}</dd></div><div><dt>应找企业</dt><dd>{item.target_company_types.length ? item.target_company_types.join('、') : '待补充制造商/加工商等目标类型'}</dd></div><div><dt>官网核实</dt><dd>{item.official_business_evidence || '待补充需要在官网确认的工艺或业务。'}</dd></div></dl><footer><label><input type="checkbox" checked={item.selected} disabled={busy} onChange={event => update(item, { selected: event.target.checked })}/> 确认并用于搜索</label><button className="secondary" disabled={busy} onClick={() => { const value = window.prompt('补充“应找企业类型”，用逗号分隔', item.target_company_types.join(', ')); if (value !== null) update(item, { target_company_types: value.split(/[,，]/).map(x => x.trim()).filter(Boolean) }) }}>编辑企业类型</button></footer></article>)}</div><div className="tds-manual-application"><input value={manualName} disabled={busy} onChange={event => setManualName(event.target.value)} placeholder="没有识别到时，依据 TDS 原文手动添加具体应用"/><button className="secondary" disabled={busy || !manualName.trim()} onClick={addManual}><Plus size={14}/> 添加用户补充应用</button></div></section>}
     {documentId && <section className="tds-task-create"><div><h3>3. 创建应用客户发现任务</h3><p>任务锁定当前应用快照；地区为空即“全球”，不会默认任何国家。此阶段若未配置搜索服务，会准确标为待配置而非返回假候选。</p></div><label>任务名称（可编辑）<input value={taskName} disabled={busy} onChange={event => setTaskName(event.target.value)} placeholder="默认：应用名称 · 目标地区"/></label><label>目标地区（可选）<input value={region} disabled={busy} onChange={event => setRegion(event.target.value)} placeholder="例如 Brazil；留空即全球"/></label><button className="primary" disabled={busy || !applications.some(item => item.selected && item.enabled)} onClick={createTask}><Search size={15}/> 创建客户发现任务</button></section>}

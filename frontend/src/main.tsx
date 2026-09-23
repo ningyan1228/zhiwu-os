@@ -14,7 +14,6 @@ import { BusinessMap } from './BusinessMap'
 import { TradeCommitmentLedger } from './TradeCommitmentLedger'
 import { MailFactCard } from './MailFactCard'
 import { MailWorkbench } from './MailWorkbench'
-import { tdsDiscoveryPresets, type TdsDiscoveryPreset } from './tdsDiscoveryPresets'
 import { TdsApplicationDiscovery } from './TdsApplicationDiscovery'
 
 type View = 'dashboard' | 'crm' | 'business-map' | 'commitments' | 'leads' | 'suppliers' | 'mail' | 'products' | 'relationships' | 'quotes' | 'projects' | 'tasks' | 'calendar' | 'imports'
@@ -465,8 +464,6 @@ function Dashboard({ customers, projects, followups, emails, tasks, today, onOpe
 
 function LeadDiscovery({ products, tasks, leads, runs, onChanged }: { products: Product[]; tasks: LeadSearchTask[]; leads: CustomerLead[]; runs: LeadDiscoveryRun[]; onChanged: () => Promise<void> }) {
   const [openTaskForm, setOpenTaskForm] = useState(false)
-  const [presetBusy, setPresetBusy] = useState<string | null>(null)
-  const [presetNotice, setPresetNotice] = useState('')
   const [editingTask, setEditingTask] = useState<LeadSearchTask | null>(null)
   const [busy, setBusy] = useState(false)
   const [layer, setLayer] = useState<NonNullable<CustomerLead['lead_layer']>>('直接需求候选')
@@ -510,51 +507,6 @@ function LeadDiscovery({ products, tasks, leads, runs, onChanged }: { products: 
     const result = await api.deleteLeadSearchTask(task.id)
     alert(result.message)
   })
-  const startTdsPreset = async (preset: TdsDiscoveryPreset) => {
-    setPresetBusy(preset.id)
-    setPresetNotice('')
-    try {
-      const existing = tasks.find(task => task.task_name === preset.task.task_name)
-      // Preset upgrades may add synonyms and reviewed public company seeds.
-      // Keep user-added values while extending only the app-owned TDS task.
-      const mergeTerms = (current: string[] = [], additions: string[] = []) => [...new Set([...current, ...additions])]
-      const upgraded = existing ? {
-        ...existing,
-        discovery_strategy: 'public_seed_crawl' as const,
-        product_keywords: mergeTerms(existing.product_keywords, preset.task.product_keywords),
-        application_keywords: mergeTerms(existing.application_keywords, preset.task.application_keywords),
-        target_countries: mergeTerms(existing.target_countries, preset.task.target_countries),
-        target_company_types: mergeTerms(existing.target_company_types, preset.task.target_company_types),
-        profile_exclusion_rules: mergeTerms(existing.profile_exclusion_rules, preset.task.profile_exclusion_rules),
-        source_urls: mergeTerms(existing.source_urls || [], preset.task.source_urls),
-      } : null
-      const changed = Boolean(existing && JSON.stringify(upgraded) !== JSON.stringify(existing))
-      const task = existing
-        ? changed ? await api.updateLeadSearchTask(existing.id, upgraded!) : existing
-        : await api.createLeadSearchTask(preset.task)
-      const result = await api.runLeadSearchTask(task.id)
-      setTaskFilter(task.id); setCountryFilter(''); setTypeFilter(''); setGradeFilter(''); setContactFilter('all')
-      setPresetNotice(`“${preset.title}”：正在从公开官网与目录核验企业，请勿重复点击。`)
-      let completed: LeadDiscoveryRun | undefined
-      for (let attempt = 1; attempt <= 30; attempt += 1) {
-        await new Promise<void>(resolve => window.setTimeout(resolve, 3000))
-        const refreshedRuns = await api.leadDiscoveryRuns()
-        const current = result.run_id ? refreshedRuns.find(run => run.id === result.run_id) : refreshedRuns.find(run => run.task_id === task.id)
-        if (current?.status && current.status !== '运行中') { completed = current; break }
-        setPresetNotice(`“${preset.title}”：正在核验公开网页（约 ${attempt * 3} 秒），完成后会自动刷新下方线索库。`)
-      }
-      await onChanged()
-      if (completed) {
-        setPresetNotice(`“${preset.title}”已${completed.status}：发现 ${completed.discovered_count}，新增 ${completed.inserted_count}，跳过 ${completed.skipped_count}。已自动切换到该产品的线索库。`)
-      } else {
-        setPresetNotice(`“${preset.title}”仍在后台核验，已自动切换到该产品的线索库；约一分钟后刷新页面即可看到完成结果。`)
-      }
-    } catch (error) {
-      setPresetNotice(error instanceof Error ? error.message : '无法创建或运行该产品的查找任务。')
-    } finally {
-      setPresetBusy(null)
-    }
-  }
   const createTask = (lead: CustomerLead) => run(() => api.createDevelopmentTaskFromLead(lead.id, { priority: lead.match_score >= 70 ? 'important' : 'normal', task_date: today, suggested_next_action: '查看官网并确认业务与目标应用的匹配度；仅在人工确认后决定是否联系。' }))
   const convert = (lead: CustomerLead) => run(async () => {
     if (!window.confirm(`确认将“${lead.company_name}”转入外贸 CRM？系统会先按邮箱、官网域名和公司名去重；不会自动发送任何信息。`)) return
@@ -566,7 +518,6 @@ function LeadDiscovery({ products, tasks, leads, runs, onChanged }: { products: 
     <TdsApplicationDiscovery onChanged={onChanged}/>
     <div className="compliance-note"><b>纯爬虫规则：</b>需求侧只使用经 TDS 确认的下游应用，从公开协会/展会目录、行业目录和已核验官网种子发现企业；每个页面均先检查 robots.txt，低频顺序访问。系统不会抓取搜索结果页、登录平台或私人数据。{latestRun?.status === '跳过' && latestRun.run_log?.[0] ? <span> 上次结果：{latestRun.run_log[0]}</span> : null}</div>
     {latestRun && <details className="compliance-note lead-run-diagnostics" open={latestRun.status === '失败'}><summary>查看本任务上次运行诊断：{latestRun.status} · 发现 {latestRun.discovered_count} · 新增 {latestRun.inserted_count} · 跳过 {latestRun.skipped_count}</summary>{latestRun.error_message && <p className="lead-fail">错误：{latestRun.error_message}</p>}<ul>{(latestRun.run_log || []).slice(-30).map((entry, index) => <li key={`${index}-${entry}`}>{entry}</li>)}</ul></details>}
-    <section className="tds-preset-panel"><div><p className="eyebrow"><Package size={13}/> TDS-BASED CUSTOMER DISCOVERY</p><h2>三款重点产品，一键按应用找客户</h2><p>无需填写下方的关键词或数据源：每张卡已内置 TDS 应用、目标客户类型、目标地区、公开官网种子和排除规则。点击后自动创建任务、爬取、核验、去重并保存到待审核线索库。</p></div><div className="tds-preset-grid">{tdsDiscoveryPresets.map(preset => { return <article key={preset.id} className="tds-preset-card"><div><span>{preset.material}</span><h3>{preset.title}</h3><p>{preset.summary}</p></div><dl><div><dt>具体应用 → 应找客户</dt><dd className="tds-application-list">{preset.applicationDetails.map(detail => <span key={detail.application}><b>{detail.application}</b><small>找：{detail.customerType}</small></span>)}</dd></div><div><dt>优先市场</dt><dd>{preset.customerFocus.join('；')}</dd></div></dl><button className="primary" disabled={presetBusy !== null} onClick={() => void startTdsPreset(preset)}><Radar size={16}/>{presetBusy === preset.id ? '正在自动查找…' : '一键查找客户'}</button></article> })}</div>{presetNotice && <p className="compliance-note tds-preset-notice">{presetNotice}</p>}</section>
     <section className="panel lead-task-panel"><div className="panel-title"><div><h2>爬取任务</h2><p>TDS 产品卡会自动创建并运行任务；这里用于查看状态。每日自动爬取默认关闭。</p></div><button onClick={() => { setEditingTask(null); setOpenTaskForm(true) }}><Plus size={15}/> 手动新建（高级）</button></div><div className="lead-task-list">{tasks.map(task => <article key={task.id}><div><b>{task.task_name}</b><small>{task.discovery_mode === '供应工厂' ? '供应工厂 · 中国大陆生产主体' : '需求客户 · 下游应用主体'} · {task.product_keywords.slice(0, 2).join(' · ') || '待填写关键词'}</small><span>{task.daily_enabled ? `每日 ${task.daily_run_time.slice(0, 5)}` : '仅手动运行'} · 纯爬虫 · {task.status} · 候选企业目标 {task.max_results}{task.source_urls?.length ? ` · ${task.source_urls.length} 个公开入口` : ''}</span></div><div><button className="secondary" disabled={busy || task.status === '暂停'} onClick={() => void runTask(task)}>运行</button><button className="secondary" disabled={busy} onClick={() => { setEditingTask(task); setOpenTaskForm(true) }}>编辑</button><button className="secondary" disabled={busy} onClick={() => void run(() => api.updateLeadSearchTask(task.id, { ...task, discovery_strategy: 'public_seed_crawl', source_urls: task.source_urls || [], daily_enabled: !task.daily_enabled, status: task.status, daily_run_time: task.daily_run_time.slice(0, 5) }))}>{task.daily_enabled ? '关闭每日' : '开启每日'}</button><button className="danger" disabled={busy} onClick={() => void removeTask(task)}>删除</button></div></article>)}{!tasks.length && <p className="detail-empty">还没有搜索任务。可从上方产品卡一键开始，手动任务仅用于高级场景。</p>}</div></section>
     <section className="panel lead-review-panel"><div className="panel-title"><div><h2>分层线索库</h2><p>直接需求候选才可继续严格核验；间接应用链只用于市场研究，供应工厂不进入客户 CRM。</p></div><span className="muted">{selectedTask ? `${selectedTask.task_name} · ` : ''}上次运行：{latestRun?.started_at ? new Date(latestRun.started_at).toLocaleString('zh-CN') : '尚未运行'}</span></div><div className="lead-tabs"><button className={layer === '直接需求候选' ? 'active' : ''} onClick={() => setLayer('直接需求候选')}>直接需求候选 {direct.length}</button><button className={layer === '间接应用链' ? 'active' : ''} onClick={() => setLayer('间接应用链')}>间接应用链 {indirect.length}</button><button className={layer === '供应工厂候选' ? 'active' : ''} onClick={() => setLayer('供应工厂候选')}>供应工厂 {suppliers.length}</button><button className={layer === '排除' ? 'active' : ''} onClick={() => setLayer('排除')}>排除 {excluded.length}</button><button className={layer === '待判定' ? 'active' : ''} onClick={() => setLayer('待判定')}>待判定 {scopedLeads.filter(lead => layerOf(lead) === '待判定').length}</button></div><div className="lead-filters"><select value={taskFilter} onChange={event => { setTaskFilter(event.target.value); setCountryFilter(''); setTypeFilter(''); setGradeFilter(''); setContactFilter('all') }}><option value="">全部任务</option>{tasks.map(task => <option key={task.id} value={task.id}>{task.task_name}</option>)}</select><select value={countryFilter} onChange={event => setCountryFilter(event.target.value)}><option value="">全部地区</option>{countries.map(country => <option key={country}>{country}</option>)}</select><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="">全部企业类型</option>{companyTypes.map(type => <option key={type}>{type}</option>)}</select><select value={gradeFilter} onChange={event => setGradeFilter(event.target.value)}><option value="">全部匹配等级</option><option value="A">A｜直接匹配</option><option value="B">B｜相关待确认</option></select><select value={contactFilter} onChange={event => setContactFilter(event.target.value as typeof contactFilter)}><option value="all">全部联系方式</option><option value="email">有公开邮箱</option><option value="phone">有公开电话</option><option value="both">邮箱和电话齐全</option></select></div><p className="lead-scope-note">当前显示：<b>{selectedTask ? selectedTask.task_name : '全部任务的汇总线索'}</b>{selectedTask ? '。切换任务后，数量、国家筛选与上次运行时间都会同步切换。' : '。请先选择任务，避免将不同产品的结果混在一起判断。'}</p><div className="lead-grid">{shown.map(lead => <LeadVerificationCard key={lead.id} lead={lead} sourceTaskName={lead.task_id ? taskNameById.get(lead.task_id) : undefined} bucket={bucketOf(lead)} busy={busy} review={review} createTask={createTask} convert={convert}/>) }{!shown.length && <p className="detail-empty">该任务在当前分层暂无线索；这不代表其他任务的结果会显示在这里。</p>}</div></section>
      <details className="panel lead-advanced-settings"><summary><b>高级采集配置（无需填写）</b><span>仅在新增其他产品、补充自有公开目录或导入自有种子时使用；三款 TDS 产品的一键查找不需要这里的任何操作。</span></summary><LeadEngineOperations products={products} tasks={tasks} onChanged={onChanged}/></details>{openTaskForm && <LeadSearchTaskForm products={products} task={editingTask || undefined} close={() => { setOpenTaskForm(false); setEditingTask(null) }} submit={async payload => { if (editingTask) await api.updateLeadSearchTask(editingTask.id, payload); else await api.createLeadSearchTask(payload); setOpenTaskForm(false); setEditingTask(null); await onChanged() }}/>}</section>

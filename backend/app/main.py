@@ -21,6 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .strict_lead_import import import_cpph_strict_records
 from .customer_development import NL_FC_PU_CAMPAIGN, canonical_domain, draft_email, html_text, nl_fc_pu_application_terms, nl_fc_pu_queries, normalize_company_name, public_email, public_http_url, robots_permit, score_lead
 from .tds_discovery import application_search_terms, content_sha256, extract_explicit_applications, parse_tds_upload
+from .tds_presets import builtin_tds_preset, builtin_tds_preset_summaries
 
 class Settings(BaseSettings):
     supabase_url: str
@@ -1333,6 +1334,71 @@ async def tds_document(token: str, document_id: str) -> dict[str, Any]:
 @app.get("/api/tds-documents")
 async def list_tds_documents(authorization: str | None = Header(default=None)):
     return await supabase("tds_documents?select=*&order=parsed_at.desc", bearer(authorization))
+
+@app.get("/api/tds-presets")
+async def list_tds_presets(authorization: str | None = Header(default=None)):
+    """List the three reviewed source documents already built into the app."""
+    bearer(authorization)
+    return builtin_tds_preset_summaries()
+
+@app.post("/api/tds-presets/{preset_id}/bootstrap", status_code=201)
+async def bootstrap_tds_preset(preset_id: str, authorization: str | None = Header(default=None)):
+    """Create a user's editable review copy without requiring another upload.
+
+    Existing documents and application edits are preserved.  A later preset
+    release can add a missing reviewed application, but it never overwrites a
+    card the user has already edited or confirmed.
+    """
+    token = bearer(authorization)
+    preset = builtin_tds_preset(preset_id)
+    if not preset:
+        raise HTTPException(404, "内置 TDS 不存在")
+
+    digest = preset["content_sha256"]
+    existing_documents = await supabase(f"tds_documents?content_sha256=eq.{digest}&select=*&limit=1", token)
+    reused = bool(existing_documents)
+    if reused:
+        document = existing_documents[0]
+    else:
+        document = (await supabase("tds_documents", token, "POST", {
+            "original_file_name": preset["original_file_name"],
+            "document_version": preset["document_version"],
+            "mime_type": preset["mime_type"],
+            "byte_size": preset["byte_size"],
+            "content_sha256": digest,
+            "parse_status": "已解析",
+            "parse_error": None,
+            "extracted_text": preset["extracted_summary"],
+            "extracted_summary": preset["extracted_summary"],
+        }))[0]
+
+    applications = await supabase(
+        f"tds_applications?tds_document_id=eq.{document['id']}&select=*&order=created_at.asc", token,
+    )
+    existing_names = {
+        str(item.get("application_name") or "").strip().casefold()
+        for item in applications
+    }
+    inserted = 0
+    for application in preset["applications"]:
+        if application["application_name"].strip().casefold() in existing_names:
+            continue
+        values = {
+            **application,
+            "tds_document_id": document["id"],
+            "selected": False,
+            "enabled": True,
+            "revision_note": "由用户提供的原始 TDS 复核后内置；需人工勾选确认。",
+        }
+        applications.append((await supabase("tds_applications", token, "POST", values))[0])
+        inserted += 1
+
+    message = (
+        f"已载入《{preset['title']}》及 {inserted} 项原文应用，请逐项审核勾选。"
+        if inserted else
+        f"《{preset['title']}》已在你的工作台中，已保留原有勾选和编辑记录。"
+    )
+    return {"document": document, "applications": applications, "reused": reused, "message": message}
 
 @app.post("/api/tds-documents/parse", status_code=201)
 async def parse_tds_document(

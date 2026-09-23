@@ -10,7 +10,8 @@ from app.lead_analyzer import LeadAnalyzer
 from app.lead_discovery import _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
 from app.customer_development import canonical_domain, draft_email, nl_fc_pu_application_terms, nl_fc_pu_queries, public_http_url, score_lead
 from app.tds_discovery import application_search_terms, extract_explicit_applications
-from app.main import LeadSearchTaskIn, application_discovery_provider, application_match_status, application_task_profile, create_lead_search_task, lead_task_values_from_product_profile
+from app.tds_presets import BUILTIN_TDS_PRESETS, builtin_tds_preset_summaries
+from app.main import LeadSearchTaskIn, application_discovery_provider, application_match_status, application_task_profile, bootstrap_tds_preset, create_lead_search_task, lead_task_values_from_product_profile
 
 
 class LeadEngineUnitTests(unittest.TestCase):
@@ -137,6 +138,52 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertFalse(any("Internal Grade X" == item["application_name"] for item in applications))
         terms = application_search_terms({"application_name": "coated urea", "target_company_types": ["manufacturer"]}, "Brazil")
         self.assertTrue(all("Internal Grade X" not in item for item in terms))
+
+    def test_builtin_tds_presets_are_source_bound_and_search_by_application(self):
+        self.assertEqual(len(BUILTIN_TDS_PRESETS), 3)
+        self.assertEqual([item["application_count"] for item in builtin_tds_preset_summaries()], [4, 4, 4])
+        for preset in BUILTIN_TDS_PRESETS.values():
+            self.assertEqual(len(preset["content_sha256"]), 64)
+            self.assertTrue(preset["applications"])
+            for application in preset["applications"]:
+                self.assertEqual(application["evidence_status"], "TDS明确")
+                self.assertTrue(application["evidence_excerpt"])
+                self.assertTrue(application["target_company_types"])
+                self.assertTrue(application["official_business_evidence"])
+                self.assertFalse(any("NL-W1201" in term for term in application["search_terms"]))
+        elo_terms = " ".join(
+            term for item in BUILTIN_TDS_PRESETS["epoxidized-linseed-oil"]["applications"]
+            for term in item["search_terms"]
+        ).casefold()
+        self.assertNotIn("pvc", elo_terms)
+
+    def test_bootstrap_builtin_tds_preserves_existing_application_edits(self):
+        from unittest.mock import patch
+
+        calls = []
+        existing_application = {
+            "id": "application-1", "tds_document_id": "document-1",
+            "application_name": "未处理 PP 基材的水性涂层底涂与附着力促进",
+            "selected": True, "description": "用户已编辑",
+        }
+
+        async def fake_supabase(path, token, method="GET", payload=None):
+            calls.append((path, method, payload))
+            if path.startswith("tds_documents?content_sha256="):
+                return [{"id": "document-1", "original_file_name": "existing.pdf"}]
+            if path.startswith("tds_applications?tds_document_id=eq.document-1"):
+                return [existing_application]
+            if path == "tds_applications" and method == "POST":
+                return [{"id": f"application-{len(calls)}", **payload}]
+            raise AssertionError((path, method, payload))
+
+        with patch("app.main.supabase", fake_supabase):
+            result = asyncio.run(bootstrap_tds_preset("nl-w1201", "Bearer test"))
+        self.assertTrue(result["reused"])
+        self.assertEqual(result["applications"][0]["description"], "用户已编辑")
+        inserted = [payload for _, method, payload in calls if method == "POST"]
+        self.assertEqual(len(inserted), 3)
+        self.assertTrue(all(payload["selected"] is False for payload in inserted))
 
     def test_application_task_profile_uses_applications_not_product_grade(self):
         applications, company_types, exclusions = application_task_profile({"application_snapshot": [{
