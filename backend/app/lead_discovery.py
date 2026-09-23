@@ -266,6 +266,26 @@ def _company_type(text: str) -> tuple[str | None, str | None]:
     return None, "官网未确认生产商、配方商、加工厂、品牌方或终端使用企业身份"
 
 
+def _customer_lead_source_type(label: str) -> str:
+    """Map crawler-internal labels to the fixed customer_leads schema values."""
+    value = str(label or "").strip()
+    allowed = {"官网", "展会目录", "协会目录", "行业目录", "新闻", "公开搜索结果", "其他公开网页"}
+    if value in allowed:
+        return value
+    lowered = value.casefold()
+    if "展会" in value or "exhibitor" in lowered or "trade show" in lowered:
+        return "展会目录"
+    if "协会" in value or "association" in lowered:
+        return "协会目录"
+    if "自定义" in value:
+        return "其他公开网页"
+    if "目录" in value or "directory" in lowered or "industry" in lowered:
+        return "行业目录"
+    # Reviewed direct company seeds and non-directory public URLs are official
+    # websites for the purpose of this column.
+    return "官网"
+
+
 def _official_subpage_urls(raw: str, base_url: str, limit: int = 6) -> list[str]:
     """Only follow likely evidence pages on the same official host."""
     host = _host(base_url)
@@ -885,7 +905,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 payload = {
                     "user_id": task["user_id"], "task_id": task["id"], "company_name": company, "website": f"{urlparse(final_url).scheme}://{host}", "website_domain": host,
                     "root_domain": host,
-                    "source_url": final_url, "source_type": source_type, "public_business_email": email, "public_business_phone": phone,
+                    "source_url": final_url, "source_type": _customer_lead_source_type(source_type), "public_business_email": email, "public_business_phone": phone,
                     "public_emails": ([{"value": email, "category": "business", "source_url": email_source}] if email else []),
                     "public_phones": ([{"value": phone, "source_url": phone_source}] if phone else []),
                     "contact_page_url": contact_source, "confidence_score": ai_result.confidence_score,

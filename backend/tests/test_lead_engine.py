@@ -7,7 +7,7 @@ os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 
 from app.lead_analyzer import LeadAnalyzer
-from app.lead_discovery import _contains_terms, _curated_seed_urls, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
+from app.lead_discovery import _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
 from app.main import LeadSearchTaskIn, create_lead_search_task, lead_task_values_from_product_profile
 
 
@@ -103,6 +103,11 @@ class LeadEngineUnitTests(unittest.TestCase):
         restore = next(item for item in calls if item[1] == "PATCH")
         self.assertIsNone(restore[2]["deleted_at"])
         self.assertFalse(restore[2]["cancel_requested"])
+
+    def test_crawler_source_labels_are_valid_customer_lead_source_types(self):
+        self.assertEqual(_customer_lead_source_type("自定义公开目录"), "其他公开网页")
+        self.assertEqual(_customer_lead_source_type("印度肥料协会公开会员目录"), "协会目录")
+        self.assertEqual(_customer_lead_source_type("已核验肥料制造商官网种子"), "官网")
 
 
 if __name__ == "__main__":
