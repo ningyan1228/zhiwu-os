@@ -10,7 +10,7 @@ from app.lead_analyzer import LeadAnalyzer
 from app.lead_discovery import _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
 from app.customer_development import canonical_domain, draft_email, nl_fc_pu_application_terms, nl_fc_pu_queries, public_http_url, score_lead
 from app.tds_discovery import application_search_terms, extract_explicit_applications
-from app.main import LeadSearchTaskIn, application_match_status, application_task_profile, create_lead_search_task, lead_task_values_from_product_profile
+from app.main import LeadSearchTaskIn, application_discovery_provider, application_match_status, application_task_profile, create_lead_search_task, lead_task_values_from_product_profile
 
 
 class LeadEngineUnitTests(unittest.TestCase):
@@ -160,6 +160,20 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertEqual(status, "应用相关但工艺未知")
         self.assertIn("Official product page", reason)
         self.assertIn("人工确认", pending)
+
+    def test_application_provider_can_use_curated_public_directories(self):
+        from unittest.mock import patch
+
+        async def fake_supabase(path, token, method="GET", payload=None):
+            if path.startswith("crawl_sources?"):
+                return []
+            raise AssertionError(path)
+
+        task = {"application_snapshot": [{"application_name": "controlled release fertilizer coating", "target_company_types": ["fertilizer manufacturer"]}]}
+        with patch("app.main.supabase", fake_supabase):
+            provider, notice = asyncio.run(application_discovery_provider("Bearer test", None, task))
+        self.assertEqual(provider, "内置公开行业目录纯爬虫")
+        self.assertIn("公开入口", notice)
 
 
 if __name__ == "__main__":

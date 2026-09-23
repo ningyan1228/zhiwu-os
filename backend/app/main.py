@@ -1397,7 +1397,7 @@ async def update_tds_application(application_id: str, payload: TdsApplicationIn,
 async def list_application_discovery_tasks(authorization: str | None = Header(default=None)):
     return await supabase("application_discovery_tasks?select=*&order=created_at.desc", bearer(authorization))
 
-async def application_discovery_provider(token: str, target_region: str | None) -> tuple[str | None, str | None]:
+async def application_discovery_provider(token: str, target_region: str | None, task: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
     """Return only a provider that can currently yield real public pages."""
     if settings().brave_search_api_key:
         return "Brave Search API + 官网核验", None
@@ -1412,6 +1412,18 @@ async def application_discovery_provider(token: str, target_region: str | None) 
     ]
     if usable:
         return "公开目录纯爬虫", f"已匹配 {len(usable)} 个已启用公开入口；系统将逐页检查 robots.txt 并核验企业官网。"
+    if task:
+        application_keywords, _, _ = application_task_profile(task)
+        region_label = str(target_region or "").strip()
+        from .lead_discovery import _curated_seed_urls
+        curated = _curated_seed_urls({
+            "task_name": "应用客户发现",
+            "product_keywords": [],
+            "application_keywords": application_keywords,
+            "target_countries": [] if not region_label or region_label == "全球" else [region_label],
+        })
+        if curated:
+            return "内置公开行业目录纯爬虫", f"已按应用匹配 {len(curated)} 个内置协会/行业公开入口；系统将继续核验企业官网，不会把目录本身当作客户。"
     return None, "当前目标地区没有已启用的公开目录入口，且未配置搜索 API；任务可以保存，但不会伪造候选公司。"
 
 def application_task_profile(task: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
@@ -1435,7 +1447,7 @@ async def ensure_application_legacy_task(token: str, task: dict[str, Any]) -> di
         linked = await supabase(f"lead_search_tasks?id=eq.{linked_id}&deleted_at=is.null&select=*&limit=1", token)
         if linked:
             return linked[0]
-    provider, notice = await application_discovery_provider(token, task.get("target_region"))
+    provider, notice = await application_discovery_provider(token, task.get("target_region"), task)
     if not provider:
         await supabase(f"application_discovery_tasks?id=eq.{task['id']}", token, "PATCH", {
             "status": "待配置", "search_provider": None, "provider_notice": notice,
@@ -1459,8 +1471,6 @@ async def ensure_application_legacy_task(token: str, task: dict[str, Any]) -> di
         daily_enabled=False,
     )
     values = await lead_task_values_from_product_profile(payload, token)
-    if not settings().brave_search_api_key and not values.get("source_urls"):
-        raise HTTPException(422, "没有匹配当前地区的公开目录入口，无法开始真实采集。")
     existing = await supabase(f"lead_search_tasks?task_name=eq.{quote(payload.task_name, safe='')}&deleted_at=is.null&select=*&limit=1", token)
     legacy = existing[0] if existing else (await supabase("lead_search_tasks", token, "POST", values))[0]
     await supabase(f"application_discovery_tasks?id=eq.{task['id']}", token, "PATCH", {
@@ -1565,7 +1575,7 @@ async def create_application_discovery_task(payload: ApplicationDiscoveryTaskIn,
     application_label = " / ".join(str(row["application_name"]) for row in applications[:2])
     region = (payload.target_region or "").strip()
     task_name = (payload.task_name or "").strip() or f"{application_label} · {region or '全球'}"
-    provider, provider_notice = await application_discovery_provider(token, region)
+    provider, provider_notice = await application_discovery_provider(token, region, {"application_snapshot": snapshot})
     values = {"tds_document_id": payload.tds_document_id, "task_name": task_name, "target_region": region or None, "candidate_limit": payload.candidate_limit, "search_budget": payload.search_budget, "application_snapshot": snapshot, "status": "待运行" if provider else "待配置", "search_provider": provider, "provider_notice": None if provider else "尚未配置合规搜索服务；当前可保存应用、导入公开 CSV/PDF 和人工官网证据，但不会伪造自动搜索结果。"}
     values["provider_notice"] = provider_notice
     task = (await supabase("application_discovery_tasks", token, "POST", values))[0]
