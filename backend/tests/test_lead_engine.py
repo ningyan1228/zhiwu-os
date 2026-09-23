@@ -108,7 +108,7 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertFalse(restore[2]["cancel_requested"])
 
     def test_crawler_source_labels_are_valid_customer_lead_source_types(self):
-        self.assertEqual(_customer_lead_source_type("自定义公开目录"), "其他公开网页")
+        self.assertEqual(_customer_lead_source_type("自定义公开目录"), "行业目录")
         self.assertEqual(_customer_lead_source_type("印度肥料协会公开会员目录"), "协会目录")
         self.assertEqual(_customer_lead_source_type("已核验肥料制造商官网种子"), "官网")
 

@@ -291,7 +291,10 @@ def _company_type(text: str) -> tuple[str | None, str | None]:
 def _customer_lead_source_type(label: str) -> str:
     """Map crawler-internal labels to the fixed customer_leads schema values."""
     value = str(label or "").strip()
-    allowed = {"官网", "展会目录", "协会目录", "行业目录", "新闻", "公开搜索结果", "其他公开网页"}
+    # Production workspaces created across schema versions do not all share
+    # the later extended enum.  Keep crawler output inside the stable values
+    # accepted by every customer_leads_source_type_check version.
+    allowed = {"官网", "展会目录", "协会目录", "行业目录"}
     if value in allowed:
         return value
     lowered = value.casefold()
@@ -300,7 +303,7 @@ def _customer_lead_source_type(label: str) -> str:
     if "协会" in value or "association" in lowered:
         return "协会目录"
     if "自定义" in value:
-        return "其他公开网页"
+        return "行业目录"
     if "目录" in value or "directory" in lowered or "industry" in lowered:
         return "行业目录"
     # Reviewed direct company seeds and non-directory public URLs are official

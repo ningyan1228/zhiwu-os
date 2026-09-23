@@ -8,8 +8,21 @@ function token() {
   return value
 }
 
+async function timedFetch(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 25000) {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw new Error('请求超时，操作已自动解锁，请稍后重试。')
+    throw error
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}) {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await timedFetch(`${apiBaseUrl}${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}`, ...init.headers },
   })
@@ -28,7 +41,7 @@ async function request<T>(path: string, init: RequestInit = {}) {
 }
 
 async function publicRequest<T>(path: string, init: RequestInit = {}) {
-  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...init.headers } })
+  const response = await timedFetch(`${apiBaseUrl}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...init.headers } })
   if (!response.ok) throw new Error('请求失败，请稍后重试。')
   return response.json() as Promise<T>
 }

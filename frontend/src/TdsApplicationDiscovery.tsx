@@ -35,7 +35,13 @@ export function TdsApplicationDiscovery({ onChanged }: Props) {
   useEffect(() => { void load().catch(error => setNotice(error instanceof Error ? error.message : '无法读取 TDS 工作台。')) }, [])
   const work = async (job: () => Promise<string | void>) => {
     setBusy(true); setNotice('')
-    try { const message = await job(); if (message) setNotice(message); await onChanged() }
+    try {
+      const message = await job()
+      if (message) setNotice(message)
+      // Parent workspace refreshes should never keep every TDS control locked.
+      // The task/document-specific job above has already refreshed its own UI.
+      void onChanged().catch(error => console.info('后台刷新工作区失败。', error))
+    }
     catch (error) { setNotice(error instanceof Error ? error.message : '操作失败，请稍后重试。') }
     finally { setBusy(false) }
   }
