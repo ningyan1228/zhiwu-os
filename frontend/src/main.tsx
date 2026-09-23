@@ -532,8 +532,22 @@ function LeadDiscovery({ products, tasks, leads, runs, onChanged }: { products: 
         ? changed ? await api.updateLeadSearchTask(existing.id, upgraded!) : existing
         : await api.createLeadSearchTask(preset.task)
       const result = await api.runLeadSearchTask(task.id)
-      setPresetNotice(`“${preset.title}”：纯爬虫任务已启动。${result.message}`)
+      setTaskFilter(task.id); setCountryFilter(''); setTypeFilter(''); setGradeFilter(''); setContactFilter('all')
+      setPresetNotice(`“${preset.title}”：正在从公开官网与目录核验企业，请勿重复点击。`)
+      let completed: LeadDiscoveryRun | undefined
+      for (let attempt = 1; attempt <= 30; attempt += 1) {
+        await new Promise<void>(resolve => window.setTimeout(resolve, 3000))
+        const refreshedRuns = await api.leadDiscoveryRuns()
+        const current = result.run_id ? refreshedRuns.find(run => run.id === result.run_id) : refreshedRuns.find(run => run.task_id === task.id)
+        if (current?.status && current.status !== '运行中') { completed = current; break }
+        setPresetNotice(`“${preset.title}”：正在核验公开网页（约 ${attempt * 3} 秒），完成后会自动刷新下方线索库。`)
+      }
       await onChanged()
+      if (completed) {
+        setPresetNotice(`“${preset.title}”已${completed.status}：发现 ${completed.discovered_count}，新增 ${completed.inserted_count}，跳过 ${completed.skipped_count}。已自动切换到该产品的线索库。`)
+      } else {
+        setPresetNotice(`“${preset.title}”仍在后台核验，已自动切换到该产品的线索库；约一分钟后刷新页面即可看到完成结果。`)
+      }
     } catch (error) {
       setPresetNotice(error instanceof Error ? error.message : '无法创建或运行该产品的查找任务。')
     } finally {
