@@ -1,4 +1,4 @@
-import type { CrawlSource, Customer, CustomerLead, DailyLog, DomainBlock, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailAiFactCard, MailboxAccount, MailEmail, MailReplyDraft, Product, ProductCustomerRelation, ProductKeyword, Project, Quote, SalesOrder, StrictLeadImportResult, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, TradeCommitment, WorkspaceMember } from './types'
+import type { CrawlSource, Customer, CustomerLead, DailyLog, DevelopmentCampaign, DevelopmentWorkspace, DiscoveryQuery, DomainBlock, EmailSync, Followup, ImportApplyResult, ImportBatch, ImportPreviewResult, LeadDiscoveryRun, LeadSearchTask, MailAiFactCard, MailboxAccount, MailEmail, MailReplyDraft, OutreachDraft, Product, ProductCustomerRelation, ProductKeyword, Project, Quote, SalesOrder, StrictLeadImportResult, Supplier, SupplierContact, SupplierDocument, SupplierFollowup, SupplierInsight, SupplierProduct, SupplierProjectLink, SupplierRfq, Task, TimelineEvent, TradeCommitment, WorkspaceMember } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://zhiwu-os-api.gjsx.uno' : 'http://localhost:8000')
 
@@ -145,6 +145,15 @@ export const api = {
   updateCrawlSource: (id: string, payload: Omit<CrawlSource, 'id' | 'created_at' | 'updated_at' | 'last_run_at' | 'success_count' | 'failure_count'>) => request<CrawlSource>(`/api/sources/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   domainBlocklist: () => request<DomainBlock[]>('/api/domain-blocklist'),
   createDomainBlock: (payload: Omit<DomainBlock, 'id' | 'created_at'>) => request<DomainBlock>('/api/domain-blocklist', { method: 'POST', body: JSON.stringify(payload) }),
+  developmentCampaigns: () => request<DevelopmentCampaign[]>('/api/development-campaigns'),
+  bootstrapNlFcPuBrazil: () => request<{ campaign: DevelopmentCampaign; queries: DiscoveryQuery[]; message: string }>('/api/development-campaigns/nl-fc-pu-brazil', { method: 'POST' }),
+  developmentWorkspace: (id: string) => request<DevelopmentWorkspace>(`/api/development-campaigns/${id}/workspace`),
+  importDevelopmentCsv: (id: string, file: File) => { const form = new FormData(); form.append('file', file); return upload<{ inserted: number; updated: number; skipped: number; message: string }>(`/api/development-campaigns/${id}/import-csv`, form) },
+  importDevelopmentPdf: (id: string, file: File, sourceUrl: string) => { const form = new FormData(); form.append('file', file); form.append('source_url', sourceUrl); return upload<{ inserted: number; skipped: number; message: string }>(`/api/development-campaigns/${id}/import-pdf`, form) },
+  verifyDevelopmentLead: (id: string) => request<{ lead: CustomerLead; evidence_count: number; message: string }>(`/api/customer-leads/${id}/verify-official`, { method: 'POST' }),
+  updateDevelopmentLeadStatus: (id: string, payload: { development_status: '发现' | '待核实' | '合格' | '不匹配' | '已联系' | '已回复' | '拒绝联系'; note?: string }) => request<CustomerLead>(`/api/customer-leads/${id}/development-status`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  createOutreachDraft: (id: string) => request<{ draft: OutreachDraft; message: string }>(`/api/customer-leads/${id}/outreach-drafts`, { method: 'POST' }),
+  approveOutreachDraft: (id: string, payload: { approval_state: '已审核' | '已拒绝'; approval_note?: string }) => request<OutreachDraft>(`/api/outreach-drafts/${id}/approval`, { method: 'PATCH', body: JSON.stringify(payload) }),
   leadSearchTasks: () => request<LeadSearchTask[]>('/api/lead-search-tasks'),
   systemHealth: () => request<{ status: string; service: string; search_configured: boolean; ai_configured: boolean }>('/api/system/health'),
   createLeadSearchTask: (payload: Omit<LeadSearchTask, 'id' | 'user_id' | 'last_run_at' | 'last_run_status' | 'last_error' | 'created_at'>) => request<LeadSearchTask>('/api/lead-search-tasks', { method: 'POST', body: JSON.stringify(payload) }),

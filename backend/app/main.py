@@ -1,4 +1,5 @@
 """Thin API gateway: browser credentials are verified with Supabase before data is proxied."""
+import asyncio
 from datetime import date, datetime, timedelta
 import csv
 from functools import lru_cache
@@ -18,6 +19,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from .strict_lead_import import import_cpph_strict_records
+from .customer_development import NL_FC_PU_CAMPAIGN, canonical_domain, draft_email, html_text, nl_fc_pu_queries, normalize_company_name, public_email, public_http_url, robots_permit, score_lead
 
 class Settings(BaseSettings):
     supabase_url: str
@@ -431,6 +433,27 @@ class LeadConvertIn(BaseModel):
     next_followup_date: str | None = None
     notes: str | None = None
     customer_id: str | None = None
+
+class DevelopmentCampaignIn(BaseModel):
+    campaign_name: str = Field(min_length=1, max_length=200)
+    product_code: str = Field(min_length=1, max_length=100)
+    product_name: str = Field(min_length=1, max_length=300)
+    product_claim_text: str = Field(min_length=1, max_length=2000)
+    product_claim_source: str = Field(min_length=1, max_length=500)
+    target_country: str = Field(min_length=1, max_length=100)
+    target_company_types: list[str] = []
+    applications: list[str] = []
+    exclusion_terms: list[str] = []
+    daily_candidate_limit: int = Field(default=20, ge=1, le=100)
+    status: Literal["草稿", "启用", "暂停", "已关闭"] = "启用"
+
+class DevelopmentLeadStatusIn(BaseModel):
+    development_status: Literal["发现", "待核实", "合格", "不匹配", "已联系", "已回复", "拒绝联系"]
+    note: str | None = Field(default=None, max_length=2000)
+
+class OutreachDraftApprovalIn(BaseModel):
+    approval_state: Literal["已审核", "已拒绝"]
+    approval_note: str | None = Field(default=None, max_length=1000)
 
 class ProductKeywordIn(BaseModel):
     product_id: str
@@ -1272,6 +1295,245 @@ async def import_cpph_2a_strict_leads(
 async def list_customer_leads(authorization: str | None = Header(default=None), limit: int = Query(300, le=500)):
     return await supabase(f"customer_leads?select=*&order=discovered_at.desc&limit={limit}", bearer(authorization))
 
+async def development_campaign(token: str, campaign_id: str) -> dict[str, Any]:
+    rows = await supabase(f"development_campaigns?id=eq.{campaign_id}&select=*&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "客户开发任务不存在")
+    return rows[0]
+
+async def development_duplicate(token: str, domain: str | None, company_name: str, country: str | None) -> bool:
+    customers = await supabase("customers?select=company_name,country,website&archived_at=is.null&limit=500", token)
+    leads = await supabase("customer_leads?select=company_name,country,website_domain&limit=500", token)
+    name_key = normalize_company_name(company_name)
+    for row in [*customers, *leads]:
+        if domain and canonical_domain(row.get("website") or row.get("website_domain")) == domain:
+            return True
+        # Same-name records without a verifiable domain stay a candidate
+        # duplicate only when the country matches; they are never merged here.
+        if not domain and country and str(row.get("country") or "").casefold() == country.casefold() and normalize_company_name(row.get("company_name") or "") == name_key:
+            return True
+    return False
+
+async def update_development_score(token: str, lead: dict[str, Any], campaign: dict[str, Any]) -> dict[str, Any]:
+    evidences = await supabase(f"lead_evidences?customer_lead_id=eq.{lead['id']}&select=evidence_role&limit=100", token)
+    contacts = await supabase(f"lead_contacts?customer_lead_id=eq.{lead['id']}&select=email,email_status&limit=20", token)
+    roles = {str(row.get("evidence_role") or "") for row in evidences}
+    has_contact = any(row.get("email") and row.get("email_status") in {"官网公开", "已验证"} for row in contacts)
+    score = score_lead(
+        target_country=str(campaign["target_country"]), lead_country=lead.get("country"), evidence_roles=roles,
+        has_official_website=bool(canonical_domain(lead.get("website"))), has_public_contact=has_contact,
+        duplicate=bool(lead.get("suspected_duplicate")), rejected=lead.get("development_status") == "拒绝联系",
+    )
+    rows = await supabase(f"customer_leads?id=eq.{lead['id']}", token, "PATCH", {"match_score": score.score, "score_reasons": score.reasons, "updated_at": datetime.now().isoformat()})
+    return rows[0]
+
+@app.get("/api/development-campaigns")
+async def list_development_campaigns(authorization: str | None = Header(default=None)):
+    return await supabase("development_campaigns?select=*&order=created_at.desc", bearer(authorization))
+
+@app.post("/api/development-campaigns/nl-fc-pu-brazil", status_code=201)
+async def bootstrap_nl_fc_pu_brazil(authorization: str | None = Header(default=None)):
+    """Create or reuse the first no-paid-API, Brazil customer-development task."""
+    token = bearer(authorization)
+    name = quote(NL_FC_PU_CAMPAIGN["campaign_name"], safe="")
+    rows = await supabase(f"development_campaigns?campaign_name=eq.{name}&select=*&limit=1", token)
+    campaign = rows[0] if rows else (await supabase("development_campaigns", token, "POST", NL_FC_PU_CAMPAIGN))[0]
+    for query_text, query_kind, search_url in nl_fc_pu_queries():
+        existing = await supabase(f"discovery_queries?campaign_id=eq.{campaign['id']}&query_text=eq.{quote(query_text, safe='')}&query_kind=eq.{query_kind}&select=id&limit=1", token)
+        if not existing:
+            await supabase("discovery_queries", token, "POST", {"campaign_id": campaign["id"], "query_text": query_text, "country": campaign["target_country"], "query_kind": query_kind, "search_url": search_url})
+    queries = await supabase(f"discovery_queries?campaign_id=eq.{campaign['id']}&select=*&order=created_at.asc", token)
+    return {"campaign": campaign, "queries": queries, "message": "已生成 NL-FC-PU 巴西开发任务与人工搜索链接；系统不会自动抓取搜索结果或发送任何消息。"}
+
+@app.get("/api/development-campaigns/{campaign_id}/workspace")
+async def development_workspace(campaign_id: str, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    campaign = await development_campaign(token, campaign_id)
+    queries, documents, leads, drafts = await asyncio.gather(
+        supabase(f"discovery_queries?campaign_id=eq.{campaign_id}&select=*&order=created_at.asc", token),
+        supabase(f"source_documents?campaign_id=eq.{campaign_id}&select=*&order=imported_at.desc", token),
+        supabase(f"customer_leads?development_campaign_id=eq.{campaign_id}&select=*&order=match_score.desc,discovered_at.desc&limit=300", token),
+        supabase(f"outreach_drafts?campaign_id=eq.{campaign_id}&select=*&order=created_at.desc", token),
+    )
+    lead_ids = ",".join(item["id"] for item in leads)
+    evidences = await supabase(f"lead_evidences?customer_lead_id=in.({lead_ids})&select=*&order=created_at.desc", token) if lead_ids else []
+    contacts = await supabase(f"lead_contacts?customer_lead_id=in.({lead_ids})&select=*&order=created_at.desc", token) if lead_ids else []
+    return {"campaign": campaign, "queries": queries, "documents": documents, "leads": leads, "evidences": evidences, "contacts": contacts, "drafts": drafts}
+
+@app.post("/api/development-campaigns/{campaign_id}/import-csv")
+async def import_development_csv(campaign_id: str, file: UploadFile = File(...), authorization: str | None = Header(default=None)):
+    """Import transparent, user-provided public-company candidates; never contacts or sends them."""
+    token = bearer(authorization); campaign = await development_campaign(token, campaign_id)
+    if not (file.filename or "").casefold().endswith(".csv"):
+        raise HTTPException(422, "第一阶段仅接受 UTF-8 CSV；PDF 请使用 PDF 导入入口。")
+    content = await file.read()
+    if not content or len(content) > 2 * 1024 * 1024:
+        raise HTTPException(422, "CSV 文件必须在 1 字节到 2 MB 之间")
+    try:
+        rows = list(csv.DictReader(content.decode("utf-8-sig").splitlines()))
+    except UnicodeDecodeError as exc:
+        raise HTTPException(422, "CSV 必须为 UTF-8 编码") from exc
+    document = (await supabase("source_documents", token, "POST", {"campaign_id": campaign_id, "source_name": file.filename or "导入 CSV", "source_type": "CSV", "content_sha256": hashlib.sha256(content).hexdigest()}))[0]
+    inserted = updated = skipped = 0
+    for row in rows[:500]:
+        website = str(row.get("website_url") or row.get("website") or row.get("source_url") or "").strip()
+        company = str(row.get("company_name") or "").strip()
+        if website and not public_http_url(website):
+            skipped += 1; continue
+        domain = canonical_domain(website)
+        if not company:
+            company = (domain or "").split(".")[0].replace("-", " ").title()
+        if not company or not website:
+            skipped += 1; continue
+        country = str(row.get("country") or campaign["target_country"]).strip()
+        duplicate = await development_duplicate(token, domain, company, country)
+        existing = await supabase(f"customer_leads?development_campaign_id=eq.{campaign_id}&website_domain=eq.{quote(domain or '', safe='')}&select=*&limit=1", token) if domain else []
+        values = {"development_campaign_id": campaign_id, "development_status": "待核实", "company_name": company[:300], "country": country or None, "website": website, "website_domain": domain, "root_domain": domain, "source_url": website, "source_type": "其他公开网页", "status": "待审核", "verification_bucket": "待补信息", "lead_layer": "待判定", "discovered_product_keywords": [campaign["product_code"]], "discovered_application_keywords": list(campaign.get("applications") or []), "suspected_duplicate": duplicate, "robots_status": "pending", "data_source": "development_csv_import", "needs_human_confirmation": True, "confirmation_note": "导入的公开企业候选；需官网核验后方可评定为合格。"}
+        lead = (await supabase(f"customer_leads?id=eq.{existing[0]['id']}", token, "PATCH", values))[0] if existing else (await supabase("customer_leads", token, "POST", values))[0]
+        updated += 1 if existing else 0; inserted += 0 if existing else 1
+        evidence_url = str(row.get("evidence_url") or website).strip()
+        excerpt = str(row.get("evidence_excerpt") or row.get("company_fact") or "CSV 导入的公开企业候选，待官网核验。").strip()[:2000]
+        await supabase("lead_evidences", token, "POST", {"customer_lead_id": lead["id"], "source_document_id": document["id"], "evidence_type": "搜索结果", "source_url": evidence_url, "excerpt": excerpt, "evidence_role": "发现来源"})
+        if row.get("company_type"):
+            await supabase("lead_evidences", token, "POST", {"customer_lead_id": lead["id"], "source_document_id": document["id"], "evidence_type": "搜索结果", "source_url": evidence_url, "excerpt": str(row["company_type"])[:2000], "evidence_role": "客户身份"})
+        if row.get("public_email"):
+            await supabase("lead_contacts", token, "POST", {"customer_lead_id": lead["id"], "contact_name": row.get("contact_name") or None, "job_title": row.get("contact_title") or None, "email": str(row["public_email"]).strip().lower(), "email_status": "官网公开", "source_url": evidence_url})
+        await update_development_score(token, lead, campaign)
+    return {"source_document": document, "inserted": inserted, "updated": updated, "skipped": skipped, "message": "CSV 候选已进入待核实队列；请逐条执行官网核验后再转入 CRM。"}
+
+@app.post("/api/development-campaigns/{campaign_id}/import-pdf")
+async def import_development_pdf(campaign_id: str, file: UploadFile = File(...), source_url: str = Form(...), authorization: str | None = Header(default=None)):
+    """Read a user-supplied public PDF and preserve page-level evidence.
+
+    Only URLs and public email addresses visible in the PDF become candidates;
+    no guessed company name or email is generated from a directory page.
+    """
+    token = bearer(authorization); campaign = await development_campaign(token, campaign_id)
+    if not (file.filename or "").casefold().endswith(".pdf") or not public_http_url(source_url):
+        raise HTTPException(422, "请上传公开来源的 PDF，并填写其公开 HTTP/HTTPS 来源链接")
+    content = await file.read()
+    if not content or len(content) > 10 * 1024 * 1024:
+        raise HTTPException(422, "PDF 文件必须在 1 字节到 10 MB 之间")
+    try:
+        from pypdf import PdfReader
+        pages = [(index + 1, page.extract_text() or "") for index, page in enumerate(PdfReader(BytesIO(content)).pages)]
+    except Exception as exc:
+        raise HTTPException(422, "无法读取该 PDF 的文本层；请改用可复制文本 PDF 或 CSV 导入。") from exc
+    document = (await supabase("source_documents", token, "POST", {"campaign_id": campaign_id, "source_name": file.filename or "公开 PDF", "source_url": source_url, "source_type": "PDF", "content_sha256": hashlib.sha256(content).hexdigest(), "page_count": len(pages)}))[0]
+    inserted = skipped = 0
+    for page_number, text in pages:
+        urls = re.findall(r"https?://[^\s<>\])}]+", text)
+        for website in dict.fromkeys(urls):
+            domain = canonical_domain(website)
+            if not domain or not public_http_url(website):
+                skipped += 1; continue
+            company = domain.split(".")[0].replace("-", " ").title()
+            duplicate = await development_duplicate(token, domain, company, str(campaign["target_country"]))
+            values = {"development_campaign_id": campaign_id, "development_status": "待核实", "company_name": company, "country": campaign["target_country"], "website": website, "website_domain": domain, "root_domain": domain, "source_url": source_url, "source_type": "其他公开网页", "status": "待审核", "verification_bucket": "待补信息", "lead_layer": "待判定", "discovered_product_keywords": [campaign["product_code"]], "discovered_application_keywords": list(campaign.get("applications") or []), "suspected_duplicate": duplicate, "robots_status": "pending", "data_source": "development_pdf_import", "needs_human_confirmation": True, "confirmation_note": "PDF 名录提取的官网 URL；公司名称需以官网为准。"}
+            existing = await supabase(f"customer_leads?development_campaign_id=eq.{campaign_id}&website_domain=eq.{quote(domain, safe='')}&select=*&limit=1", token)
+            lead = (await supabase(f"customer_leads?id=eq.{existing[0]['id']}", token, "PATCH", values))[0] if existing else (await supabase("customer_leads", token, "POST", values))[0]
+            await supabase("lead_evidences", token, "POST", {"customer_lead_id": lead["id"], "source_document_id": document["id"], "evidence_type": "PDF", "source_url": source_url, "page_number": page_number, "excerpt": text[:2000] or "PDF 页面含公开官网 URL。", "evidence_role": "发现来源"})
+            for email in dict.fromkeys(re.findall(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", text, re.I)):
+                await supabase("lead_contacts", token, "POST", {"customer_lead_id": lead["id"], "email": email.casefold(), "email_status": "未验证", "source_url": source_url})
+            await update_development_score(token, lead, campaign); inserted += 1
+    return {"source_document": document, "inserted": inserted, "skipped": skipped, "message": "PDF 已保留页码证据；提取的官网候选仍须逐条官网核验。"}
+
+@app.post("/api/customer-leads/{lead_id}/verify-official")
+async def verify_development_lead_official_site(lead_id: str, authorization: str | None = Header(default=None)):
+    """Visit one public official site with robots checking; never visits social platforms or logins."""
+    token = bearer(authorization)
+    lead_rows = await supabase(f"customer_leads?id=eq.{lead_id}&select=*&limit=1", token)
+    if not lead_rows or not lead_rows[0].get("development_campaign_id"):
+        raise HTTPException(404, "未找到客户开发候选")
+    lead = lead_rows[0]; campaign = await development_campaign(token, lead["development_campaign_id"])
+    website = str(lead.get("website") or lead.get("source_url") or "").strip()
+    if not public_http_url(website):
+        raise HTTPException(422, "候选缺少可访问的公开官网 URL")
+    agent = "ZhiwuOSDevelopment/1.0 (+https://work.101921.xyz)"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5)) as client:
+        allowed, robots_note = await robots_permit(client, website, agent)
+        if not allowed:
+            await supabase(f"customer_leads?id=eq.{lead_id}", token, "PATCH", {"robots_status": "disallowed", "robots_reason": robots_note, "development_status": "待核实", "updated_at": datetime.now().isoformat()})
+            raise HTTPException(422, robots_note)
+        try:
+            response = await client.get(website, headers={"User-Agent": agent}, follow_redirects=True)
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, "官网无法访问，请稍后重试或人工补充证据。") from exc
+    if response.status_code >= 400:
+        raise HTTPException(422, f"官网返回 HTTP {response.status_code}")
+    final_url = str(response.url); domain = canonical_domain(final_url); text = html_text(response.text)[:30000]
+    lower = text.casefold(); excerpts: list[tuple[str, str]] = []
+    application_hits = [term for term in campaign.get("applications") or [] if str(term).casefold() in lower]
+    if application_hits:
+        excerpts.append(("应用或产品", f"官网出现与开发活动相关的应用词：{', '.join(application_hits[:4])}。"))
+    identity_terms = ("manufacturer", "manufacturing", "producer", "factory", "blender", "formulator")
+    identity_hit = next((term for term in identity_terms if term in lower), None)
+    if identity_hit:
+        excerpts.append(("客户身份", f"官网出现客户身份词：{identity_hit}。"))
+    if str(campaign["target_country"]).casefold() in lower:
+        excerpts.append(("国家或地址", f"官网文本出现目标国家：{campaign['target_country']}。"))
+    email = public_email(response.text, domain)
+    if email:
+        excerpts.append(("公开联系入口", f"官网公开业务邮箱：{email}。"))
+    for role, excerpt in excerpts:
+        await supabase("lead_evidences", token, "POST", {"customer_lead_id": lead_id, "evidence_type": "官网", "source_url": final_url, "excerpt": excerpt, "evidence_role": role, "verified_at": datetime.now().isoformat()})
+    if email:
+        known = await supabase(f"lead_contacts?customer_lead_id=eq.{lead_id}&email=eq.{quote(email, safe='')}&select=id&limit=1", token)
+        if not known:
+            await supabase("lead_contacts", token, "POST", {"customer_lead_id": lead_id, "email": email, "email_status": "官网公开", "source_url": final_url, "verified_at": datetime.now().isoformat()})
+    values = {"website": final_url, "website_domain": domain, "root_domain": domain, "official_homepage_url": final_url, "official_validation_source_url": final_url, "robots_status": "allowed", "robots_reason": robots_note, "development_status": "待核实", "last_verified_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()}
+    if application_hits:
+        values.update({"product_evidence_summary": excerpts[0][1], "product_evidence_url": final_url, "product_evidence_type": "官网"})
+    if email:
+        values["public_business_email"] = email
+    lead = (await supabase(f"customer_leads?id=eq.{lead_id}", token, "PATCH", values))[0]
+    scored = await update_development_score(token, lead, campaign)
+    return {"lead": scored, "evidence_count": len(excerpts), "message": "已按 robots.txt 核验官网并保存可追溯证据；请人工确认是否合格。"}
+
+@app.patch("/api/customer-leads/{lead_id}/development-status")
+async def update_development_lead_status(lead_id: str, payload: DevelopmentLeadStatusIn, authorization: str | None = Header(default=None)):
+    token = bearer(authorization)
+    lead_rows = await supabase(f"customer_leads?id=eq.{lead_id}&select=*&limit=1", token)
+    if not lead_rows or not lead_rows[0].get("development_campaign_id"):
+        raise HTTPException(404, "未找到客户开发候选")
+    lead = lead_rows[0]
+    if payload.development_status == "合格" and not lead.get("website"):
+        raise HTTPException(422, "标记合格前必须至少有官网记录")
+    values = {"development_status": payload.development_status, "updated_at": datetime.now().isoformat()}
+    if payload.development_status == "不匹配": values.update({"status": "已排除", "exclusion_reason": payload.note or "人工判定不匹配", "verification_bucket": "排除名单"})
+    if payload.development_status == "拒绝联系": values.update({"status": "已排除", "exclusion_reason": payload.note or "客户拒绝联系", "verification_bucket": "排除名单"})
+    if payload.development_status == "合格": values.update({"status": "保留", "notes": payload.note or lead.get("notes")})
+    updated = (await supabase(f"customer_leads?id=eq.{lead_id}", token, "PATCH", values))[0]
+    campaign = await development_campaign(token, updated["development_campaign_id"])
+    return await update_development_score(token, updated, campaign)
+
+@app.post("/api/customer-leads/{lead_id}/outreach-drafts", status_code=201)
+async def create_development_outreach_draft(lead_id: str, authorization: str | None = Header(default=None)):
+    """Create an approval-only draft. There is intentionally no sending endpoint."""
+    token = bearer(authorization)
+    lead_rows = await supabase(f"customer_leads?id=eq.{lead_id}&select=*&limit=1", token)
+    if not lead_rows or not lead_rows[0].get("development_campaign_id"):
+        raise HTTPException(404, "未找到客户开发候选")
+    lead = lead_rows[0]
+    if lead.get("development_status") != "合格":
+        raise HTTPException(422, "仅人工标记为“合格”的候选可生成开发信草稿")
+    campaign = await development_campaign(token, lead["development_campaign_id"])
+    facts = await supabase(f"lead_evidences?customer_lead_id=eq.{lead_id}&evidence_role=eq.%E5%BA%94%E7%94%A8%E6%88%96%E4%BA%A7%E5%93%81&select=*&order=created_at.desc&limit=1", token)
+    if not facts:
+        raise HTTPException(422, "缺少官网应用或产品证据，不能生成个性化草稿")
+    contacts = await supabase(f"lead_contacts?customer_lead_id=eq.{lead_id}&email_status=in.(%E5%AE%98%E7%BD%91%E5%85%AC%E5%BC%80,%E5%B7%B2%E9%AA%8C%E8%AF%81)&select=*&limit=1", token)
+    subject, body = draft_email(company_name=lead["company_name"], company_fact=facts[0]["excerpt"], product_claim=campaign["product_claim_text"])
+    contact = contacts[0] if contacts else None
+    values = {"campaign_id": campaign["id"], "customer_lead_id": lead_id, "lead_contact_id": contact.get("id") if contact else None, "subject": subject, "channel": "邮件" if contact else "LinkedIn", "recipient": contact.get("email") if contact else None, "company_fact": facts[0]["excerpt"], "fact_source_url": facts[0].get("source_url"), "product_code": campaign["product_code"], "product_claim_source": campaign["product_claim_source"], "draft_body": body, "approval_state": "待审核", "reply_state": "未发送"}
+    draft = (await supabase("outreach_drafts", token, "POST", values))[0]
+    return {"draft": draft, "message": "已创建待审核草稿；系统不会发送邮件、LinkedIn 或社媒消息。"}
+
+@app.patch("/api/outreach-drafts/{draft_id}/approval")
+async def approve_development_outreach_draft(draft_id: str, payload: OutreachDraftApprovalIn, authorization: str | None = Header(default=None)):
+    rows = await supabase(f"outreach_drafts?id=eq.{draft_id}", bearer(authorization), "PATCH", {"approval_state": payload.approval_state, "approval_note": payload.approval_note, "approved_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()})
+    if not rows: raise HTTPException(404, "开发信草稿不存在")
+    return rows[0]
+
 @app.post("/api/customer-leads/batch-review")
 async def batch_review_customer_leads(payload: LeadBatchReviewIn, authorization: str | None = Header(default=None)):
     if payload.status != "已排除" and payload.exclusion_reason:
@@ -1355,8 +1617,9 @@ async def convert_customer_lead(lead_id: str, payload: LeadConvertIn, authorizat
     lead_rows = await supabase(f"customer_leads?id=eq.{lead_id}&select=*&limit=1", token)
     if not lead_rows: raise HTTPException(404, "Lead not found")
     lead = lead_rows[0]
-    if lead.get("verification_bucket") != "严格客户名单":
-        raise HTTPException(422, "仅通过严格客户核验的企业可以载入 CRM")
+    development_qualified = bool(lead.get("development_campaign_id")) and lead.get("development_status") == "合格"
+    if lead.get("verification_bucket") != "严格客户名单" and not development_qualified:
+        raise HTTPException(422, "仅通过严格客户核验或人工标记为“合格”的开发候选可以载入 CRM")
     email = (payload.email or lead.get("public_business_email") or "").strip().lower()
     selected_contact = payload.contact_person or lead.get("public_contact_name") or lead.get("public_contact_or_department") or lead.get("contact_department")
     identity = f"{lead.get('company_name','')} {selected_contact or ''}".lower()

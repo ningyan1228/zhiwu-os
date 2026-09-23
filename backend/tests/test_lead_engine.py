@@ -8,6 +8,7 @@ os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 
 from app.lead_analyzer import LeadAnalyzer
 from app.lead_discovery import _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
+from app.customer_development import canonical_domain, draft_email, nl_fc_pu_queries, public_http_url, score_lead
 from app.main import LeadSearchTaskIn, create_lead_search_task, lead_task_values_from_product_profile
 
 
@@ -108,6 +109,21 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertEqual(_customer_lead_source_type("自定义公开目录"), "其他公开网页")
         self.assertEqual(_customer_lead_source_type("印度肥料协会公开会员目录"), "协会目录")
         self.assertEqual(_customer_lead_source_type("已核验肥料制造商官网种子"), "官网")
+
+    def test_nl_fc_pu_queries_and_evidence_score_are_deterministic(self):
+        queries = nl_fc_pu_queries()
+        self.assertTrue(any('controlled release urea' in query[0] for query in queries))
+        self.assertTrue(any(query[1] == 'maps' for query in queries))
+        score = score_lead(target_country='Brazil', lead_country='Brazil', evidence_roles={'应用或产品', '客户身份', '近期活动'}, has_official_website=True, has_public_contact=True, duplicate=False, rejected=False)
+        self.assertEqual(score.score, 100)
+        self.assertEqual(canonical_domain('https://www.example.com/contact'), 'example.com')
+        self.assertFalse(public_http_url('http://192.168.1.5/private'))
+
+    def test_development_draft_is_review_length_and_evidence_bound(self):
+        subject, body = draft_email(company_name='Example Fertilizantes', company_fact='it manufactures controlled-release fertilizer.', product_claim='a coating material intended for controlled-release fertilizer granules and coated-fertilizer processes, subject to technical confirmation.')
+        self.assertIn('Example Fertilizantes', subject)
+        self.assertGreaterEqual(len(body.split()), 80)
+        self.assertLessEqual(len(body.split()), 130)
 
 
 if __name__ == "__main__":
