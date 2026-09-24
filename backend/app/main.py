@@ -1572,7 +1572,10 @@ async def ensure_application_legacy_task(token: str, task: dict[str, Any]) -> di
 def application_match_status(lead: dict[str, Any], application: dict[str, Any]) -> tuple[str, str, str]:
     evidence = str(lead.get("product_evidence_summary") or lead.get("verification_conclusion") or "").strip()
     hits = [str(value).strip() for value in (lead.get("discovered_application_keywords") or []) if str(value).strip()]
-    searchable = " ".join(str(application.get(key) or "") for key in ("application_name", "substrate_or_object", "material_function", "description")).casefold()
+    searchable_parts = [str(application.get(key) or "") for key in ("application_name", "substrate_or_object", "material_function", "description")]
+    searchable_parts.extend(str(value) for value in (application.get("search_terms") or []))
+    searchable_parts.extend(str(value) for value in (application.get("local_search_terms") or []))
+    searchable = " ".join(searchable_parts).casefold()
     related = [hit for hit in hits if hit.casefold() in searchable or any(part in hit.casefold() for part in searchable.split() if len(part) >= 4)]
     layer = str(lead.get("lead_layer") or "")
     if layer == "排除":

@@ -232,6 +232,16 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertIn("Official product page", reason)
         self.assertIn("人工确认", pending)
 
+        translated_status, _, _ = application_match_status({
+            "lead_layer": "直接需求候选",
+            "discovered_application_keywords": ["controlled release fertilizer"],
+            "product_evidence_summary": "Official product page lists controlled release fertilizer.",
+        }, {
+            "application_name": "缓释肥包膜生产",
+            "search_terms": ["controlled release fertilizer manufacturer"],
+        })
+        self.assertEqual(translated_status, "应用相关但工艺未知")
+
     def test_application_provider_can_use_curated_public_directories(self):
         from unittest.mock import patch
 
