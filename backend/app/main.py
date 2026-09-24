@@ -1611,6 +1611,7 @@ async def sync_application_discovery_results(token: str, task: dict[str, Any], r
                 app_counts[application_id] = app_counts.get(application_id, 0) + 1
             existing = await supabase(f"lead_application_matches?customer_lead_id=eq.{lead['id']}&application_task_id=eq.{task['id']}&tds_application_id=eq.{application_id}&select=id&limit=1", token)
             values = {
+                "owner_user_id": task.get("owner_user_id"),
                 "customer_lead_id": lead["id"], "application_task_id": task["id"],
                 "tds_application_id": application_id, "application_snapshot": application,
                 "match_status": status, "matching_reason": reason, "pending_confirmation": pending,
