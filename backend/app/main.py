@@ -1484,6 +1484,44 @@ async def list_application_discovery_tasks(authorization: str | None = Header(de
             rows[index] = updated[0]
     return rows
 
+@app.delete("/api/application-discovery-tasks/{task_id}")
+async def delete_application_discovery_task(task_id: str, authorization: str | None = Header(default=None)):
+    """Remove a discovery configuration while preserving every customer lead."""
+    token = bearer(authorization)
+    rows = await supabase(f"application_discovery_tasks?id=eq.{task_id}&select=*&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "应用客户发现任务不存在")
+    task = rows[0]
+    legacy_id = task.get("legacy_lead_task_id")
+    now = datetime.now().astimezone().isoformat()
+    if legacy_id:
+        try:
+            await supabase(f"lead_search_tasks?id=eq.{legacy_id}&deleted_at=is.null", token, "PATCH", {
+                "cancel_requested": True, "pause_requested": False, "run_state": "已取消",
+                "status": "暂停", "daily_enabled": False, "deleted_at": now, "updated_at": now,
+            })
+        except HTTPException:
+            await supabase(f"lead_search_tasks?id=eq.{legacy_id}", token, "PATCH", {
+                "status": "暂停", "daily_enabled": False, "deleted_at": now, "updated_at": now,
+            })
+        try:
+            await supabase(f"lead_discovery_runs?task_id=eq.{legacy_id}&status=eq.%E8%BF%90%E8%A1%8C%E4%B8%AD", token, "PATCH", {
+                "status": "跳过", "finished_at": now,
+                "error_message": "用户删除应用客户发现任务，已取消未完成的官网核验。",
+            })
+        except HTTPException:
+            pass
+        ACTIVE_LEAD_TASKS.discard(str(legacy_id))
+    deleted = await supabase(f"application_discovery_tasks?id=eq.{task_id}", token, "DELETE")
+    ACTIVE_APPLICATION_TASKS.discard(task_id)
+    if not deleted:
+        raise HTTPException(404, "应用客户发现任务不存在")
+    return {
+        "deleted": True,
+        "task_id": task_id,
+        "message": "任务配置和未完成运行已删除；已经发现的客户线索与 CRM 数据均已保留。",
+    }
+
 async def application_discovery_provider(token: str, target_region: str | None, task: dict[str, Any] | None = None) -> tuple[str | None, str | None]:
     """Return only a provider that can currently yield real public pages."""
     if settings().brave_search_api_key:
