@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from .strict_lead_import import import_cpph_strict_records
 from .customer_development import NL_FC_PU_CAMPAIGN, canonical_domain, draft_email, html_text, nl_fc_pu_application_terms, nl_fc_pu_queries, normalize_company_name, public_email, public_http_url, robots_permit, score_lead
+from .manual_plus import FORMAT_VERSION as MANUAL_PLUS_FORMAT_VERSION, build_manual_plus_prompt, parse_manual_plus_candidates
 from .tds_discovery import application_search_terms, content_sha256, extract_explicit_applications, parse_tds_upload
 from .tds_presets import builtin_tds_preset, builtin_tds_preset_summaries
 
@@ -484,6 +485,9 @@ class ApplicationDiscoveryTaskIn(BaseModel):
     task_name: str | None = Field(default=None, max_length=240)
     candidate_limit: int = Field(default=20, ge=1, le=500)
     search_budget: int = Field(default=0, ge=0, le=10000)
+
+class ManualPlusImportIn(BaseModel):
+    raw_text: str = Field(min_length=1, max_length=2_000_000)
 
 class ProductKeywordIn(BaseModel):
     product_id: str
@@ -1531,13 +1535,16 @@ def application_task_profile(task: dict[str, Any]) -> tuple[list[str], list[str]
             exclusions.append(str(item["exclusion_notes"]).strip())
     return list(dict.fromkeys(applications)), list(dict.fromkeys(company_types)), list(dict.fromkeys(exclusions))
 
-async def ensure_application_legacy_task(token: str, task: dict[str, Any]) -> dict[str, Any]:
+async def ensure_application_legacy_task(token: str, task: dict[str, Any], *, allow_manual_plus: bool = False) -> dict[str, Any]:
     linked_id = task.get("legacy_lead_task_id")
     if linked_id:
         linked = await supabase(f"lead_search_tasks?id=eq.{linked_id}&deleted_at=is.null&select=*&limit=1", token)
         if linked:
             return linked[0]
     provider, notice = await application_discovery_provider(token, task.get("target_region"), task)
+    if not provider and allow_manual_plus:
+        provider = "ChatGPT Plus 人工候选 + 官网纯爬虫"
+        notice = "人工粘贴候选公司后，系统只负责官网、业务证据与公开联系方式核验；不会调用付费 API。"
     if not provider:
         await supabase(f"application_discovery_tasks?id=eq.{task['id']}", token, "PATCH", {
             "status": "待配置", "search_provider": None, "provider_notice": notice,
@@ -1713,6 +1720,148 @@ async def application_discovery_workspace(task_id: str, authorization: str | Non
         supabase(f"customer_leads?application_discovery_task_id=eq.{task_id}&select=*&order=match_score.desc,discovered_at.desc", token),
     )
     return {"task": task, "queries": queries, "matches": matches, "leads": leads}
+
+@app.get("/api/application-discovery-tasks/{task_id}/chatgpt-packet")
+async def application_discovery_chatgpt_packet(task_id: str, authorization: str | None = Header(default=None)):
+    """Create a copyable Plus prompt without calling or charging any API."""
+    token = bearer(authorization)
+    rows = await supabase(f"application_discovery_tasks?id=eq.{task_id}&select=*&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "应用客户发现任务不存在")
+    task = rows[0]
+    queries, leads = await asyncio.gather(
+        supabase(f"application_discovery_queries?application_task_id=eq.{task_id}&select=*&order=created_at.asc", token),
+        supabase(f"customer_leads?application_discovery_task_id=eq.{task_id}&select=*&order=match_score.desc,discovered_at.desc&limit=100", token),
+    )
+    prompt = build_manual_plus_prompt(task, queries, leads)
+    return {
+        "task_id": task_id,
+        "format_version": MANUAL_PLUS_FORMAT_VERSION,
+        "candidate_limit": min(int(task.get("candidate_limit") or 20), 100),
+        "current_candidate_count": len(leads),
+        "prompt": prompt,
+        "message": "分析包已生成。复制到 ChatGPT Plus，完成后把原始 JSON 或 CSV 粘回网站即可。",
+    }
+
+@app.post("/api/application-discovery-tasks/{task_id}/chatgpt-import")
+async def import_application_discovery_chatgpt_result(task_id: str, payload: ManualPlusImportIn, authorization: str | None = Header(default=None)):
+    """Import unverified Plus suggestions as crawl seeds, never as CRM-ready leads."""
+    token = bearer(authorization)
+    rows = await supabase(f"application_discovery_tasks?id=eq.{task_id}&select=*&limit=1", token)
+    if not rows:
+        raise HTTPException(404, "应用客户发现任务不存在")
+    task = rows[0]
+    try:
+        companies = parse_manual_plus_candidates(payload.raw_text, expected_task_id=task_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    legacy = await ensure_application_legacy_task(token, task, allow_manual_plus=True)
+    existing_rows = await supabase(f"customer_leads?task_id=eq.{legacy['id']}&select=*&limit=500", token)
+    existing_by_domain = {
+        canonical_domain(row.get("root_domain") or row.get("official_website") or row.get("website")): row
+        for row in existing_rows
+        if canonical_domain(row.get("root_domain") or row.get("official_website") or row.get("website"))
+    }
+    application_names = [
+        str(item.get("application_name") or "").strip()
+        for item in (task.get("application_snapshot") or [])
+        if str(item.get("application_name") or "").strip()
+    ]
+    inserted = updated = preserved = 0
+    now = datetime.now().astimezone().isoformat()
+    existing_task_sources = list(legacy.get("source_urls") or [])
+    manual_source_urls: list[str] = []
+
+    for company in companies:
+        official = company["official_website"]
+        domain = company["root_domain"]
+        for url in company["source_urls"]:
+            if url not in manual_source_urls:
+                manual_source_urls.append(url)
+        note_parts = [
+            "由用户通过 ChatGPT Plus 人工分析包导入，尚未通过 Zhiwu OS 官网爬虫核验。",
+            f"Plus 建议分层：{company['suggested_lead_layer']}；建议评分：{company['suggested_score']}。",
+        ]
+        if company["pending_confirmation"]:
+            note_parts.append(f"待确认：{company['pending_confirmation']}")
+        values = {
+            "task_id": legacy["id"],
+            "application_discovery_task_id": task_id,
+            "company_name": company["company_name"],
+            "country": company["country"],
+            "website": official,
+            "website_domain": domain,
+            "root_domain": domain,
+            "official_website": official,
+            "official_homepage_url": official,
+            "source_url": official,
+            "source_type": "官网",
+            "public_business_email": company["public_email"],
+            "public_business_phone": company["public_phone"],
+            "public_contact_or_department": company["contact_department"],
+            "contact_department": company["contact_department"],
+            "company_type": company["company_type"],
+            "discovered_product_keywords": [],
+            "discovered_application_keywords": application_names,
+            "possible_need": company["matching_reason"] or None,
+            "product_evidence_summary": company["product_evidence"] or None,
+            "product_application_evidence": company["product_evidence"] or None,
+            "match_score": min(company["suggested_score"], 40),
+            "score_reasons": ["ChatGPT Plus 人工研究候选；评分已封顶 40，必须经过官网爬虫重新评分。"],
+            "robots_status": "pending",
+            "status": "待审核",
+            "verification_bucket": "待补信息",
+            "lead_layer": "待判定",
+            "missing_requirements": ["尚未由系统核验官网主体、下游业务证据与公开联系方式。"],
+            "verification_conclusion": "ChatGPT Plus 返回的候选公司；不代表企业已采购、批准或正在使用本产品。",
+            "source_record_id": domain,
+            "source_urls": company["source_urls"],
+            "verification_status": "manual_plus_pending_crawl",
+            "data_source": "chatgpt_plus_manual",
+            "imported_at": now,
+            "needs_human_confirmation": True,
+            "confirmation_note": " ".join(note_parts),
+            "email_domain_note": "Plus 返回的公开联系方式，必须由官网爬虫再次核验域名和来源。" if company["public_email"] else None,
+            "updated_at": now,
+        }
+        existing = existing_by_domain.get(domain)
+        if existing:
+            if existing.get("verification_bucket") == "严格客户名单" or existing.get("verification_status") == "strict_verified_import":
+                merged_urls = list(dict.fromkeys([*(existing.get("source_urls") or []), *company["source_urls"]]))
+                await supabase(f"customer_leads?id=eq.{existing['id']}", token, "PATCH", {
+                    "application_discovery_task_id": task_id, "source_urls": merged_urls, "updated_at": now,
+                })
+                preserved += 1
+            else:
+                await supabase(f"customer_leads?id=eq.{existing['id']}", token, "PATCH", values)
+                updated += 1
+        else:
+            await supabase("customer_leads", token, "POST", values)
+            inserted += 1
+
+    await supabase(f"lead_search_tasks?id=eq.{legacy['id']}", token, "PATCH", {
+        # Manual Plus candidates are placed first because the compliant runner
+        # intentionally caps each low-frequency crawl to a finite source set.
+        "source_urls": list(dict.fromkeys([*manual_source_urls, *existing_task_sources]))[:500],
+        "task_note": "包含用户从 ChatGPT Plus 手工导入的候选官网；运行时仍按 robots.txt、限速和证据规则核验。",
+        "updated_at": now,
+    })
+    await supabase(f"application_discovery_tasks?id=eq.{task_id}", token, "PATCH", {
+        "legacy_lead_task_id": legacy["id"],
+        "status": "待运行",
+        "search_provider": "ChatGPT Plus 人工候选 + 官网纯爬虫",
+        "provider_notice": "已导入人工研究候选；点击运行后核验官网、具体业务和公开联系方式。",
+        "failure_message": None,
+        "updated_at": now,
+    })
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "preserved": preserved,
+        "legacy_lead_task_id": legacy["id"],
+        "message": f"已导入 {inserted + updated + preserved} 家候选（新增 {inserted}、更新 {updated}、保留已核验 {preserved}）；均未直接进入 CRM。",
+    }
 
 async def development_campaign(token: str, campaign_id: str) -> dict[str, Any]:
     rows = await supabase(f"development_campaigns?id=eq.{campaign_id}&select=*&limit=1", token)

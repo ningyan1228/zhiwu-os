@@ -848,6 +848,14 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
         candidates: list[tuple[str, str]] = []
         candidate_urls: set[str] = set()
         search_request_count = 0
+        manual_plus_rows = await store.request(
+            f"customer_leads?task_id=eq.{task['id']}&data_source=eq.chatgpt_plus_manual&select=root_domain,source_url&limit=100"
+        )
+        manual_plus_domains = {
+            _host(str(row.get("source_url") or "")) or str(row.get("root_domain") or "").strip().casefold()
+            for row in manual_plus_rows
+            if row.get("source_url") or row.get("root_domain")
+        }
         source_urls = [(str(value).strip(), "自定义公开目录") for value in (task.get("source_urls") or []) if str(value).strip()]
         source_urls.extend((url, label) for url, label in _curated_seed_urls(task) if url not in [item[0] for item in source_urls])
         official_key = str(getattr(cfg, "brave_search_api_key", "") or "").strip()
@@ -904,9 +912,9 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     directory_host = _host(final_directory_url)
                     evidence_terms = list(profile["evidence_terms"])
                     reviewed_company = _reviewed_seed_company_name(final_directory_url)
-                    if reviewed_company or _is_direct_company_seed(response.text[:1_000_000], directory_text, directory_host, evidence_terms):
+                    if directory_host in manual_plus_domains or reviewed_company or _is_direct_company_seed(response.text[:1_000_000], directory_text, directory_host, evidence_terms):
                         if final_directory_url not in candidate_urls:
-                            candidates.append((final_directory_url, "已核验官网种子"))
+                            candidates.append((final_directory_url, "ChatGPT Plus 人工候选" if directory_host in manual_plus_domains else "已核验官网种子"))
                             candidate_urls.add(final_directory_url)
                         log.append(f"读取官网种子：{directory_label}（{final_directory_url}）")
                     else:
