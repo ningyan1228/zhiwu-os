@@ -155,6 +155,10 @@ CURATED_PUBLIC_SEEDS = (
     {
         "url": "https://www.kingentaglobal.com/polymer-coated-controlled-release-fertilizer-crf-technology/",
         "company_name": "Kingenta Global",
+        "reviewed_role": "technology_owner",
+        "reviewed_score_cap": 75,
+        "reviewed_note": "官网显示其拥有自有聚合物包膜技术与生产基地；可能采购上游原料，但不是普通包衣剂买家。",
+        "reviewed_evidence": "官网明确披露自有弹性体聚合物膜、包膜控释肥生产能力和技术许可业务。",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "Kingenta 聚合物包膜肥官方技术页",
@@ -162,6 +166,10 @@ CURATED_PUBLIC_SEEDS = (
     {
         "url": "https://www.lebanonturf.com/technologies/pcu",
         "company_name": "LebanonTurf",
+        "reviewed_role": "indirect_user",
+        "reviewed_score_cap": 60,
+        "reviewed_note": "官网证明其肥料产品使用 PCU，但未证明拥有包膜生产线；需确认 PCU 是自制还是外购。",
+        "reviewed_evidence": "官网产品含聚合物包膜尿素（PCU），但公开页面未证明其自行生产包膜尿素。",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "LebanonTurf 包膜尿素官方产品页",
@@ -176,6 +184,10 @@ CURATED_PUBLIC_SEEDS = (
     {
         "url": "https://www.profileproducts.com/products/gal-xeone/?solution=horticulture",
         "company_name": "Profile Products",
+        "reviewed_role": "technology_owner",
+        "reviewed_score_cap": 75,
+        "reviewed_note": "官网显示其使用专利包膜技术；属于高价值技术型制造商，需确认是否外购包衣原料。",
+        "reviewed_evidence": "官网明确披露 GAL-XeONE 控释肥及专利半透膜包衣技术。",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "Profile Products 聚合物包膜肥官方产品页",
@@ -197,6 +209,10 @@ CURATED_PUBLIC_SEEDS = (
     {
         "url": "https://www.uregold.com/",
         "company_name": "UREGOLD",
+        "reviewed_role": "chemistry_mismatch",
+        "reviewed_score_cap": 20,
+        "reviewed_note": "官网产品是硝基酚钾（PNP）包覆尿素，不是本任务的聚氨酯/聚合物膜包衣体系。",
+        "reviewed_evidence": "官网披露的是 potassium nitrophenolate (PNP) coated urea，与聚氨酯/聚合物膜包衣剂体系不同。",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "UREGOLD 包膜尿素官方产品页",
@@ -405,8 +421,31 @@ def _official_subpage_urls(raw: str, base_url: str, limit: int = 6) -> list[str]
 
 
 def _address_excerpt(text: str) -> str | None:
-    found = re.search(r"(?is)(?:address|registered office|head office)\s*[:\-]?\s*([^.|]{18,260})", text)
-    return re.sub(r"\s+", " ", found.group(1)).strip(" ,;:")[:300] if found else None
+    """Extract a labelled street address, not form labels or navigation text."""
+    pattern = re.compile(
+        r"(?is)(?:registered office|head office|postal address|contact address|\baddress)\s*[:\-]?\s*"
+        r"(.{8,240}?)(?=\s+(?:phone|telephone|email|e-mail|fax|whatsapp|website|contact us)\b|$)"
+    )
+    street_markers = (
+        " street", " st.", " road", " rd.", " avenue", " ave.", " boulevard", " lane",
+        " drive", " industrial estate", " industrial park", " building", " province", " city",
+    )
+    for found in pattern.finditer(text):
+        candidate = re.sub(r"\s+", " ", found.group(1)).strip(" ,;:")
+        lowered = candidate.casefold()
+        if any(noise in lowered for noise in ("confirmemail", "my comment", "input]", "select]", "direct demand candidate")):
+            continue
+        if not re.search(r"\d", candidate) or not any(marker in lowered for marker in street_markers):
+            continue
+        return candidate[:300]
+    return None
+
+
+def _same_site_domain(first: str, second: str) -> bool:
+    """Treat a root domain and its www/subdomains as the same official site."""
+    left = str(first or "").casefold().strip(".").removeprefix("www.")
+    right = str(second or "").casefold().strip(".").removeprefix("www.")
+    return bool(left and right and (left == right or left.endswith(f".{right}") or right.endswith(f".{left}")))
 
 
 def _term_pattern(term: str) -> str | None:
@@ -755,8 +794,8 @@ def _curated_seed_urls(task: dict[str, Any]) -> list[tuple[str, str]]:
     return selected
 
 
-def _reviewed_seed_company_name(url: str) -> str | None:
-    """Return the fixed legal/brand name for a manually reviewed company seed."""
+def _reviewed_seed_profile(url: str) -> dict[str, Any] | None:
+    """Return manually reviewed identity and role metadata for a company seed."""
     host = _host(url).removeprefix("www.")
     if not host:
         return None
@@ -764,8 +803,14 @@ def _reviewed_seed_company_name(url: str) -> str | None:
         company_name = str(seed.get("company_name") or "").strip()
         seed_host = _host(str(seed.get("url") or "")).removeprefix("www.")
         if company_name and (host == seed_host or host.endswith(f".{seed_host}") or seed_host.endswith(f".{host}")):
-            return company_name
+            return seed
     return None
+
+
+def _reviewed_seed_company_name(url: str) -> str | None:
+    """Return the fixed legal/brand name for a manually reviewed company seed."""
+    profile = _reviewed_seed_profile(url)
+    return str(profile.get("company_name") or "").strip() if profile else None
 
 
 async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "manual") -> dict[str, Any]:
@@ -952,7 +997,8 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     await asyncio.sleep(delay)
 
                 combined_text = " ".join(page[2] for page in pages)
-                reviewed_company = _reviewed_seed_company_name(source_url) if source_type == "已核验官网种子" else None
+                reviewed_profile = _reviewed_seed_profile(source_url) if source_type == "已核验官网种子" else None
+                reviewed_company = str(reviewed_profile.get("company_name") or "").strip() if reviewed_profile else None
                 company = reviewed_company or _company_name(raw, host)
                 company_type, identity_problem = _company_type(combined_text)
                 supplier_mode = profile["mode"] == "供应工厂"
@@ -991,6 +1037,26 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 # links never receive this shortcut.
                 if not supplier_mode and application_hits and source_type == "已核验官网种子":
                     business_role, role_problem = "直接需求候选", None
+                reviewed_role = str((reviewed_profile or {}).get("reviewed_role") or "")
+                reviewed_note = str((reviewed_profile or {}).get("reviewed_note") or "").strip()
+                reviewed_evidence = str((reviewed_profile or {}).get("reviewed_evidence") or "").strip()
+                task_focus = " ".join([
+                    str(task.get("task_name") or ""),
+                    *(str(value) for value in (task.get("product_keywords") or [])),
+                    *(str(value) for value in (task.get("application_keywords") or [])),
+                ]).casefold()
+                polymer_coating_task = any(marker in task_focus for marker in ("polyurethane", "polymer coat", "聚氨酯", "聚合物包膜"))
+                reviewed_mismatch = bool(reviewed_role == "chemistry_mismatch" and polymer_coating_task)
+                if not supplier_mode and reviewed_role == "indirect_user":
+                    business_role, role_problem = "间接应用链", None
+                    company_type = "肥料配方/复配品牌方"
+                elif not supplier_mode and reviewed_role == "technology_owner":
+                    business_role, role_problem = "直接需求候选", None
+                    company_type = "自有包膜技术的生产制造商"
+                elif not supplier_mode and reviewed_mismatch:
+                    application_hits = []
+                    business_role, role_problem = None, reviewed_note
+                    company_type = "非目标包膜体系"
                 if not contact_source and (email_source or phone_source):
                     contact_source = email_source or phone_source
                 customer_dup, supplier_dup = await _duplicates(store, task, company, host, email)
@@ -1010,6 +1076,12 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     score = max(0, min(100, score + ai_result.score_adjustment))
                     reasons.append(f"AI 审阅调整 {ai_result.score_adjustment:+d}（仍需人工复核）")
                 reasons.extend(ai_result.match_reasons[:6])
+                if reviewed_note:
+                    reasons.append(reviewed_note)
+                reviewed_score_cap = int((reviewed_profile or {}).get("reviewed_score_cap") or 100)
+                if reviewed_role and score > reviewed_score_cap:
+                    score = reviewed_score_cap
+                    reasons.append(f"依据官网业务角色将匹配分数上限调整为 {reviewed_score_cap}")
                 missing: list[str] = []
                 if not host:
                     missing.append("未找到可验证的企业官网主域名")
@@ -1029,6 +1101,8 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 configured_exclusion = next((str(rule).strip() for rule in (task.get("profile_exclusion_rules") or []) if str(rule).strip() and str(rule).casefold() in combined_text.casefold()), None)
                 if configured_exclusion:
                     missing.append(f"命中产品画像排除规则：{configured_exclusion}")
+                if reviewed_note and reviewed_note not in missing:
+                    missing.append(reviewed_note)
                 excluded_identity = bool(
                     identity_problem
                     and any(word in identity_problem for word in ("协会", "目录", "媒体", "贸易/分销"))
@@ -1036,6 +1110,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 )
                 excluded = bool(
                     excluded_identity
+                    or reviewed_mismatch
                     or (not supplier_mode and role_problem and "上游供应商或同行" in role_problem)
                     or (supplier_mode and role_problem and "贸易商、经销商、目录" in role_problem)
                     or configured_exclusion
@@ -1048,12 +1123,14 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 matching_grade = "A" if lead_layer == "直接需求候选" else ("B" if application_hits and lead_layer == "间接应用链" else None)
                 if not excluded:
                     missing.append("自动应用型候选，需人工严格核验后方可进入严格客户名单或 CRM")
-                evidence_summary = ""
+                evidence_summary = reviewed_evidence
                 if evidence_url:
                     terms = application_hits
-                    evidence_summary = f"官方页面出现：{', '.join(terms[:5])}。"
-                    need = (f"官方资料显示 {', '.join(terms[:5])}；需确认产线、产品规格、产能、MOQ、TDS/SDS 与出口能力。"
-                            if supplier_mode else f"官方资料显示 {', '.join(terms[:5])}；需确认实际生产工艺、现用材料、技术指标和采购决策部门。")
+                    if not evidence_summary:
+                        evidence_summary = f"官方页面出现：{', '.join(terms[:5])}。"
+                    if terms:
+                        need = (f"官方资料显示 {', '.join(terms[:5])}；需确认产线、产品规格、产能、MOQ、TDS/SDS 与出口能力。"
+                                if supplier_mode else f"官方资料显示 {', '.join(terms[:5])}；需确认实际生产工艺、现用材料、技术指标和采购决策部门。")
                 if excluded:
                     reasons.append("不属于可开发企业主体，已进入排除名单")
                 elif missing:
@@ -1069,7 +1146,7 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     "public_emails": ([{"value": email, "category": "business", "source_url": email_source}] if email else []),
                     "public_phones": ([{"value": phone, "source_url": phone_source}] if phone else []),
                     "contact_page_url": contact_source, "confidence_score": ai_result.confidence_score,
-                    "risk_flags": (["疑似重复"] if duplicate else []) + (["缺少公开业务邮箱"] if not email else []) + ai_result.risk_flags[:6],
+                    "risk_flags": (["疑似重复"] if duplicate else []) + (["缺少公开业务邮箱"] if not email else []) + ([reviewed_note] if reviewed_note else []) + ai_result.risk_flags[:6],
                     "recommended_product": task.get("task_name"),
                     "recommended_pitch": ai_result.recommended_pitch or need,
                     "evidence_snippets": ([{"source_url": evidence_url, "text": evidence_text[:500]}] if evidence_url else []),
@@ -1083,12 +1160,12 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     "verification_bucket": bucket, "company_type": company_type, "official_website": f"{urlparse(final_url).scheme}://{host}", "official_homepage_url": f"{urlparse(final_url).scheme}://{host}", "company_source_url": final_url,
                     "lead_layer": lead_layer,
                     "contact_department": department, "contact_source_url": contact_source, "email_source_url": email_source, "phone_source_url": phone_source,
-                    "email_domain_note": None if not email or _host(f"https://{email.split('@', 1)[1]}") == host else "邮箱域名与官网不同；该邮箱须由当前企业官网/官方 PDF 页面证明为集团统一或官方技术邮箱。",
+                    "email_domain_note": None if not email or _same_site_domain(email.split("@", 1)[1], host) else "邮箱域名与官网不同；该邮箱须由当前企业官网/官方 PDF 页面证明为集团统一或官方技术邮箱。",
                     "official_address": _address_excerpt(combined_text), "business_scope": business_role or company_type or "未公开，需通过首轮询盘确认",
                     "product_evidence_summary": evidence_summary or None, "product_evidence_url": evidence_url, "product_evidence_type": "官方产品/应用页面" if evidence_url else None,
                     "matching_grade": matching_grade, "recommended_contact_department": department or "Sales / Technical Support（待确认）",
                     "first_contact_questions": "请确认贵司工厂地址、生产产品、产能、TDS/SDS、MOQ 与出口能力。" if supplier_mode else "请确认贵司相关产品/应用、现用材料、技术指标与采购对接部门。",
-                    "verification_conclusion": (identity_problem or role_problem or "不属于可开发企业主体") if excluded else ("中国大陆供应工厂候选；公开网页信息仍需人工核验，不会自动进入供应商中心。" if supplier_mode else "应用型潜在客户候选；公开网页只证明其下游业务，尚未证明其采购或使用本任务产品。"),
+                    "verification_conclusion": reviewed_note or ((identity_problem or role_problem or "不属于可开发企业主体") if excluded else ("中国大陆供应工厂候选；公开网页信息仍需人工核验，不会自动进入供应商中心。" if supplier_mode else "应用型潜在客户候选；公开网页只证明其下游业务，尚未证明其采购或使用本任务产品。")),
                     "missing_requirements": missing, "verified_at": datetime.now(timezone.utc).isoformat(),
                     "first_discovery_source_url": source_url, "official_validation_source_url": final_url,
                     "source_urls": [url for url in (source_url, final_url, contact_source, email_source, phone_source, evidence_url) if url],
@@ -1124,9 +1201,9 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
 
 async def run_daily_loop() -> None:
     """Server-side timer. It only runs tasks explicitly enabled by their owner."""
-    cfg = settings()
-    token = f"Bearer {cfg.supabase_service_role_key}"
-    store = RestStore(token, service=True)
+    # Supabase sb_secret_* service keys authenticate through ``apikey`` and
+    # are not JWTs, so the worker must not copy the secret into Authorization.
+    store = RestStore("", service=True)
     while True:
         now = datetime.now().astimezone()
         try:

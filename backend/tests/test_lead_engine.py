@@ -7,7 +7,7 @@ os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 
 from app.lead_analyzer import LeadAnalyzer
-from app.lead_discovery import _application_profile, _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _reviewed_seed_company_name, _score
+from app.lead_discovery import _address_excerpt, _application_profile, _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _reviewed_seed_company_name, _reviewed_seed_profile, _same_site_domain, _score
 from app.customer_development import canonical_domain, draft_email, nl_fc_pu_application_terms, nl_fc_pu_queries, public_http_url, score_lead
 from app.tds_discovery import application_search_terms, extract_explicit_applications
 from app.tds_presets import BUILTIN_TDS_PRESETS, builtin_tds_preset_summaries
@@ -69,6 +69,16 @@ class LeadEngineUnitTests(unittest.TestCase):
         )
         self.assertEqual(_reviewed_seed_company_name("https://locations.th.simplot.com/example"), "J.R. Simplot Company")
         self.assertIsNone(_reviewed_seed_company_name("https://association.example.org/members"))
+        self.assertEqual(_reviewed_seed_profile("https://uregold.com/")["reviewed_role"], "chemistry_mismatch")
+        self.assertEqual(_reviewed_seed_profile("https://www.lebanonturf.com/technologies/pcu")["reviewed_role"], "indirect_user")
+
+    def test_official_contact_fields_ignore_www_and_form_noise(self):
+        self.assertTrue(_same_site_domain("apac@kingentaglobal.com".split("@", 1)[1], "www.kingentaglobal.com"))
+        self.assertTrue(_same_site_domain("lebanonturf.com", "www.lebanonturf.com"))
+        self.assertFalse(_same_site_domain("gmail.com", "www.lebanonturf.com"))
+        noisy = "Email Address ConfirmEmail Phone My Comment or Question is About General Products Address 1600 E. Cumberland St. Lebanon PA 17042 Phone 1-800-233-0628 Email customerservice@lebanonturf.com"
+        self.assertEqual(_address_excerpt(noisy), "1600 E. Cumberland St. Lebanon PA 17042")
+        self.assertIsNone(_address_excerpt("Address direct demand candidate production manufacturer"))
 
     def test_task_snapshot_uses_enabled_keywords_and_sources(self):
         from unittest.mock import patch
