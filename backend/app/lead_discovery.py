@@ -752,12 +752,12 @@ def _curated_seed_urls(task: dict[str, Any]) -> list[tuple[str, str]]:
 
 def _reviewed_seed_company_name(url: str) -> str | None:
     """Return the fixed legal/brand name for a manually reviewed company seed."""
-    host = _host(url)
+    host = _host(url).removeprefix("www.")
     if not host:
         return None
     for seed in CURATED_PUBLIC_SEEDS:
         company_name = str(seed.get("company_name") or "").strip()
-        seed_host = _host(str(seed.get("url") or ""))
+        seed_host = _host(str(seed.get("url") or "")).removeprefix("www.")
         if company_name and (host == seed_host or host.endswith(f".{seed_host}") or seed_host.endswith(f".{host}")):
             return company_name
     return None
