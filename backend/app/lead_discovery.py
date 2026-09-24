@@ -147,48 +147,56 @@ CURATED_PUBLIC_SEEDS = (
     # even when an association blocks robots or exposes no outbound links.
     {
         "url": "https://www.alliednutrients.com/controlled-release",
+        "company_name": "Allied Nutrients",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "Allied Nutrients 缓控释肥官方产品页",
     },
     {
         "url": "https://www.kingentaglobal.com/polymer-coated-controlled-release-fertilizer-crf-technology/",
+        "company_name": "Kingenta Global",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "Kingenta 聚合物包膜肥官方技术页",
     },
     {
         "url": "https://www.lebanonturf.com/technologies/pcu",
+        "company_name": "LebanonTurf",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "LebanonTurf 包膜尿素官方产品页",
     },
     {
         "url": "https://compo-expert.com/product-groups/controlled-release-fertilizers/basacote",
+        "company_name": "COMPO EXPERT",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "COMPO EXPERT 缓控释肥官方产品页",
     },
     {
         "url": "https://www.profileproducts.com/products/gal-xeone/?solution=horticulture",
+        "company_name": "Profile Products",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "Profile Products 聚合物包膜肥官方产品页",
     },
     {
         "url": "https://www.simplot.com/professional-products/best/resources/news/gal-xeone-controlled-release-technology",
+        "company_name": "J.R. Simplot Company",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "Simplot 聚合物包膜肥官方技术页",
     },
     {
         "url": "https://www.cotextech.com/",
+        "company_name": "CoteX Technologies",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "CoteX 聚合物包膜肥官方产品页",
     },
     {
         "url": "https://www.uregold.com/",
+        "company_name": "UREGOLD",
         "sector": "fertilizer", "countries": set(),
         "signals": {"fertilizer", "fertiliser", "coated urea", "controlled release", "slow release", "npk"},
         "label": "UREGOLD 包膜尿素官方产品页",
@@ -742,6 +750,19 @@ def _curated_seed_urls(task: dict[str, Any]) -> list[tuple[str, str]]:
     return selected
 
 
+def _reviewed_seed_company_name(url: str) -> str | None:
+    """Return the fixed legal/brand name for a manually reviewed company seed."""
+    host = _host(url)
+    if not host:
+        return None
+    for seed in CURATED_PUBLIC_SEEDS:
+        company_name = str(seed.get("company_name") or "").strip()
+        seed_host = _host(str(seed.get("url") or ""))
+        if company_name and (host == seed_host or host.endswith(f".{seed_host}") or seed_host.endswith(f".{host}")):
+            return company_name
+    return None
+
+
 async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "manual") -> dict[str, Any]:
     """Sequential, bounded discovery run. Public index -> robots -> one public page."""
     cfg = settings()
@@ -832,7 +853,8 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     directory_text = _normalise_text(response.text[:1_000_000])
                     directory_host = _host(final_directory_url)
                     evidence_terms = list(profile["evidence_terms"])
-                    if _is_direct_company_seed(response.text[:1_000_000], directory_text, directory_host, evidence_terms):
+                    reviewed_company = _reviewed_seed_company_name(final_directory_url)
+                    if reviewed_company or _is_direct_company_seed(response.text[:1_000_000], directory_text, directory_host, evidence_terms):
                         if final_directory_url not in candidate_urls:
                             candidates.append((final_directory_url, "已核验官网种子"))
                             candidate_urls.add(final_directory_url)
@@ -910,7 +932,8 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 # A directory only discovers a name.  Strict verification then
                 # visits same-domain About / Contact / Product evidence pages.
                 pages: list[tuple[str, str, str]] = [(final_url, raw, text)]
-                for subpage_url in _official_subpage_urls(raw, final_url):
+                subpage_limit = 3 if source_type == "已核验官网种子" else 6
+                for subpage_url in _official_subpage_urls(raw, final_url, limit=subpage_limit):
                     robots_ok, _ = await _robots_allowed(client, subpage_url, user_agent)
                     if not robots_ok:
                         continue
@@ -924,7 +947,8 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                     await asyncio.sleep(delay)
 
                 combined_text = " ".join(page[2] for page in pages)
-                company = _company_name(raw, host)
+                reviewed_company = _reviewed_seed_company_name(source_url) if source_type == "已核验官网种子" else None
+                company = reviewed_company or _company_name(raw, host)
                 company_type, identity_problem = _company_type(combined_text)
                 supplier_mode = profile["mode"] == "供应工厂"
                 if supplier_mode:
@@ -984,7 +1008,10 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 missing: list[str] = []
                 if not host:
                     missing.append("未找到可验证的企业官网主域名")
-                if identity_problem: missing.append(identity_problem)
+                reviewed_application_maker = bool(reviewed_company and application_hits and not supplier_mode)
+                identity_is_trade_only = bool(identity_problem and "贸易/分销" in identity_problem)
+                if identity_problem and not (reviewed_application_maker and identity_is_trade_only):
+                    missing.append(identity_problem)
                 if role_problem: missing.append(role_problem)
                 # Email and a switchboard alone do not pass the strict rule.
                 # Until a named contact extractor is available, an explicit
@@ -997,8 +1024,13 @@ async def run_task_once(store: RestStore, task: dict[str, Any], trigger: str = "
                 configured_exclusion = next((str(rule).strip() for rule in (task.get("profile_exclusion_rules") or []) if str(rule).strip() and str(rule).casefold() in combined_text.casefold()), None)
                 if configured_exclusion:
                     missing.append(f"命中产品画像排除规则：{configured_exclusion}")
+                excluded_identity = bool(
+                    identity_problem
+                    and any(word in identity_problem for word in ("协会", "目录", "媒体", "贸易/分销"))
+                    and not (reviewed_application_maker and identity_is_trade_only)
+                )
                 excluded = bool(
-                    (identity_problem and any(word in identity_problem for word in ("协会", "目录", "媒体", "贸易/分销")))
+                    excluded_identity
                     or (not supplier_mode and role_problem and "上游供应商或同行" in role_problem)
                     or (supplier_mode and role_problem and "贸易商、经销商、目录" in role_problem)
                     or configured_exclusion

@@ -7,7 +7,7 @@ os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
 
 from app.lead_analyzer import LeadAnalyzer
-from app.lead_discovery import _application_profile, _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _score
+from app.lead_discovery import _application_profile, _contains_terms, _curated_seed_urls, _customer_lead_source_type, _existing_discovery_lead, _is_direct_company_seed, _is_public_url, _public_business_email, _reviewed_seed_company_name, _score
 from app.customer_development import canonical_domain, draft_email, nl_fc_pu_application_terms, nl_fc_pu_queries, public_http_url, score_lead
 from app.tds_discovery import application_search_terms, extract_explicit_applications
 from app.tds_presets import BUILTIN_TDS_PRESETS, builtin_tds_preset_summaries
@@ -61,6 +61,14 @@ class LeadEngineUnitTests(unittest.TestCase):
         self.assertTrue(_is_direct_company_seed(raw, text, "example-ink.com", ["water based flexographic inks"]))
         directory = "<title>Association Members</title><p>Industry association member directory</p>"
         self.assertFalse(_is_direct_company_seed(directory, "Industry association member directory", "association.example.org", ["water based flexographic inks"]))
+
+    def test_reviewed_company_seed_uses_stable_company_identity(self):
+        self.assertEqual(
+            _reviewed_seed_company_name("https://www.kingentaglobal.com/polymer-coated-controlled-release-fertilizer-crf-technology/"),
+            "Kingenta Global",
+        )
+        self.assertEqual(_reviewed_seed_company_name("https://locations.th.simplot.com/example"), "J.R. Simplot Company")
+        self.assertIsNone(_reviewed_seed_company_name("https://association.example.org/members"))
 
     def test_task_snapshot_uses_enabled_keywords_and_sources(self):
         from unittest.mock import patch
