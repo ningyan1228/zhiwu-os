@@ -597,7 +597,12 @@ class RestStore:
         cfg = settings()
         self.base = cfg.supabase_url.rstrip("/")
         key = cfg.supabase_service_role_key if service else cfg.supabase_anon_key
-        self.headers = {"apikey": key, "Authorization": token, "Content-Type": "application/json", "Prefer": "return=representation"}
+        self.headers = {"apikey": key, "Content-Type": "application/json", "Prefer": "return=representation"}
+        # Supabase's current sb_secret_* keys are API keys, not three-part
+        # JWTs. Service jobs authenticate with the apikey header alone; user
+        # requests still carry their signed-in Bearer token for Auth/RLS.
+        if token:
+            self.headers["Authorization"] = token
 
     async def request(self, path: str, method: str = "GET", payload: Any = None) -> Any:
         # A slow public server should not hold the user's review queue hostage.
