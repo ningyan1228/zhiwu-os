@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { KnowledgeBoundary } from './KnowledgeBoundary'
+import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   ArrowUpRight, Bell, CalendarDays, Check, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleHelp, ClipboardList, Clock3, Flame, Grid2X2, LogOut,
@@ -15,7 +16,11 @@ import { TradeCommitmentLedger } from './TradeCommitmentLedger'
 import { MailFactCard } from './MailFactCard'
 import { MailWorkbench } from './MailWorkbench'
 
-type View = 'dashboard' | 'crm' | 'business-map' | 'commitments' | 'suppliers' | 'mail' | 'products' | 'relationships' | 'quotes' | 'projects' | 'tasks' | 'calendar' | 'imports'
+const KnowledgeWorkspace = lazy(() => import('./KnowledgeWorkspace'))
+const knowledgeRoutes = ['dashboard','market-intelligence','inquiries','products','practice','assistant','studio','intelligence','settings']
+const isKnowledgeRoute = () => knowledgeRoutes.includes(window.location.hash.slice(1).split('/')[0])
+
+type View = 'knowledge' | 'dashboard' | 'crm' | 'business-map' | 'commitments' | 'suppliers' | 'mail' | 'products' | 'relationships' | 'quotes' | 'projects' | 'tasks' | 'calendar' | 'imports'
 type CrmFilter = 'all' | 'incomplete' | 'overdue'
 const nav: [string, string, LucideIcon][] = [
   ['dashboard', '总览', Grid2X2], ['crm', '外贸 CRM', Users], ['business-map', '生意地图', Network], ['commitments', '承诺台账', Handshake], ['suppliers', '供应商中心', Factory], ['mail', '邮件中心', Mail], ['products', '产品中心', Package],
@@ -50,15 +55,20 @@ function currentAccount() {
 function App() {
   const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('zhiwu-access-token')))
   const [theme, setTheme] = useState<'dark' | 'light'>(() => localStorage.getItem('zhiwu-theme') === 'light' ? 'light' : 'dark')
-  const [view, setView] = useState<View>(() => window.location.hash.startsWith('#mail') ? 'mail' : 'dashboard')
+  const [view, setViewState] = useState<View>(() => isKnowledgeRoute() ? 'knowledge' : window.location.hash.startsWith('#mail') ? 'mail' : nav.some(([key])=>key===window.location.hash.slice(6)) ? window.location.hash.slice(6) as View : 'dashboard')
+  const setView=(next:View)=>{if(next!=='knowledge') window.location.hash='work/'+next;setViewState(next)}
+  const [,setRouteRevision]=useState(0)
+  useEffect(() => { const sync=()=>{setRouteRevision(v=>v+1);if(isKnowledgeRoute()) setViewState('knowledge'); else if(window.location.hash.startsWith('#mail')) setViewState('mail'); else if(window.location.hash.startsWith('#work/')&&nav.some(([key])=>key===window.location.hash.slice(6))) setViewState(window.location.hash.slice(6) as View);else setViewState('dashboard')}; window.addEventListener('hashchange',sync); return ()=>window.removeEventListener('hashchange',sync) }, [])
+  const openView=(next:View)=>{ window.location.hash='work/'+next; setView(next); setSidebar(false) }
+  const openKnowledge=(route:string)=>{ window.location.hash=route; setView('knowledge'); setSidebar(false) }
   const [sidebar, setSidebar] = useState(false)
-  const [customers, setCustomers] = useState(seedCustomers)
-  const [products, setProducts] = useState(seedProducts)
+  const [customers, setCustomers] = useState<typeof seedCustomers>([])
+  const [products, setProducts] = useState<typeof seedProducts>([])
   const [members, setMembers] = useState<WorkspaceMember[]>([])
-  const [followupRows, setFollowupRows] = useState(seedFollowups)
+  const [followupRows, setFollowupRows] = useState<typeof seedFollowups>([])
   const [tradeCommitments, setTradeCommitments] = useState<TradeCommitment[]>([])
-  const [projects, setProjects] = useState(seedProjects)
-  const [quotes, setQuotes] = useState(seedQuotes)
+  const [projects, setProjects] = useState<typeof seedProjects>([])
+  const [quotes, setQuotes] = useState<typeof seedQuotes>([])
   const [orders, setOrders] = useState<SalesOrder[]>([])
   const [productCustomerRelations, setProductCustomerRelations] = useState<ProductCustomerRelation[]>([])
   const [emails, setEmails] = useState<MailEmail[]>([])
@@ -127,12 +137,8 @@ function App() {
     if (!authenticated || !sessionStorage.getItem('zhiwu-access-token')) return
     const loadWorkspace = async () => {
       let [customerRows, productRows, loadedFollowups, loadedProjects, loadedQuotes, loadedOrders] = await Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.quotes(), api.orders().catch(() => [])])
-      if (!customerRows.length) {
-        await api.seedDemo()
-        ;[customerRows, productRows, loadedFollowups, loadedProjects, loadedQuotes, loadedOrders] = await Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.quotes(), api.orders().catch(() => [])])
-      }
-      setCustomers(customerRows.length ? customerRows : seedCustomers); setProducts(productRows.length ? productRows : seedProducts)
-      setFollowupRows(loadedFollowups.length ? loadedFollowups : seedFollowups); setProjects(loadedProjects.length ? loadedProjects : seedProjects); setQuotes(loadedQuotes.length ? loadedQuotes : seedQuotes); setOrders(loadedOrders)
+      setCustomers(customerRows); setProducts(productRows)
+      setFollowupRows(loadedFollowups); setProjects(loadedProjects); setQuotes(loadedQuotes); setOrders(loadedOrders)
       try { setTradeCommitments(await api.tradeCommitments()) } catch (error) { console.info('Trade Commitment Ledger is waiting for the V1.26 database migration.', error) }
       try {
         const [mailRows, syncRow, mailboxRow] = await Promise.all([api.emails(), api.emailSync(), api.mailbox()])
@@ -352,6 +358,8 @@ function App() {
     }
   }
   const signOut = () => {
+    localStorage.removeItem('sb-lyozybqqgwnohqjtzmpx-auth-token')
+    window.dispatchEvent(new Event('workspace-signout'))
     sessionStorage.removeItem('zhiwu-access-token')
     sessionStorage.removeItem('zhiwu-account-email')
     window.history.replaceState(null, '', window.location.pathname)
@@ -363,12 +371,21 @@ function App() {
   return <div className="app-shell">
     <aside className={`sidebar ${sidebar ? 'is-open' : ''}`}>
       <div className="brand"><div className="brand-mark"><img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="干就是学工作站"/></div><div><strong>干就是学</strong><span>工作站</span></div><button className="mobile-close" onClick={() => setSidebar(false)}><X size={18}/></button></div>
-      <nav>{nav.map(([key, label, Icon]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => { if (key === 'dashboard' || key === 'crm' || key === 'business-map' || key === 'commitments' || key === 'suppliers' || key === 'mail' || key === 'products' || key === 'relationships' || key === 'quotes' || key === 'projects' || key === 'tasks' || key === 'calendar' || key === 'imports') setView(key as View); setSidebar(false) }}><Icon size={18}/><span>{label}</span>{key === 'crm' && crmActionCount > 0 && <em title="待补资料或逾期跟进的客户">{crmActionCount}</em>}{key === 'commitments' && tradeCommitments.filter(item => item.status === '我方待办').length > 0 && <em title="我方待兑现承诺">{tradeCommitments.filter(item => item.status === '我方待办').length}</em>}{key === 'suppliers' && suppliers.filter(supplier => supplier.next_followup_date && supplier.next_followup_date <= new Date().toISOString().slice(0, 10)).length > 0 && <em title="到期供应商跟进">{suppliers.filter(supplier => supplier.next_followup_date && supplier.next_followup_date <= new Date().toISOString().slice(0, 10)).length}</em>}</button>)}<a className="external-nav lead-intelligence-link" href="https://ningyan1228.github.io/knowledge-workbench/#market-intelligence" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开客户线索发现"><Radar size={18}/><span>客户线索发现</span><ArrowUpRight size={14}/></a><a className="external-nav" href="https://ningyan1228.github.io/knowledge-workbench/" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开外贸知识站"><BookOpen size={18}/><span>外贸知识站</span><ArrowUpRight size={14}/></a></nav>
+      <nav className="unified-nav">
+        <button className={view==='dashboard'?'active':''} onClick={()=>openView('dashboard')}><Grid2X2 size={18}/><span>今日工作</span></button>
+        <button className={view==='knowledge'&&location.hash.startsWith('#market-intelligence')&&!location.hash.includes('follow-up')?'active':''} onClick={()=>openKnowledge('market-intelligence')}><Radar size={18}/><span>客户开发</span></button>
+        <button className={view==='knowledge'&&location.hash==='#inquiries'?'active':''} onClick={()=>openKnowledge('inquiries')}><Mail size={18}/><span>询盘往来</span></button>
+        <details open><summary><Users size={18}/>客户跟进</summary><button className={view==='crm'?'active':''} onClick={()=>openView('crm')}>客户 CRM</button><button onClick={()=>openKnowledge('market-intelligence/follow-up')}>团队台账</button><button onClick={()=>openView('mail')}>邮件中心</button><button onClick={()=>openView('business-map')}>生意地图</button></details>
+        <details><summary><Package size={18}/>产品中心</summary><button onClick={()=>openView('products')}>产品管理</button><button onClick={()=>openKnowledge('products')}>技术资料与学习</button><button onClick={()=>openView('relationships')}>产品关系</button></details>
+        <details><summary><Layers3 size={18}/>经营管理</summary>{nav.filter(([key])=>['suppliers','commitments','quotes','projects','tasks','calendar'].includes(key)).map(([key,label,Icon])=><button key={key} className={view===key?'active':''} onClick={()=>openView(key as View)}><Icon size={16}/>{label}</button>)}</details>
+        <details><summary><Sparkles size={18}/>更多工具</summary>{[['intelligence','行业情报'],['practice','外贸学习'],['assistant','回复助手'],['studio','内容工作室'],['dashboard','资料待办'],['settings','资料账号与设置']].map(([route,label])=><button key={route} onClick={()=>openKnowledge(route)}>{label}</button>)}<button onClick={()=>openView('imports')}>AI 导入暂存箱</button></details>
+      </nav>
       <div className="nav-bottom"><a href="https://notes.101921.xyz/" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开知识库"><CalendarDays size={18}/><span>知识库 ↗</span></a><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">{account.initial}</div><div><b>{account.name}</b><small>{account.role} · 修改密码</small></div><ChevronRight size={16}/></button></div>
     </aside>
     <main>
-      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ dashboard: '总览', crm: '外贸 CRM', 'business-map': '生意地图', commitments: '承诺台账', suppliers: '供应商中心', mail: '邮件中心', products: '产品中心', relationships: '产品关系', quotes: '报价管理', imports: 'AI 导入暂存箱', tasks: '每日计划', calendar: '工作日历', projects: '项目推进' }[view]}</b></div><div className="header-actions"><label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label><button className="theme-toggle" type="button" onClick={() => setTheme(current => current === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'} title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>{theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}<span>{theme === 'dark' ? '浅色' : '深色'}</span></button><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="account-menu"><button className="avatar avatar-small account-trigger" aria-label="打开账号菜单" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen(current => !current)}>{account.initial}</button>{accountMenuOpen && <div className="account-popover"><b>{account.name}</b><small>{account.email || '当前登录账号'}</small><button onClick={signOut}><LogOut size={15}/>退出登录</button></div>}</div></div></header>
+      <header><button className="menu" onClick={() => setSidebar(true)}><Menu/></button><div className="crumb">工作空间 <ChevronRight size={15}/> <b>{{ knowledge: '阳光心材料', dashboard: '今日工作', crm: '外贸 CRM', 'business-map': '生意地图', commitments: '承诺台账', suppliers: '供应商中心', mail: '邮件中心', products: '产品中心', relationships: '产品关系', quotes: '报价管理', imports: 'AI 导入暂存箱', tasks: '每日计划', calendar: '工作日历', projects: '项目推进' }[view]}</b></div><div className="header-actions">{view==='knowledge' ? <button className="theme-toggle" onClick={()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true}))}><Search size={17}/>搜索产品或客户</button> : <label className="global-search"><Search size={17}/><input value={globalQuery} onChange={event => setGlobalQuery(event.target.value)} placeholder="搜索客户、产品、项目或邮件" /></label>}<button className="theme-toggle" type="button" onClick={() => setTheme(current => current === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'} title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>{theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}<span>{theme === 'dark' ? '浅色' : '深色'}</span></button><div className="notification-wrap"><button className="icon-button" aria-label="打开提醒中心" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(current => !current)}><Bell size={19}/>{hasNotifications && <i/>}</button>{notificationsOpen && <NotificationCenter tasks={tasks} emails={emails} onOpenTask={openNotificationTask} onOpenEmail={openNotificationEmail} onOpenTasks={() => { setFocusDate(new Date().toISOString().slice(0, 10)); setView('tasks'); setNotificationsOpen(false) }} onOpenMail={() => { setView('mail'); setNotificationsOpen(false) }} />}</div><div className="account-menu"><button className="avatar avatar-small account-trigger" aria-label="打开账号菜单" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen(current => !current)}>{account.initial}</button>{accountMenuOpen && <div className="account-popover"><b>{account.name}</b><small>{account.email || '当前登录账号'}</small><button onClick={signOut}><LogOut size={15}/>退出登录</button></div>}</div></div></header>
       {globalQuery.trim() && <WorkspaceSearch query={globalQuery} customers={customers} products={products} projects={projects} emails={emails} close={() => setGlobalQuery('')} openCustomer={customer => { setView('crm'); setSelected(customer) }} openProduct={() => setView('products')} openProject={customer => { setView('projects'); setSelected(customer) }} openEmail={openEmail} />}
+      {view === 'knowledge' && <KnowledgeBoundary><Suspense fallback={<div className="knowledge-loading" role="status">正在打开阳光心材料…</div>}><KnowledgeWorkspace theme={theme}/></Suspense></KnowledgeBoundary>}
       {view === 'dashboard' && <><DashboardCockpit customers={customers} projects={projects} commitments={tradeCommitments} emails={emails} tasks={tasks} today={today} onOpenCRM={() => setView('crm')} onOpenMail={() => setView('mail')} onOpenTasks={() => setView('tasks')} onOpenCommitments={() => setView('commitments')} openCustomer={setSelected} openEmail={openEmail}/><SupplierDashboard suppliers={suppliers} rfqs={supplierRfqs} links={supplierLinks} insights={supplierInsights} open={() => setView('suppliers')} onOpenSupplier={setSelectedSupplier}/></>}
       {view === 'crm' && <MemoryCRM customers={customers} projects={projects} products={products} followups={followupRows} emails={emails} open={setSelected} create={() => setModal('customer')} addFollowup={customer => { setSelected(customer); setModal('followup') }} />}
       {view === 'business-map' && <BusinessMap customers={customers} products={products} projects={projects} followups={followupRows} emails={emails} tasks={tasks} timelineEvents={timelineEvents} openCustomer={setSelected} openEmail={openEmail} openProject={setSelectedProject} />}
@@ -1013,4 +1030,5 @@ function SupplierEditForm({ supplier, close, submit }: { supplier: Supplier; clo
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
+
 

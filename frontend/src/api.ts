@@ -29,6 +29,8 @@ async function request<T>(path: string, init: RequestInit = {}) {
   if (response.status === 401) {
     // A password reset or expired Supabase session must never leave the UI
     // showing seed/demo data as though the user were still authenticated.
+    localStorage.removeItem('sb-lyozybqqgwnohqjtzmpx-auth-token')
+    window.dispatchEvent(new Event('workspace-signout'))
     sessionStorage.removeItem('zhiwu-access-token')
     window.location.reload()
     throw new Error('登录会话已失效，请重新登录。')

@@ -34,6 +34,7 @@ jobs:
         working-directory: frontend
         run: |
           pnpm install --frozen-lockfile
+          pnpm run prepare:knowledge
           pnpm run build
           # GitHub Pages serves this artifact as its publishing root. Keep the
           # custom domain declaration inside it, otherwise a later deployment
@@ -45,3 +46,4 @@ jobs:
           path: frontend/dist
       - id: deployment
         uses: actions/deploy-pages@v4
+
