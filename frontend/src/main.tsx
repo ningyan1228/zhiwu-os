@@ -16,6 +16,8 @@ import { BusinessMap } from './BusinessMap'
 import { TradeCommitmentLedger } from './TradeCommitmentLedger'
 import { MailFactCard } from './MailFactCard'
 import { MailWorkbench } from './MailWorkbench'
+import './UnifiedTheme.css'
+import './UnifiedShell.css'
 
 const KnowledgeWorkspace = lazy(() => import('./KnowledgeWorkspace'))
 const knowledgeRoutes = ['dashboard','market-intelligence','inquiries','products','practice','assistant','studio','intelligence','settings']

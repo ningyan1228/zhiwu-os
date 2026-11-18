@@ -1,0 +1,80 @@
+/* One visual system, loaded by the host and the isolated knowledge module. */
+:root,:host{
+ --ui-bg:#f5f7fa;--ui-surface:#fff;--ui-soft:#f0f4f7;--ui-text:#20303f;
+ --ui-muted:#778494;--ui-line:#e7ecf1;--ui-accent:#147d82;--ui-accent-hover:#10696e;--ui-tint:#e8f5f3;
+ --ui-shadow:0 4px 20px #21354706;--ui-radius:14px;
+ --bg:var(--ui-bg);--surface:var(--ui-surface);--surface-soft:var(--ui-soft);--text:var(--ui-text);--muted:var(--ui-muted);--line:var(--ui-line);--border:var(--ui-line);--blue:var(--ui-accent);--blue-soft:var(--ui-tint);--shadow:var(--ui-shadow);
+ font-family:Inter,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif!important;font-size:14px;color:var(--ui-text);background:var(--ui-bg);font-synthesis:none;
+}
+:root[data-theme="dark"],:host([data-theme="dark"]){
+ --ui-bg:#111b24;--ui-surface:#192630;--ui-soft:#22313e;--ui-text:#e3ebf2;--ui-muted:#9babb9;
+ --ui-line:#2a3b48;--ui-accent:#67c7c1;--ui-accent-hover:#88d8d2;--ui-tint:#213e42;--ui-shadow:0 4px 20px #00000012;color-scheme:dark;
+}
+body{background:var(--ui-bg)!important;color:var(--ui-text)!important}
+button,input,select,textarea{font-family:inherit!important}
+button,a,input,select,textarea,summary{outline-offset:3px}
+:is(button,a,input,select,textarea,summary):focus-visible{outline:2px solid var(--ui-accent)!important}
+:is(h1,h2,h3,h4){color:var(--ui-text)!important;letter-spacing:-.025em;font-weight:600!important}
+h1{font-size:28px!important;line-height:1.3}h2{font-size:20px;line-height:1.4}h3{font-size:15px}
+small,.muted{color:var(--ui-muted)}
+:is(.panel,.table-panel,.product-card,.metric,.modal,.drawer,.setup-card,.inquiry-detail,.inquiry-list,.inquiry-empty,.product-detail,.article-card,.work-list-manager,.supplier-card,.map-line-card,.map-product-group,.trade-panel,.crm-memory-card,.mail-list-panel,.mail-detail-panel){background:var(--ui-surface)!important;border-color:var(--ui-line)!important;border-radius:var(--ui-radius)!important;box-shadow:var(--ui-shadow);color:var(--ui-text)!important}
+:is(.panel-title,.detail-section,.drawer-actions,.table-tools,.section-heading){border-color:var(--ui-line)!important}
+:is(.panel-title,.section-heading) h2{font-size:16px!important;font-weight:600!important}
+:is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea){color:var(--ui-text)!important;border-color:var(--ui-line)!important;border-radius:8px!important;background:var(--ui-surface)}
+:is(input,textarea)::placeholder{color:var(--ui-muted)!important;opacity:.85}
+:is(.global-search,.table-tools label,.product-toolbar label,.work-search){background:var(--ui-soft)!important;border:1px solid transparent!important;box-shadow:none!important;border-radius:9px!important;color:var(--ui-muted)!important}
+:is(.global-search,.work-search) input{background:transparent!important}
+:is(.primary,.primary-button,.customer-primary-action){background:var(--ui-accent)!important;border:1px solid var(--ui-accent)!important;color:#fff!important;border-radius:8px!important;box-shadow:none!important;font-weight:500!important}
+:is(.primary,.primary-button,.customer-primary-action):hover:not(:disabled){background:var(--ui-accent-hover)!important}
+:root[data-theme="dark"] :is(.primary,.primary-button),:host([data-theme="dark"]) :is(.primary,.primary-button){color:#10282d!important}
+:is(.secondary-button,.theme-toggle,.icon-button,.table-tools>button,.drawer-actions>button:not(.primary),.dense-list-toolbar button,.customer-export-action,.lead-data-refresh button,.sidebar-width-toggle){background:var(--ui-surface)!important;border:1px solid var(--ui-line)!important;color:var(--ui-text)!important;border-radius:8px!important;box-shadow:none!important}
+button{transition:background-color .15s,border-color .15s,color .15s}
+button:disabled{opacity:.45;cursor:not-allowed}
+:is(table,.dense-table-scroll table){font-size:13px!important;color:var(--ui-text)!important}
+:is(table th,.dense-table-scroll th){background:var(--ui-soft)!important;color:var(--ui-muted)!important;font-size:11px!important;font-weight:500!important;border-color:var(--ui-line)!important;padding:11px 12px!important}
+:is(table td,.dense-table-scroll td){border-bottom:1px solid color-mix(in srgb,var(--ui-line) 65%,transparent)!important;padding:10px 12px!important;line-height:1.5!important;background:transparent}
+:is(table tbody tr,.dense-table-scroll tr):hover{background:var(--ui-soft)!important}
+:is(table tr.selected,.dense-table-scroll tr.is-selected){background:var(--ui-tint)!important}
+:is(table td strong,.dense-table-scroll td button){font-weight:500!important;color:var(--ui-text)!important}
+:is(.short-product-tag,.chip,.tag){background:var(--ui-soft)!important;border-color:transparent!important;color:var(--ui-muted)!important;border-radius:5px!important;font-weight:500!important}
+:is(.modal-layer,.drawer-layer,.dialog-backdrop,.company-detail-drawer-backdrop){background:#101e3040!important;backdrop-filter:blur(3px)}
+.company-detail-inline{background:transparent!important;backdrop-filter:none!important}
+:is(.modal,.drawer) :is(p,label,li){color:var(--ui-text)}
+:is(.company-detail,.company-detail-drawer){background:var(--ui-surface)!important;border:1px solid var(--ui-line)!important;box-shadow:var(--ui-shadow)!important;border-radius:var(--ui-radius)!important;color:var(--ui-text)!important}
+.company-detail-header{border:0!important}.company-detail-header h2{font-size:22px!important;font-weight:600!important}
+.company-detail-header p,.company-detail-navigation span{color:var(--ui-muted)!important}
+.company-detail-navigation{background:var(--ui-surface)!important;border-color:var(--ui-line)!important}
+.company-detail-navigation button{background:transparent!important;border:0!important;color:var(--ui-accent)!important}
+.company-detail-tabs{background:var(--ui-surface)!important;border-color:var(--ui-line)!important}
+.company-detail-tabs button{font-weight:500!important;color:var(--ui-muted)!important}
+.company-detail-tabs button[aria-selected="true"]{color:var(--ui-accent)!important;border-color:var(--ui-accent)!important}
+.company-detail-body{line-height:1.65}.company-detail-body p{font-weight:400}
+.company-detail .company-disclosure{border-color:var(--ui-line)!important;border-radius:8px}
+.company-material-evaluation{background:var(--ui-soft)!important;border:0!important}
+.calm-customer-page{--outreach-subject-ink:var(--ui-text);--outreach-subject-bg:var(--ui-surface);--outreach-subject-edge:var(--ui-line);--outreach-subject-hover:var(--ui-soft);--outreach-body-bg:var(--ui-accent);--outreach-body-hover:var(--ui-accent-hover);--outreach-full-ink:var(--ui-text);--outreach-full-bg:var(--ui-surface);--outreach-full-edge:var(--ui-line);--outreach-full-hover:var(--ui-soft);--outreach-send-ink:var(--ui-text);--outreach-send-bg:var(--ui-surface);--outreach-send-edge:var(--ui-line);--outreach-send-hover:var(--ui-soft)}
+.outreach-copy-button{border-radius:8px!important;box-shadow:none!important;font-weight:500!important}
+.calm-customer-page .work-controls-compact{border:0!important;background:transparent!important;padding:8px 0 14px!important}
+.calm-customer-page .customer-work-toolbar h1{font-size:26px!important;font-weight:600!important}
+.calm-customer-page .market-heading{margin-bottom:12px!important}
+.calm-customer-page .market-tabs button.active{background:var(--ui-tint)!important;color:var(--ui-accent)!important;box-shadow:none!important}
+.dense-customer-list{border:1px solid var(--ui-line)!important;border-radius:var(--ui-radius)!important;overflow:hidden;background:var(--ui-surface)!important}
+.dense-list-toolbar{padding:10px 14px!important;background:var(--ui-surface)!important;border-color:var(--ui-line)!important;color:var(--ui-muted)!important}
+.customer-pane-resizer{background:transparent}.customer-pane-resizer span{background:var(--ui-line)}
+.company-detail-tabpanel :is(pre,.outreach-email-body){font-family:inherit!important;font-size:14px!important;line-height:1.8!important;color:var(--ui-text)!important}
+.inquiry-correspondence pre{font-family:inherit!important;font-size:14px!important;line-height:1.8!important}
+.inquiry-correspondence>section{border-color:var(--ui-line)!important;background:var(--ui-surface)!important}
+.customer-primary-action{min-height:40px!important}
+.page-heading p,.section-heading p{color:var(--ui-muted)!important}
+.market-result-count{font-size:12px!important;color:var(--ui-muted)!important}.market-result-count strong{color:var(--ui-text)!important;font-weight:600}
+@media(prefers-reduced-motion:reduce){button{transition:none}}
+@media(max-width:760px){h1{font-size:23px!important}.company-detail.company-detail-drawer{border-radius:0!important}.calm-customer-page .customer-work-toolbar h1{font-size:22px!important}}
+:is(.product-list,.product-item,.filter-label,.learning-card,.learning-sidebar,.learning-content,.source-card,.evidence-box,.detail-value,.company-detail-grid>section){background:var(--ui-surface)!important;color:var(--ui-text)!important;border-color:var(--ui-line)!important}
+.product-list{border-radius:12px!important;padding:8px!important}.product-item{border-radius:9px!important;padding:12px!important;box-shadow:none!important}
+.product-item.selected,.product-item:hover{background:var(--ui-tint)!important;color:var(--ui-text)!important}
+.product-item small,.product-item.selected small{color:var(--ui-muted)!important}.product-item strong{color:var(--ui-text)!important;font-weight:500!important}
+.text-button,.company-detail-links a,.contact-channels a{color:var(--ui-accent)!important}
+.table-wrap td{font-weight:400!important}.table-wrap .mono{font-family:ui-monospace,Consolas,monospace!important;font-size:11px!important}
+.outreach-copy-options [data-copy-part="subject"],.outreach-copy-options [data-copy-part="full"],.outreach-send-action{background:var(--ui-surface)!important;color:var(--ui-text)!important;border:1px solid var(--ui-line)!important;box-shadow:none!important}
+.outreach-copy-options [data-copy-part="body"]{background:var(--ui-accent)!important;border-color:var(--ui-accent)!important;color:#fff!important}
+:host([data-theme="dark"]) :is(.product-item,.product-item.selected,.product-list){background:var(--ui-surface)!important;color:var(--ui-text)!important}
+:host([data-theme="dark"]) .product-item.selected{background:var(--ui-tint)!important}

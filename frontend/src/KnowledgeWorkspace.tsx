@@ -6,6 +6,7 @@ import { useAccountSession } from './knowledge-generated/lib/accountSession'
 import { setKnowledgeRoot } from './KnowledgeDocument'
 import leafletStyles from 'leaflet/dist/leaflet.css?inline'
 import polishStyles from './KnowledgePolish.css?inline'
+import unifiedTheme from './UnifiedTheme.css?inline'
 
 const styles = Object.values(import.meta.glob('./knowledge-generated/**/*.css', { eager:true, query:'?inline', import:'default' })) as string[]
 window.addEventListener('workspace-signout',()=>{void supabase?.auth.signOut({scope:'local'})})
@@ -26,6 +27,6 @@ export default function KnowledgeWorkspace({theme}:{theme:'light'|'dark'}) {
     return ()=>{setKnowledgeRoot(null)}
   },[])
   const accountSlot=document.getElementById('knowledge-account-slot')
-  return <><div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles}</style><App/></>,root)}</div>{accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
+  return <><div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme}</style><App/></>,root)}</div>{accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
 }
 
