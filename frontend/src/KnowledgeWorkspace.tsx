@@ -1,3 +1,4 @@
+import { ParameterVerification } from './KnowledgeEntryForms'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { App } from './knowledge-generated/App'
@@ -27,6 +28,6 @@ export default function KnowledgeWorkspace({theme}:{theme:'light'|'dark'}) {
     return ()=>{setKnowledgeRoot(null)}
   },[])
   const accountSlot=document.getElementById('knowledge-account-slot')
-  return <><div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme}</style><App/></>,root)}</div>{accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
+  return <><div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme}</style>{location.hash.split('/')[0]==='#products'&&<ParameterVerification/>}<App/></>,root)}</div>{accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
 }
 

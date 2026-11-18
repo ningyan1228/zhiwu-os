@@ -49,3 +49,5 @@
  .market-tabs.polished-tabs>button,.market-more>summary{padding:6px 8px!important;font-size:12px!important}
  .company-detail-body{padding:0 12px 12px!important}
 }
+
+.private-entry{padding:18px 22px;margin:12px 20px;background:var(--surface);border:1px solid var(--line);border-radius:12px}.private-entry form{display:grid;gap:14px;margin-top:16px}.private-entry label{display:grid;gap:6px;font-size:13px}.entry-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.private-entry :is(input,select,textarea){box-sizing:border-box;width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--text)}.private-entry textarea{min-height:90px}.private-entry [role=alert]{color:#c95537}.private-entry td{overflow-wrap:anywhere}.private-entry p{font-size:13px;line-height:1.7}.private-entry button{justify-self:start}@media(max-width:600px){.entry-grid{grid-template-columns:1fr}.private-entry{margin:10px;padding:12px}}

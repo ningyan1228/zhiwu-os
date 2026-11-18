@@ -41,3 +41,14 @@
 .app-shell .memory-toolbar{gap:20px}.app-shell .memory-search{flex:1;min-width:0;align-items:center}.app-shell .memory-search>span{white-space:nowrap}.app-shell .memory-search input{width:min(480px,100%)}
 .app-shell .mail-four-lines>div{background:var(--ui-soft)!important;color:var(--ui-text)!important;border-color:var(--ui-line)!important}.app-shell .mail-reply-draft{background:var(--ui-tint)!important;border-color:var(--ui-line)!important}
 .app-shell .memory-customer button:not(.primary){background:var(--ui-surface)!important;color:var(--ui-text)!important;border:1px solid var(--ui-line)!important;border-radius:7px!important;padding:6px 9px;cursor:pointer;font-size:12px}.app-shell .memory-customer>header{background:transparent!important}
+
+/* Audit fixes: navigation remains reachable and dark priorities remain readable. */
+.app-shell .sidebar{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
+.app-shell .unified-nav{min-height:0;overflow-y:auto;flex:1}.app-shell .nav-bottom{flex-shrink:0}
+.app-shell .cockpit-priority-row :is(b,span,small,time){color:var(--ui-text)!important}
+.app-shell .drawer :is(dt,.stage,.drawer-actions button){white-space:normal;word-break:normal;min-width:max-content}
+.app-shell .drawer-actions{display:flex;flex-wrap:wrap;gap:8px}
+.audit-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.audit-tabs button{padding:9px 14px;border:1px solid var(--ui-line);border-radius:8px;background:var(--ui-surface);color:var(--ui-text);cursor:pointer}.audit-tabs button[aria-pressed=true]{background:var(--ui-tint);color:var(--ui-accent)}
+.audit-caption{font-size:12px;line-height:1.7;color:var(--ui-muted);margin:12px 0}
+
+.audit-provenance{margin:12px 24px;padding:10px 14px;border:1px solid var(--ui-line);border-radius:8px;font-size:12px;color:var(--ui-muted)}.audit-provenance summary{cursor:pointer}.audit-provenance p{line-height:1.8}
