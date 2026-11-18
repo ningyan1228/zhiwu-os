@@ -5,6 +5,7 @@ import { supabase } from './knowledge-generated/lib/supabase'
 import { useAccountSession } from './knowledge-generated/lib/accountSession'
 import { setKnowledgeRoot } from './KnowledgeDocument'
 import leafletStyles from 'leaflet/dist/leaflet.css?inline'
+import polishStyles from './KnowledgePolish.css?inline'
 
 const styles = Object.values(import.meta.glob('./knowledge-generated/**/*.css', { eager:true, query:'?inline', import:'default' })) as string[]
 window.addEventListener('workspace-signout',()=>{void supabase?.auth.signOut({scope:'local'})})
@@ -12,7 +13,7 @@ const layout = `:host{display:block;min-width:0;min-height:0;color:var(--text);f
 
 function AccountBar() {
   const account=useAccountSession()
-  return <div className="knowledge-account"><strong>阳光心材料</strong><span>{account.user?.email || (account.status==='loading'?'正在确认资料账号…':'私有资料尚未登录')}</span><small>{account.user?'按此资料账号的权限访问':'首次使用请验证原资料账号；工作站账号与资料账号独立。'}</small><button className="secondary-button" onClick={()=>{window.location.hash='settings'}}>资料账号与设置</button></div>
+  return <details className="knowledge-account-menu"><summary>{account.user?'资料已登录':account.status==='loading'?'确认账号…':'登录资料'}</summary><div><strong>阳光心材料资料账号</strong><span>{account.user?.email||'尚未登录'}</span><small>{account.user?'私有资料按此账号访问。':'验证原资料账号后查看私有询盘与台账。'}</small><button onClick={e=>{window.location.hash='settings';e.currentTarget.closest('details')?.removeAttribute('open')}}>资料账号与设置</button></div></details>
 }
 
 export default function KnowledgeWorkspace({theme}:{theme:'light'|'dark'}) {
@@ -24,6 +25,7 @@ export default function KnowledgeWorkspace({theme}:{theme:'light'|'dark'}) {
     setKnowledgeRoot(shadow);setRoot(shadow)
     return ()=>{setKnowledgeRoot(null)}
   },[])
-  return <div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout}</style><AccountBar/><App/></>,root)}</div>
+  const accountSlot=document.getElementById('knowledge-account-slot')
+  return <><div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles}</style><App/></>,root)}</div>{accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
 }
 

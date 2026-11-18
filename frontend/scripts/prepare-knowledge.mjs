@@ -1,6 +1,7 @@
 import { mkdirSync, cpSync, readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { resolve, join } from 'node:path'
+import { polishKnowledge } from './polish-knowledge.mjs'
 
 // Only this audited public revision is imported. Private imports are never copied.
 const revision = '6cd2454c533990a91166235ecfc5f74f06cddef1'
@@ -49,4 +50,5 @@ const start=text.indexOf('    <aside '), end=text.indexOf('      {!hasSupabaseCo
 if(start<0||end<0) throw new Error('Knowledge shell changed; review adapter before updating revision')
 text=text.slice(0,start)+'    <main className="main-area">\n'+text.slice(end)
 writeFileSync(app,text)
+polishKnowledge(target)
 console.log(`Prepared public knowledge module ${revision}`)
