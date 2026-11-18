@@ -52,3 +52,5 @@
 .audit-caption{font-size:12px;line-height:1.7;color:var(--ui-muted);margin:12px 0}
 
 .audit-provenance{margin:12px 24px;padding:10px 14px;border:1px solid var(--ui-line);border-radius:8px;font-size:12px;color:var(--ui-muted)}.audit-provenance summary{cursor:pointer}.audit-provenance p{line-height:1.8}
+
+.today-views{margin:18px 24px 0}.app-shell .drawer :is(h2,h3){font-family:inherit}.app-shell .drawer .detail-section{border-color:var(--ui-line)}
