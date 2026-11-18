@@ -102,7 +102,7 @@ export const api = {
   updateProject: (id: string, payload: Omit<Project, 'id' | 'customer_id' | 'created_at'>) => request<Project[]>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asProject(rows[0])),
   quotes: () => request<Quote[]>('/api/quotes').then(rows => rows.map(asQuote)),
   createQuote: (payload: Omit<Quote, 'id'>) => request<Quote[]>('/api/quotes', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asQuote(rows[0])),
-  updateQuote: (id: string, payload: Partial<Omit<Quote, 'id' | 'customer_id' | 'quote_number' | 'version' | 'created_at' | 'updated_at'>>) => request<Quote[]>(`/api/quotes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asQuote(rows[0])),
+  updateQuote: (id: string, payload: Partial<Omit<Quote, 'id' | 'customer_id' | 'quote_number' | 'version' | 'created_at' | 'updated_at'>>) => request<Quote | Quote[]>(`/api/quotes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(result => { const row=Array.isArray(result)?result[0]:result; if(!row||row.id!==id)throw new Error('报价返回格式异常，请刷新核对保存结果。'); return asQuote(row) }),
   createQuoteRevision: (id: string) => request<Quote[]> (`/api/quotes/${id}/revisions`, { method: 'POST' }).then(rows => asQuote(rows[0])),
   quoteMailDrafts: () => request<{ created: number; skipped: number; quotes: Quote[]; message: string }>('/api/quotes/import-mail-drafts', { method: 'POST' }),
   orders: () => request<SalesOrder[]>('/api/orders'),
