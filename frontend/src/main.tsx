@@ -665,32 +665,45 @@ function ImportInbox({ customers, afterApplied }: { customers: Customer[]; after
   const [selectedCustomerId, setSelectedCustomerId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const [fileName, setFileName] = useState('')
+  const [phase, setPhase] = useState('')
   const loadBatches = async () => setBatches(await api.imports())
   useEffect(() => { void loadBatches().catch(reason => console.info('Import history is waiting for its database migration.', reason)) }, [])
-  const createPreview = async () => {
+  const createPreview = async (text = raw) => {
     setError(''); setPreview(null); setBatch(null); setSelectedCustomerId('')
     let payload: Record<string, unknown>
-    try { payload = JSON.parse(raw) as Record<string, unknown> } catch { setError('JSON 格式无效。请复制完整的数据包，不要带 Markdown 代码围栏。'); return }
+    try { payload = JSON.parse(text.replace(/^\uFEFF/, "")) as Record<string, unknown> } catch { setError('JSON 格式无效。请复制完整的数据包，不要带 Markdown 代码围栏。'); return }
     setBusy(true)
     try {
       const result = await api.previewImport(payload)
       setPreview(result.preview); setBatch(result.batch)
       if (result.preview.customer_match?.customer_id) setSelectedCustomerId(result.preview.customer_match.customer_id)
-      await loadBatches()
+      await loadBatches().catch(() => setNotice('预览已生成，历史记录暂时未能刷新。'))
     } catch (reason) { setError(reason instanceof Error ? reason.message : '暂存校验失败，请检查 JSON。') } finally { setBusy(false) }
   }
+  const openFile = async (file: File) => {
+    setFileName(file.name); setPreview(null); setBatch(null); setError(''); setNotice('')
+    if (file.size > 2 * 1024 * 1024) { setError('文件超过 2 MB，请拆分后导入。'); return }
+    try { const text = await file.text(); setRaw(text); await createPreview(text) }
+    catch { setError('文件读取失败，请重新选择。') }
+  }
   const apply = async () => {
-    if (!batch || !preview) return
-    const needsSelection = preview.customer_match?.kind === 'internal_forwarder' || preview.customer_match?.kind === 'company_ambiguous'
-    if (needsSelection && !selectedCustomerId) { setError('请先选择真实的海外客户；内部同事邮箱不会被建立为客户。'); return }
-    setBusy(true); setError('')
+    if (!batch || !preview?.safe_review?.ready || busy) return
+    setBusy(true); setError(''); setNotice(''); setPhase('正在提交，请勿重复点击…')
     try {
-      if (!preview.safe_review?.ready || !confirm('确认按当前逐字段预览更新此客户？不会发送邮件或修改联系日期。')) return
       await api.applyImport(batch.id, { confirm_company_match: (preview.supplier_match || preview.customer_match)?.requires_confirmation || false, selected_customer_id: selectedCustomerId || undefined })
-      await afterApplied(); await loadBatches()
       setBatch(null); setPreview(null); setRaw('')
-      alert('客户字段订正已提交；相关页面已重新读取。未自动创建跟进、任务或更改日期。')
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '导入失败，请稍后重试。') } finally { setBusy(false) }
+      setNotice('已成功写入 CRM。只更新预览字段，联系日期保持不变。')
+      setPhase('已写入，正在刷新相关页面…')
+      const results = await Promise.allSettled([afterApplied(), loadBatches()])
+      if (results.some(result => result.status === 'rejected')) setNotice('已成功写入 CRM，但部分页面刷新失败。请刷新页面查看，不要重复提交。')
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : '提交未完成。'
+      setError(message + ' 如遇网络超时，请先检查下方导入记录，确认是否已导入后再操作。')
+      await loadBatches().catch(() => {})
+    } finally { setBusy(false); setPhase('') }
   }
   const revert = async (item: ImportBatch) => {
     if (!confirm(`撤销 ${item.source_reference || '这次导入'} 的业务影响？不会硬删除业务数据。`)) return
@@ -702,8 +715,8 @@ function ImportInbox({ customers, afterApplied }: { customers: Customer[]; after
   const requiresCustomerChoice = !isSupplierImport && (match?.kind === 'internal_forwarder' || match?.kind === 'company_ambiguous')
   return <section className="page import-page"><div className="page-heading"><div><p className="eyebrow"><Inbox size={13}/> AI IMPORT INBOX</p><h1>AI 导入暂存箱</h1><p>把 ChatGPT 整理出的标准 JSON 先放进暂存箱。只有你预览并确认后，才会写入 CRM。</p></div></div>
     <div className="import-safety"><CircleHelp size={17}/><div><b>不自动猜测、不直接写入</b><span>当前仅支持网站 ID 或唯一邮箱匹配的现有客户字段订正；同名、多重邮箱匹配和混合业务包不自动写入。</span></div></div>
-    <div className="import-layout"><div className="import-editor panel"><div className="panel-title"><div><p className="eyebrow">STEP 1</p><h2>粘贴 JSON 数据包</h2></div></div><textarea value={raw} onChange={event => setRaw(event.target.value)} spellCheck={false} placeholder={'{\n  "schema_version": "zhiwu-os-import/v1",\n  "intent": "upsert_customer_and_followup",\n  ...\n}'} /><p>本通道保留联系日期，不自动创建产品、项目或任务。请先查看每个字段的现有值与拟更新值。</p><button className="primary" disabled={busy || !raw.trim()} onClick={() => void createPreview()}><RefreshCw size={16}/> {busy ? '正在校验…' : '校验并生成预览'}</button>{error && <div className="login-error">{error}</div>}</div>
-      <div className="import-preview panel"><div className="panel-title"><div><p className="eyebrow">STEP 2</p><h2>预览差异</h2></div>{batch && <span className="draft-badge">暂存草稿</span>}</div>{!preview ? <div className="focus-empty"><Inbox size={23}/><b>等待导入数据</b><span>系统会先告诉你将新增或更新哪些业务记录。</span></div> : <><div className={`import-match ${match?.kind || ''}`}><b>{isSupplierImport ? '供应商匹配' : '客户匹配'}：{match?.kind === 'email_exact' ? '邮箱精确匹配' : match?.kind === 'company_manual_review' ? '公司名称待确认' : match?.kind === 'company_ambiguous' ? '公司名称存在歧义' : match?.kind === 'internal_forwarder' ? '内部同事转发' : isSupplierImport ? '将新建供应商' : '将新建客户'}</b><span>{match?.message}</span></div>{requiresCustomerChoice && <label className="import-select">选择真实客户<select value={selectedCustomerId} onChange={event => setSelectedCustomerId(event.target.value)}><option value="">请选择客户</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.company_name} · {customer.country} · {customer.contact_person}</option>)}</select></label>}{!isSupplierImport && match?.kind === 'company_manual_review' && <label className="import-select">确认要更新的客户<select value={selectedCustomerId} onChange={event => setSelectedCustomerId(event.target.value)}>{match.candidates.map(customer => <option key={customer.id} value={customer.id}>{customer.company_name} · {customer.email || '无邮箱'}</option>)}</select></label>}<div className="import-actions">{preview.actions.map((action, index) => <div key={`${action.entity}-${index}`}><span className={action.action === '更新' ? 'update' : ''}>{action.action}</span><b>{action.entity}</b><p>{action.label}</p></div>)}</div>{preview.uncertain_fields.length > 0 && <p className="import-uncertain">待你确认：{preview.uncertain_fields.join('、')}</p>}<section className="import-field-preview"><h3>逐字段确认</h3><p>{preview.safe_review?.date_policy||'此批次需要重新预览。'}</p>{preview.safe_review?.blocked_reasons.map(reason=><p key={reason} role="alert">{reason}</p>)}<div className="table-wrap"><table><thead><tr><th>字段</th><th>现有值</th><th>拟更新值</th></tr></thead><tbody>{preview.safe_review?.changes.map(change=><tr key={change.field}><td>{change.field}</td><td>{String(change.before??'未记录')}</td><td>{String(change.after??'未记录')}</td></tr>)}</tbody></table></div></section><button className="primary" disabled={busy||!preview.safe_review?.ready} title={preview.safe_review?.ready?'按预览提交客户字段订正':'尚未通过完整匹配与字段核验'} onClick={() => void apply()}><Check size={16}/> {isSupplierImport ? '确认写入供应商中心' : '确认写入 CRM'}</button></>}</div></div>
+    {notice && <div className="import-safety" role="status">{notice}</div>}{busy && <p role="status">{phase || '正在处理…'}</p>}<div className="import-layout"><div className="import-editor panel"><div className="panel-title"><div><p className="eyebrow">STEP 1</p><h2>选择导入文件</h2></div></div><label className="import-file-picker">选择 JSON 文件（可多选）<input type="file" accept=".json,application/json" multiple disabled={busy} onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; if (!files.length) return; setNotice(''); setPendingFiles(files.slice(1)); void openFile(files[0]) }} /></label>{fileName && <p>{fileName}</p>}{pendingFiles.length > 0 && <button disabled={busy || Boolean(preview)} onClick={() => { const [next, ...rest] = pendingFiles; setPendingFiles(rest); void openFile(next) }}>继续下一个文件（剩余 {pendingFiles.length} 个）</button>}<p>选文件后自动生成预览；也可直接粘贴内容。</p><textarea disabled={busy} value={raw} onChange={event => { setRaw(event.target.value); setPreview(null); setBatch(null) }} spellCheck={false} placeholder={'{\n  "schema_version": "zhiwu-os-import/v1",\n  "intent": "upsert_customer_and_followup",\n  ...\n}'} /><p>本通道保留联系日期，不自动创建产品、项目或任务。请先查看每个字段的现有值与拟更新值。</p><button className="primary" disabled={busy || !raw.trim()} onClick={() => void createPreview()}><RefreshCw size={16}/> {busy ? '处理中…' : '校验并生成预览'}</button>{error && <div className="login-error">{error}</div>}</div>
+      <div className="import-preview panel"><div className="panel-title"><div><p className="eyebrow">STEP 2</p><h2>预览差异</h2></div>{batch && <span className="draft-badge">暂存草稿</span>}</div>{!preview ? <div className="focus-empty"><Inbox size={23}/><b>等待导入数据</b><span>系统会先告诉你将新增或更新哪些业务记录。</span></div> : <><div className={`import-match ${match?.kind || ''}`}><b>{isSupplierImport ? '供应商匹配' : '客户匹配'}：{match?.kind === 'email_exact' ? '邮箱精确匹配' : match?.kind === 'company_manual_review' ? '公司名称待确认' : match?.kind === 'company_ambiguous' ? '公司名称存在歧义' : match?.kind === 'internal_forwarder' ? '内部同事转发' : isSupplierImport ? '将新建供应商' : '将新建客户'}</b><span>{match?.message}</span></div>{requiresCustomerChoice && <label className="import-select">选择真实客户<select value={selectedCustomerId} onChange={event => setSelectedCustomerId(event.target.value)}><option value="">请选择客户</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.company_name} · {customer.country} · {customer.contact_person}</option>)}</select></label>}{!isSupplierImport && match?.kind === 'company_manual_review' && <label className="import-select">确认要更新的客户<select value={selectedCustomerId} onChange={event => setSelectedCustomerId(event.target.value)}>{match.candidates.map(customer => <option key={customer.id} value={customer.id}>{customer.company_name} · {customer.email || '无邮箱'}</option>)}</select></label>}<div className="import-actions">{preview.actions.map((action, index) => <div key={`${action.entity}-${index}`}><span className={action.action === '更新' ? 'update' : ''}>{action.action}</span><b>{action.entity}</b><p>{action.label}</p></div>)}</div>{preview.uncertain_fields.length > 0 && <p className="import-uncertain">待你确认：{preview.uncertain_fields.join('、')}</p>}<section className="import-field-preview"><h3>逐字段确认</h3><p>{preview.safe_review?.date_policy||'此批次需要重新预览。'}</p>{preview.safe_review?.blocked_reasons.map(reason=><p key={reason} role="alert">{reason}</p>)}<div className="table-wrap"><table><thead><tr><th>字段</th><th>现有值</th><th>拟更新值</th></tr></thead><tbody>{preview.safe_review?.changes.map(change=><tr key={change.field}><td>{change.field === 'customer_background' ? '客户背景' : change.field}</td><td>{String(change.before??'未记录')}</td><td>{String(change.after??'未记录')}</td></tr>)}</tbody></table></div></section><button className="primary" disabled={busy||!preview.safe_review?.ready} title={preview.safe_review?.ready?'按预览提交客户字段订正':'尚未通过完整匹配与字段核验'} onClick={() => void apply()}><Check size={16}/> {busy ? '正在处理…' : '确认写入 CRM'}</button></>}</div></div>
     <div className="panel import-history"><div className="panel-title"><div><p className="eyebrow">AUDIT LOG</p><h2>导入记录与撤销</h2><p>客户字段订正使用事务提交；预览后或导入后有其他修改时会阻止提交或撤销。旧导入、未匹配记录及含产品/项目/任务的混合包仍需人工核对。</p></div><span>保留历史，不硬删除业务数据</span></div>{batches.length ? <div className="import-history-list">{batches.map(item => <div key={item.id}><div><b>{item.source_reference || '未命名导入'}</b><span>{item.source_date || item.created_at.slice(0, 10)} · {item.source_type || 'chat_summary'}</span></div><em className={`import-status ${item.status}`}>{item.status === 'draft' ? '草稿' : item.status === 'applied' ? '已导入' : item.status === 'reverted' ? '已撤销' : '失败'}</em>{item.status === 'applied' && <button disabled={busy||item.preview?.safe_review?.version!=='reviewed-customer/v1'} title="只可撤销新事务通道记录；后续已修改时会阻止覆盖" onClick={() => void revert(item)}>撤销本次影响</button>}</div>)}</div> : <p className="detail-empty">暂无导入记录。每次校验都会创建一份可追溯的暂存草稿。</p>}</div>
   </section>
 }

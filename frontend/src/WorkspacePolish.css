@@ -21,3 +21,5 @@
 }
 @media(max-width:760px){.sidebar-width-toggle{display:none}.knowledge-account-menu>summary{padding:7px;font-size:11px}.header-actions{gap:6px!important}#knowledge-account-slot{position:relative}.knowledge-account-menu>div{position:fixed;top:65px;right:12px}.header-actions>.theme-toggle:has(svg){padding:7px}.header-actions>.theme-toggle:first-of-type{font-size:0;gap:0}}
 .app-shell>main>header{gap:12px}.app-shell>main>header>.crumb{margin-right:auto}@media(min-width:761px){.app-shell.sidebar-compact>main{margin-left:76px;width:calc(100% - 76px)}}
+
+.import-file-picker{display:grid;gap:12px;padding:18px;border:1px dashed var(--border,#aab7bd);border-radius:12px;cursor:pointer;margin-bottom:12px}.import-file-picker input{max-width:100%}.import-field-preview table{table-layout:fixed;width:100%}.import-field-preview th:first-child{width:18%}.import-field-preview th:nth-child(2){width:28%}.import-field-preview td{white-space:pre-wrap;overflow-wrap:anywhere;vertical-align:top}.import-page .import-layout{grid-template-columns:minmax(280px,1fr) minmax(0,2fr)}@media(max-width:850px){.import-page .import-layout{grid-template-columns:1fr}}
