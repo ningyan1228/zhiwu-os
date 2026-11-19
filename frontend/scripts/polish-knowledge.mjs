@@ -4,7 +4,7 @@ export function polishKnowledge(root) {
   function edit(name,fn){const p=join(root,name);writeFileSync(p,fn(readFileSync(p,'utf8')))}
   edit('features/market/OutreachResults.tsx',s=>s.replace('看实际联系与后续进展，找到值得继续投入的方向。','来源：当前资料账号的客户开发记录；按公司去重及本页筛选统计，不含工作站 CRM 跟进计划。').replace('暂无到期计划','当前资料账号的客户开发记录暂无到期计划').replace('<summary>记录与查看实际结果</summary>','<summary>记录与查看实际结果</summary><p>第一步：搜索并选择公司；第二步：填写跟进计划或记录结果。</p>'))
   edit('lib/productMarketMap.ts',s=>s.replace("name: '环氧化亚麻油 ELO'","name: '环氧亚麻油 ELO（CAS 8016-11-3）'"))
-  edit('lib/inquiries.ts',s=>s.replace("status: 'pending' | 'sent'", "status: 'pending' | 'sent' | 'replied' | 'closed'"))
+  edit('lib/inquiries.ts',s=>s.replace('id: string; customer_name: string;', 'id: string; customer_name: string; country: string | null;').replace('id,customer_name,product,inquiry_time,status,version,position', 'id,customer_name,country,product,inquiry_time,status,version,position').replace("status: 'pending' | 'sent'", "status: 'pending' | 'sent' | 'replied' | 'closed'"))
   edit('features/inquiries/Inquiries.tsx',s=>{
     s="import { NewInquiry } from '@/KnowledgeEntryForms'\n"+s
     s=s.replace("const update=async()=>{", "const update=async(status:Inquiry['status'])=>{")
@@ -13,6 +13,8 @@ export function polishKnowledge(root) {
     s=s.replaceAll("row.status==='sent'?'已发送':'待发送'", "({pending:'待发送回复',sent:'回复已发送',replied:'客户已回信',closed:'已关闭'}[row.status])")
     s=s.replaceAll("r.status==='sent'?'已发送':'待发送'", "({pending:'待发送回复',sent:'回复已发送',replied:'客户已回信',closed:'已关闭'}[r.status])")
     s=s.replace('<th>状态</th>', '<th>回复状态</th>')
+    s=s.replaceAll('{row.customer_name}', "{row.customer_name?.trim() || `未提供姓名${row.country ? `（${row.country}）` : ''}`}")
+    s=s.replaceAll('{r.customer_name}', "{r.customer_name?.trim() || `未提供姓名${r.country ? `（${r.country}）` : ''}`}")
     s=s.replace(`<button className="primary-button" disabled={busy} onClick={()=>void update()}>{busy?'保存中…':row.status==='sent'?'更正为待发送':'确认已实际发送'}</button>`, `<label>回复状态<select aria-label="回复状态" disabled={busy} value={row.status} onChange={e=>void update(e.target.value as Inquiry['status'])}><option value="pending">待发送回复</option><option value="sent">回复已发送</option><option value="replied">客户已回信</option><option value="closed">已关闭</option></select></label>`)
     s=s.replace('<p className="inquiries-guidance">', '<NewInquiry onSaved={()=>setRevision(v=>v+1)}/><p className="inquiries-guidance">')
     return s
