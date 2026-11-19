@@ -54,3 +54,12 @@
 .audit-provenance{margin:12px 24px;padding:10px 14px;border:1px solid var(--ui-line);border-radius:8px;font-size:12px;color:var(--ui-muted)}.audit-provenance summary{cursor:pointer}.audit-provenance p{line-height:1.8}
 
 .today-views{margin:18px 24px 0}.app-shell .drawer :is(h2,h3){font-family:inherit}.app-shell .drawer .detail-section{border-color:var(--ui-line)}
+/* Keep navigation rows at their natural height instead of stretching the grid. */
+.app-shell .sidebar .unified-nav{align-content:start;grid-auto-rows:max-content;gap:4px}
+.app-shell .sidebar .unified-nav>button{height:42px!important;margin:0;flex-shrink:0}
+.app-shell .sidebar .unified-nav details{margin:0}
+.app-shell .sidebar .unified-nav summary{min-height:42px;padding:10px 11px;box-sizing:border-box;align-items:center}
+.app-shell .sidebar .unified-nav details>button{height:34px!important}
+.app-shell .sidebar .brand{flex-shrink:0;margin-bottom:18px}
+.app-shell .sidebar .nav-bottom{margin-top:auto;padding-top:12px}
+@media(min-width:761px){.app-shell:not(.sidebar-compact)>.sidebar{width:208px}.app-shell:not(.sidebar-compact)>main{margin-left:208px;width:calc(100% - 208px)}}
