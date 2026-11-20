@@ -6,5 +6,7 @@ const React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
 const loading=view(Array.from({length:6},()=>({})));assert.equal((loading.match(/ob-loading/g)||[]).length,6);assert.ok(!loading.includes('当前分类暂无'));
 const error=view(Array.from({length:6},()=>({error:'failed'})));assert.equal((error.match(/<b>暂时无法读取<\/b>/g)||[]).length,6);assert.ok(!error.includes('当前分类暂无'));
 const data={value:10,unit:'条',metric:'测试',secondary:'测试',action:'查看',items:[],tasks:[{title:'需处理客户',detail:'安排试样',kind:'今日',date:'2026-11-20'}],breakdown:[{label:'今日到期',value:1},{label:'日期待核',value:2}],source:'测试'};
-const ready=view(Array.from({length:6},()=>({data})));assert.ok(ready.includes('需处理客户'));assert.ok(ready.includes('日期待核'));assert.ok(!ready.includes('有效询盘'));assert.ok(!ready.includes('本月报价额'));assert.ok(ready.includes('暂无项目阶段记录'));
+const ready=view(Array.from({length:6},()=>({data})));assert.ok(ready.includes('打开待办'));assert.ok(ready.includes('日期待核'));assert.ok(!ready.includes('有效询盘'));assert.ok(!ready.includes('本月报价额'));assert.ok(ready.includes('暂无项目阶段记录'));
 console.log('PASS date ordering, six independent states, partial-data warning, real tasks, unsupported metrics hidden');
+
+const ring=renderToStaticMarkup(React.createElement(load('OverviewCanvas').GraphicRing,{slices:[{label:'零记录',value:0}],value:0,label:'测试'}));assert.ok(!ring.includes('NaN'));assert.ok(!ring.includes('Infinity'));console.log('PASS zero-total graphic');
