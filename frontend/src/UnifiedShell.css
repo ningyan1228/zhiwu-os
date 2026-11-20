@@ -46,7 +46,7 @@
 .app-shell .sidebar{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
 .app-shell .unified-nav{min-height:0;overflow-y:auto;flex:1}.app-shell .nav-bottom{flex-shrink:0}
 .app-shell .cockpit-priority-row :is(b,span,small,time){color:var(--ui-text)!important}
-.app-shell .drawer :is(dt,.stage,.drawer-actions button){white-space:normal;word-break:normal;min-width:max-content}
+.app-shell .drawer :is(dt,.stage,.drawer-actions button){white-space:normal;word-break:normal;min-width:0}
 .app-shell .drawer-actions{display:flex;flex-wrap:wrap;gap:8px}
 .audit-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.audit-tabs button{padding:9px 14px;border:1px solid var(--ui-line);border-radius:8px;background:var(--ui-surface);color:var(--ui-text);cursor:pointer}.audit-tabs button[aria-pressed=true]{background:var(--ui-tint);color:var(--ui-accent)}
 .audit-caption{font-size:12px;line-height:1.7;color:var(--ui-muted);margin:12px 0}
@@ -90,3 +90,19 @@
   .app-shell.sidebar-compact>.sidebar .brand-mark{flex-shrink:0}
   .app-shell.sidebar-compact>.sidebar .profile .avatar{font-size:12px;flex-shrink:0}
 }
+
+/* Customer detail is one scroll surface; long plans use full-width rows. */
+html:has(.drawer-layer),body:has(.drawer-layer){overflow:hidden}
+.app-shell .drawer-layer{overflow:hidden;height:100dvh}
+.app-shell .unified-customer-detail{width:min(720px,100vw);height:100%;max-height:100dvh;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;padding:32px 32px 40px}
+.app-shell .unified-customer-detail .customer-profile-header{padding-right:30px}
+.app-shell .unified-customer-detail .customer-memory-summary dl>div{grid-template-columns:112px minmax(0,1fr);gap:12px;padding:16px 0}
+.app-shell .unified-customer-detail .customer-memory-summary dl>div:nth-child(n+3){grid-template-columns:minmax(0,1fr);gap:8px}
+.app-shell .unified-customer-detail .customer-memory-summary :is(dt,dd){min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.app-shell .unified-customer-detail .customer-memory-summary dt{font-size:13px;line-height:1.5;color:var(--ui-muted)}
+.app-shell .unified-customer-detail .customer-memory-summary dd{font-size:15px;line-height:1.7}
+.app-shell .unified-customer-detail .customer-memory-summary small{margin-top:6px;line-height:1.6}
+.app-shell .unified-customer-detail .memory-projects{margin:20px 0;padding-bottom:16px}
+.app-shell .unified-customer-detail .drawer-actions{align-items:center;gap:8px;padding:16px 0}
+.app-shell .unified-customer-detail .drawer-actions button{min-height:38px;padding:8px 12px;font-size:13px;line-height:1.4}
+@media(max-width:540px){.app-shell .unified-customer-detail{padding:24px 18px 32px}.app-shell .unified-customer-detail .customer-memory-summary dl>div{grid-template-columns:minmax(0,1fr);gap:6px}}
