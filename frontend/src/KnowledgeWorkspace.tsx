@@ -1,4 +1,5 @@
 import { ParameterVerification } from './KnowledgeEntryForms'
+import { KnowledgeSession } from './KnowledgeSession'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { App } from './knowledge-generated/App'
@@ -15,10 +16,10 @@ const layout = `:host{display:block;min-width:0;min-height:0;color:var(--text);f
 
 function AccountBar() {
   const account=useAccountSession()
-  return <details className="knowledge-account-menu"><summary>{account.user?'资料已登录':account.status==='loading'?'确认账号…':'登录资料'}</summary><div><strong>阳光心材料资料账号</strong><span>{account.user?.email||'尚未登录'}</span><small>{account.user?'私有资料按此账号访问。':'验证原资料账号后查看私有询盘与台账。'}</small><button onClick={e=>{window.location.hash='settings';e.currentTarget.closest('details')?.removeAttribute('open')}}>资料账号与设置</button></div></details>
+  return <details className="knowledge-account-menu"><summary>{account.user?'共用资料已连接':account.status==='loading'?'确认账号…':'连接资料'}</summary><div><strong>阳光心材料共用资料</strong><span>{account.user?.email||'尚未登录'}</span><small>{account.user?'已通过工作站账号连接，无需再次登录。':'正在连接工作站授权的共用资料。'}</small><button onClick={e=>{window.location.hash='settings';e.currentTarget.closest('details')?.removeAttribute('open')}}>资料账号与设置</button></div></details>
 }
 
-export default function KnowledgeWorkspace({theme}:{theme:'light'|'dark'}) {
+function ConnectedWorkspace({theme}:{theme:'light'|'dark'}) {
   const host=useRef<HTMLDivElement>(null)
   const [root,setRoot]=useState<ShadowRoot|null>(null)
   useEffect(()=>{
@@ -29,5 +30,9 @@ export default function KnowledgeWorkspace({theme}:{theme:'light'|'dark'}) {
   },[])
   const accountSlot=document.getElementById('knowledge-account-slot')
   return <><div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme}</style>{location.hash.split('/')[0]==='#products'&&<ParameterVerification/>}<App/></>,root)}</div>{accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
+}
+
+export default function KnowledgeWorkspace({theme}:{theme:'light'|'dark'}) {
+  return <KnowledgeSession><ConnectedWorkspace theme={theme}/></KnowledgeSession>
 }
 

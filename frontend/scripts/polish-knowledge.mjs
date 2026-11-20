@@ -2,6 +2,13 @@ import { readFileSync,writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 export function polishKnowledge(root) {
   function edit(name,fn){const p=join(root,name);writeFileSync(p,fn(readFileSync(p,'utf8')))}
+  edit('App.tsx',s=>{
+    const start=s.indexOf("{account.status === 'anonymous' && <div className=\"login-form\">")
+    const end=s.indexOf('</section>{user ? <DocumentImporter',start)
+    if(start<0||end<start)throw Error('Knowledge account settings changed; review integration')
+    s=s.slice(0,start)+'<p>资料已由工作站统一登录。退出或切换账号，请使用左下角的工作站账号菜单。</p>'+s.slice(end)
+    return s.replace('先连接，再把资料放进来。','共用资料与设置').replace('已登录私人资料库','已连接共用资料').replace('私人资料按当前账号访问。','由工作站授权连接共用资料。')
+  })
   edit('features/market/OutreachResults.tsx',s=>s.replace('看实际联系与后续进展，找到值得继续投入的方向。','来源：当前资料账号的客户开发记录；按公司去重及本页筛选统计，不含工作站 CRM 跟进计划。').replace('暂无到期计划','当前资料账号的客户开发记录暂无到期计划').replace('<summary>记录与查看实际结果</summary>','<summary>记录与查看实际结果</summary><p>第一步：搜索并选择公司；第二步：填写跟进计划或记录结果。</p>'))
   edit('lib/productMarketMap.ts',s=>s.replace("name: '环氧化亚麻油 ELO'","name: '环氧亚麻油 ELO（CAS 8016-11-3）'"))
   edit('lib/inquiries.ts',s=>s.replace('id: string; customer_name: string;', 'id: string; customer_name: string; country: string | null;').replace('id,customer_name,product,inquiry_time,status,version,position', 'id,customer_name,country,product,inquiry_time,status,version,position').replace("status: 'pending' | 'sent'", "status: 'pending' | 'sent' | 'replied' | 'closed'"))
