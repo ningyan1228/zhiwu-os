@@ -157,40 +157,32 @@ function App() {
   const hasNotifications = !reminderError && (sharedReminderRows.some(r=>!r.dateReview&&r.days!==null&&r.days<=3) || !!reminderData?.emails.length)
   useEffect(() => {
     if (!authenticated || !sessionStorage.getItem('zhiwu-access-token')) return
+    let active=true
     const loadWorkspace = async () => {
       setDashboardStatus('loading')
-      let dashboardComplete=true
-      let [customerRows, productRows, loadedFollowups, loadedProjects, loadedQuotes, loadedOrders] = await Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.quotes(), api.orders().catch(() => [])])
-      setCustomers(customerRows); setProducts(productRows)
-      setFollowupRows(loadedFollowups); setProjects(loadedProjects); setQuotes(loadedQuotes); setOrders(loadedOrders)
-      try { setTradeCommitments(await api.tradeCommitments()) } catch (error) { dashboardComplete=false; console.info('Trade Commitment Ledger is waiting for the V1.26 database migration.', error) }
-      try {
-        const [mailRows, syncRow, mailboxRow] = await Promise.all([api.emails(), api.emailSync(), api.mailbox()])
-        setEmails(mailRows); setEmailSync(syncRow); setMailbox(mailboxRow)
-      } catch (error) {
-        console.info('Mail Center is waiting for the V1.2 database migration.', error)
+      // Only task/commitment data gates dashboard statistics. CRM and followups
+      // already arrive together through loadReminders; do not fetch them twice.
+      const results=await Promise.allSettled([api.tasks(),api.tradeCommitments()])
+      if(!active)return
+      if(results[0].status==='fulfilled')setTasks(results[0].value)
+      if(results[1].status==='fulfilled')setTradeCommitments(results[1].value)
+      setDashboardStatus(results.every(r=>r.status==='fulfilled')?'ready':'error')
+      // Secondary modules load independently, without blocking today's work.
+      const load=async<T,>(request:()=>Promise<T>,save:(data:T)=>void)=>{
+        try{const data=await request();if(active)save(data)}catch(error){console.info('Secondary workspace data unavailable',error)}
       }
-      try {
-        setProductCustomerRelations(await api.productCustomerRelations())
-      } catch (error) {
-        console.info('Product relationships are waiting for the V1.5 database migration.', error)
-      }
-      try { setMembers(await api.workspaceMembers()) } catch (error) { console.info('Workspace member labels are waiting for the V1.8 database migration.', error) }
-      try {
-        const [taskRows, events, log] = await Promise.all([api.tasks(), api.timeline(), api.dailyLog(focusDate)])
-        setTasks(taskRows); setTimelineEvents(events); setDailyLog(log)
-      } catch (error) {
-        dashboardComplete=false; console.info('Daily Focus is waiting for the V1.6 database migration.', error)
-      }
-      try {
-        const [supplierRows, links, rfqs, insights] = await Promise.all([api.suppliers(), api.supplierProjectLinks(), api.supplierRfqs(), api.supplierInsights()])
-        setSuppliers(supplierRows); setSupplierLinks(links); setSupplierRfqs(rfqs); setSupplierInsights(insights)
-      } catch (error) {
-        console.info('Supplier Center is waiting for the V1.12 database migration.', error)
-      }
-      setDashboardStatus(dashboardComplete?'ready':'error')
+      await Promise.allSettled([
+        load(api.products,setProducts),load(api.projects,setProjects),
+        load(api.quotes,setQuotes),load(api.orders,setOrders),
+        load(api.emails,setEmails),load(api.emailSync,setEmailSync),load(api.mailbox,setMailbox),
+        load(api.productCustomerRelations,setProductCustomerRelations),load(api.workspaceMembers,setMembers),
+        load(api.timeline,setTimelineEvents),load(()=>api.dailyLog(focusDate),setDailyLog),
+        load(api.suppliers,setSuppliers),load(api.supplierProjectLinks,setSupplierLinks),
+        load(api.supplierRfqs,setSupplierRfqs),load(api.supplierInsights,setSupplierInsights)
+      ])
     }
-    void loadWorkspace().catch(error => {setDashboardStatus('error');console.error('Unable to load workspace data:', error)})
+    void loadWorkspace().catch(error => {if(active)setDashboardStatus('error');console.error('Unable to load workspace data:', error)})
+    return()=>{active=false}
   }, [authenticated, focusDate, dashboardRefresh])
   useEffect(() => {
     const match = window.location.hash.match(/^#mail\/([^/]+)$/)
