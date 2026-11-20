@@ -1,3 +1,4 @@
+import {MaintenanceGate} from './Maintenance'
 import OverviewBoards from './OverviewBoards'
 import { ArchivedCustomers } from './ArchivedCustomers'
 import { ImportHelp } from './ImportHelp'
@@ -1079,7 +1080,7 @@ function SupplierEditForm({ supplier, close, submit }: { supplier: Supplier; clo
   </div><div className="form-actions"><button type="button" onClick={close} disabled={saving}>取消</button><button className="primary" disabled={saving}>{saving ? '正在保存…' : '保存修改'}</button></div></form></Modal>
 }
 
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(<MaintenanceGate><App /></MaintenanceGate>)
 
 
 
