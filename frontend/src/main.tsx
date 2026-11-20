@@ -1,3 +1,4 @@
+import { TradeDashboard } from './TradeDashboard'
 import { OnlineRecords } from './OnlineEditing'
 import { CustomerProfileHeader } from './CustomerProfileHeader'
 import './WorkspacePolish.css'
@@ -74,6 +75,8 @@ function App() {
   const [products, setProducts] = useState<typeof seedProducts>([])
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [followupRows, setFollowupRows] = useState<typeof seedFollowups>([])
+  const [dashboardStatus,setDashboardStatus]=useState('loading')
+  const [dashboardRefresh,setDashboardRefresh]=useState(0)
   const [tradeCommitments, setTradeCommitments] = useState<TradeCommitment[]>([])
   const [projects, setProjects] = useState<typeof seedProjects>([])
   const [quotes, setQuotes] = useState<typeof seedQuotes>([])
@@ -145,10 +148,12 @@ function App() {
   useEffect(() => {
     if (!authenticated || !sessionStorage.getItem('zhiwu-access-token')) return
     const loadWorkspace = async () => {
+      setDashboardStatus('loading')
+      let dashboardComplete=true
       let [customerRows, productRows, loadedFollowups, loadedProjects, loadedQuotes, loadedOrders] = await Promise.all([api.customers(), api.products(), api.followups(), api.projects(), api.quotes(), api.orders().catch(() => [])])
       setCustomers(customerRows); setProducts(productRows)
       setFollowupRows(loadedFollowups); setProjects(loadedProjects); setQuotes(loadedQuotes); setOrders(loadedOrders)
-      try { setTradeCommitments(await api.tradeCommitments()) } catch (error) { console.info('Trade Commitment Ledger is waiting for the V1.26 database migration.', error) }
+      try { setTradeCommitments(await api.tradeCommitments()) } catch (error) { dashboardComplete=false; console.info('Trade Commitment Ledger is waiting for the V1.26 database migration.', error) }
       try {
         const [mailRows, syncRow, mailboxRow] = await Promise.all([api.emails(), api.emailSync(), api.mailbox()])
         setEmails(mailRows); setEmailSync(syncRow); setMailbox(mailboxRow)
@@ -165,7 +170,7 @@ function App() {
         const [taskRows, events, log] = await Promise.all([api.tasks(), api.timeline(), api.dailyLog(focusDate)])
         setTasks(taskRows); setTimelineEvents(events); setDailyLog(log)
       } catch (error) {
-        console.info('Daily Focus is waiting for the V1.6 database migration.', error)
+        dashboardComplete=false; console.info('Daily Focus is waiting for the V1.6 database migration.', error)
       }
       try {
         const [supplierRows, links, rfqs, insights] = await Promise.all([api.suppliers(), api.supplierProjectLinks(), api.supplierRfqs(), api.supplierInsights()])
@@ -173,9 +178,10 @@ function App() {
       } catch (error) {
         console.info('Supplier Center is waiting for the V1.12 database migration.', error)
       }
+      setDashboardStatus(dashboardComplete?'ready':'error')
     }
-    void loadWorkspace().catch(error => console.error('Unable to load workspace data:', error))
-  }, [authenticated, focusDate])
+    void loadWorkspace().catch(error => {setDashboardStatus('error');console.error('Unable to load workspace data:', error)})
+  }, [authenticated, focusDate, dashboardRefresh])
   useEffect(() => {
     const match = window.location.hash.match(/^#mail\/([^/]+)$/)
     if (!match || match[1] === 'unlinked') return
@@ -396,7 +402,8 @@ function App() {
       {globalQuery.trim() && <WorkspaceSearch query={globalQuery} customers={customers} products={products} projects={projects} emails={emails} close={() => setGlobalQuery('')} openCustomer={customer => { setView('crm'); setSelected(customer) }} openProduct={() => setView('products')} openProject={customer => { setView('projects'); setSelected(customer) }} openEmail={openEmail} />}
       {view === 'knowledge' && <KnowledgeBoundary><Suspense fallback={<div className="knowledge-loading" role="status">正在打开阳光心材料…</div>}><KnowledgeWorkspace theme={theme}/></Suspense></KnowledgeBoundary>}
       {['dashboard','tasks','calendar'].includes(view)&&<nav className="audit-tabs today-views" aria-label="今日工作视图">{([['dashboard','今日总览'],['tasks','任务计划'],['calendar','工作日历']] as const).map(([id,label])=><button key={id} aria-current={view===id?'page':undefined} aria-pressed={view===id} onClick={()=>openView(id)}>{label}</button>)}</nav>}
-      {view === 'dashboard' && <><DashboardCockpit customers={customers} projects={projects} commitments={tradeCommitments} emails={emails} tasks={tasks} today={today} onOpenCRM={() => setView('crm')} onOpenMail={() => setView('mail')} onOpenTasks={() => setView('tasks')} onOpenCommitments={() => setView('commitments')} openCustomer={setSelected} openEmail={openEmail}/><SupplierDashboard suppliers={suppliers} rfqs={supplierRfqs} links={supplierLinks} insights={supplierInsights} open={() => setView('suppliers')} onOpenSupplier={setSelectedSupplier}/></>}
+      {view === 'dashboard' && <TradeDashboard customers={customers} followups={followupRows} tasks={tasks} commitments={tradeCommitments} status={dashboardStatus} onCRM={()=>setView('crm')} onTasks={()=>setView('tasks')} onCommitments={()=>setView('commitments')} openCustomer={setSelected} refresh={()=>setDashboardRefresh(n=>n+1)}/>}
+
       {['dashboard','tasks','calendar'].includes(view)&&<OnlineRecords resource="tasks" customers={customers} changed={async()=>setTasks(await api.tasks())}/>}
       {view === 'business-map'&&<OnlineRecords resource="followups" customers={customers} changed={async()=>setFollowupRows(await api.followups())}/>}
       {view==='projects'&&<OnlineRecords resource="projects" customers={customers} changed={async()=>setProjects(await api.projects())}/>}
