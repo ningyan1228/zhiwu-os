@@ -16,13 +16,18 @@ export function reminderTiming(value?:string|null,today=reminderToday()){
  const days=validDay(value)?Math.round((Date.parse(value!+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000):null
  return {days,status:days===null?'待定':days<0?'已逾期':days===0?'今日到期':days<=3?'3 天内到期':days<=7?'7 天内到期':'后续跟进'}
 }
+export function followupAssessment(customer:ReminderCustomer,followups:ReminderFollowup[],today=reminderToday()){
+ const date=effectiveFollowupDate(customer),timing=reminderTiming(date,today),manual=latestManualFollowup(customer.id,followups)
+ const dateReview=!!(date&&timing.days!==null&&timing.days<0&&manual&&manual.date>=date&&manual.date<=today)
+ return {...timing,dateReview,status:dateReview?'跟进日期待核':timing.status,reviewDate:dateReview?manual!.date:null}
+}
 export function reminderRows(data:ReminderSnapshot,today=reminderToday(),includeClosed=false){
  return data.customers.filter(c=>includeClosed||!c.followup_closed).map(c=>{
   const latest=data.followups.filter(f=>f.customer_id===c.id).sort((a,b)=>b.date.localeCompare(a.date)||(b.created_at||'').localeCompare(a.created_at||''))[0]
   const manual=latestManualFollowup(c.id,data.followups)
   const date=c.followup_date_placeholder?null:validDay(c.next_followup_date)?c.next_followup_date:null
   const emails=data.emails.filter(e=>e.customer_id===c.id&&!e.is_internal_sender).sort((a,b)=>b.received_at.localeCompare(a.received_at))
-  return {customer:c,latest,date,...reminderTiming(date,today),next:manual?.next_action||'尚未记录下一步',source:manual?.channel||(manual?.email_id?'邮箱':c.followup_source)||'未注明',emails}
- }).sort((a,b)=>(a.days??Infinity)-(b.days??Infinity)||a.customer.company_name.localeCompare(b.customer.company_name))
+  return {customer:c,latest,date,...followupAssessment(c,data.followups,today),next:manual?.next_action||'尚未记录下一步',source:manual?.channel||(manual?.email_id?'邮箱':c.followup_source)||'未注明',emails}
+ }).sort((a,b)=>(a.dateReview?1e8:a.days??Infinity)-(b.dateReview?1e8:b.days??Infinity)||a.customer.company_name.localeCompare(b.customer.company_name))
 }
 export type ReminderRow=ReturnType<typeof reminderRows>[number]

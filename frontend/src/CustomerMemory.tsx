@@ -1,4 +1,4 @@
-import { customerPlan, latestManualFollowup, effectiveFollowupDate, reminderToday } from './followupModel'
+import { followupAssessment, customerPlan, latestManualFollowup, effectiveFollowupDate, reminderToday } from './followupModel'
 import { useState, type ReactNode } from 'react'
 import type { Customer, Project, Product, Followup, MailEmail } from './types'
 import './customer-memory.css'
@@ -28,6 +28,7 @@ const followupTimeLabel = (date?: string | null) => {
   if (gap === 0) return { text: `今天跟进 · ${date}`, tone: 'today' }
   return { text: `${gap} 天后 · ${date}`, tone: 'upcoming' }
 }
+const customerSchedule=(c:Customer,fs:Followup[])=>followupAssessment(c,fs).dateReview?{text:'跟进日期待核',tone:'review'}:followupTimeLabel(effectiveFollowupDate(c))
 type SummaryProps = { customer: Customer; projects: Project[]; products: Product[]; followups: Followup[] }
 export function MemorySummary({ customer, projects, products, followups }: SummaryProps) {
   const latest = latestFollowup(customer, followups)
@@ -44,7 +45,7 @@ export function MemorySummary({ customer, projects, products, followups }: Summa
       <div><dt>关注什么产品</dt><dd>{readable(customer.product_interest)}</dd></div>
       <div><dt>用在哪</dt><dd>{readable(customer.application)}</dd></div>
       <div><dt>最近记录</dt><dd>{progress}<small>{validDate ? date.slice(0, 10) : '记录日期待补充'} · {useFollowup ? '客户跟进记录' : '客户档案'}</small></dd></div>
-      <div><dt>下一步计划</dt><dd>{brief(nextAction, 180)}<small>{customerPlan(customer,followups).source}</small><small>跟进日期：{effectiveFollowupDate(customer) || '未设置或已关闭'}</small></dd></div>
+      <div><dt>下一步计划</dt><dd>{brief(nextAction, 180)}<small>{customerPlan(customer,followups).source}</small>{followupAssessment(customer,followups).dateReview&&<small>跟进日期待核：旧日期后已有人工沟通，请重新核对安排。</small>}<small>跟进日期：{effectiveFollowupDate(customer) || '未设置或已关闭'}</small></dd></div>
     </dl>
     {(age === null || age >= 30) && <p className="memory-age">{age === null ? '进展日期待补充' : `这条记录距今 ${age} 天`}，当前情况需要重新确认。</p>}
     {related.length > 0 && <details className="memory-projects" open={related.length > 1}><summary>分别查看 {related.length} 个项目的产品与进展</summary>{related.map(project => {
@@ -69,7 +70,7 @@ export function MemoryCRM({ customers, projects, products, followups, emails, op
   const [editing, setEditing] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<'next' | 'recent' | 'stale'>('next')
   const [page, setPage] = useState(1)
-  const [filter,setFilter] = useState<'all'|'overdue'|'today'|'unset'>('all')
+  const [filter,setFilter] = useState<'all'|'overdue'|'today'|'unset'|'review'>('all')
   const pageSize = 12
   const save = (id: string, alias: string, pinned: boolean) => {
     const next = { ...preferences, [id]: { alias, pinned } }
@@ -85,21 +86,21 @@ export function MemoryCRM({ customers, projects, products, followups, emails, op
     const nextB = effectiveFollowupDate(b) || '9999-12-31'
     return nextA.localeCompare(nextB) || (recentA || '0000-00-00').localeCompare(recentB || '0000-00-00')
   }
-  const visible = customers.filter(customer => filter==='all'||followupTimeLabel(effectiveFollowupDate(customer)).tone===filter).filter(customer => `${preferences[customer.id]?.alias || ''} ${defaultMemoryName(customer, emails)} ${customer.company_name} ${countryName(customer.country)} ${customer.contact_person} ${readable(customer.product_interest)} ${readable(customer.application)} ${projects.filter(item => item.customer_id === customer.id).map(item => `${item.product_code || ''} ${readable(item.application)} ${item.project_name}`).join(' ')}`.toLowerCase().includes(query.toLowerCase())).sort(compare)
+  const visible = customers.filter(customer => filter==='all'||customerSchedule(customer,followups).tone===filter).filter(customer => `${preferences[customer.id]?.alias || ''} ${defaultMemoryName(customer, emails)} ${customer.company_name} ${countryName(customer.country)} ${customer.contact_person} ${readable(customer.product_interest)} ${readable(customer.application)} ${projects.filter(item => item.customer_id === customer.id).map(item => `${item.product_code || ''} ${readable(item.application)} ${item.project_name}`).join(' ')}`.toLowerCase().includes(query.toLowerCase())).sort(compare)
   const totalPages = Math.max(1, Math.ceil(visible.length / pageSize))
   const currentPage = Math.min(page, totalPages)
   const pageCustomers = visible.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
-  const overdue=customers.filter(c=>followupTimeLabel(effectiveFollowupDate(c)).tone==='overdue').length
-  const today=customers.filter(c=>followupTimeLabel(effectiveFollowupDate(c)).tone==='today').length
+  const overdue=customers.filter(c=>customerSchedule(c,followups).tone==='overdue').length
+  const today=customers.filter(c=>customerSchedule(c,followups).tone==='today').length
   return <section className="page memory-crm crm-workspace">
     <div className="crm-heading"><div><span className="crm-eyebrow">CUSTOMER WORKSPACE</span><h1>客户管理 <span>{customers.length}</span></h1><p>看清进展，安排下一次沟通。</p></div><div className="crm-heading-actions">{actions}<button className="primary" onClick={create}>＋ 新建客户</button></div></div>
     <div className="crm-workbench">
-    <div className="crm-controls"><nav aria-label="客户跟进筛选" className="crm-filters">{([['all','全部客户',customers.length],['overdue','待跟进',overdue],['today','今天',today],['unset','未排期',customers.filter(c=>!effectiveFollowupDate(c)).length]] as const).map(([id,label,count])=><button key={id} aria-pressed={filter===id} onClick={()=>{setFilter(id);setPage(1)}}>{label}<span>{count}</span></button>)}</nav><div className="crm-tools"><input aria-label="搜索客户" value={query} onChange={e=>{setQuery(e.target.value);setPage(1)}} placeholder="搜索客户、联系人或产品…"/><select aria-label="客户排序" value={sortBy} onChange={e=>{setSortBy(e.target.value as typeof sortBy);setPage(1)}}><option value="next">跟进日期 · 最早优先</option><option value="recent">最近更新 · 最新优先</option><option value="stale">最近更新 · 最久优先</option></select></div></div>
+    <div className="crm-controls"><nav aria-label="客户跟进筛选" className="crm-filters">{([['all','全部客户',customers.length],['overdue','待跟进',overdue],['review','日期待核',customers.filter(c=>customerSchedule(c,followups).tone==='review').length],['today','今天',today],['unset','未排期',customers.filter(c=>!effectiveFollowupDate(c)).length]] as const).map(([id,label,count])=><button key={id} aria-pressed={filter===id} onClick={()=>{setFilter(id);setPage(1)}}>{label}<span>{count}</span></button>)}</nav><div className="crm-tools"><input aria-label="搜索客户" value={query} onChange={e=>{setQuery(e.target.value);setPage(1)}} placeholder="搜索客户、联系人或产品…"/><select aria-label="客户排序" value={sortBy} onChange={e=>{setSortBy(e.target.value as typeof sortBy);setPage(1)}}><option value="next">跟进日期 · 最早优先</option><option value="recent">最近更新 · 最新优先</option><option value="stale">最近更新 · 最久优先</option></select></div></div>
     {error&&<p role="alert" className="crm-feedback">{error}</p>}
     <div className="crm-column-head" aria-hidden="true"><span>客户 / 联系人</span><span>产品与阶段</span><span>下一步计划</span><span>跟进安排</span><span>操作</span></div>
     <div className="crm-rows">{pageCustomers.map(customer=>{
-      const pref=preferences[customer.id],schedule=followupTimeLabel(effectiveFollowupDate(customer)),latest=latestFollowup(customer,followups)
+      const pref=preferences[customer.id],schedule=customerSchedule(customer,followups),latest=latestFollowup(customer,followups)
       const memoryName=pref?.alias||defaultMemoryName(customer,emails)
       const nextAction=customerPlan(customer,followups).text
       return <article className="crm-client-row" key={customer.id}>
