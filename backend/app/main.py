@@ -942,7 +942,13 @@ async def create_customer(customer: CustomerIn, authorization: str | None = Head
 
 @app.patch("/api/customers/{customer_id}")
 async def update_customer(customer_id: str, customer: CustomerIn, authorization: str | None = Header(default=None)):
-    return await supabase(f"customers?id=eq.{customer_id}&archived_at=is.null", bearer(authorization), "PATCH", customer.model_dump(exclude_unset=True))
+    token = bearer(authorization)
+    values = customer.model_dump(exclude_unset=True)
+    if "next_followup_date" in values:
+        previous = await supabase(f"customers?id=eq.{customer_id}&archived_at=is.null&select=next_followup_date,followup_date_placeholder", token)
+        if previous and previous[0].get("next_followup_date") != values["next_followup_date"]:
+            values["followup_date_placeholder"] = False
+    return await supabase(f"customers?id=eq.{customer_id}&archived_at=is.null", token, "PATCH", values)
 
 @app.get("/api/products")
 async def list_products(authorization: str | None = Header(default=None)):
@@ -3219,3 +3225,6 @@ install_online_editing(app, supabase, bearer, {
 
 from .knowledge_session import install as install_knowledge_session
 install_knowledge_session(app, settings, bearer)
+
+from .followup_reminders import install as install_followup_reminders
+install_followup_reminders(app, supabase, bearer, is_internal_mail_address)

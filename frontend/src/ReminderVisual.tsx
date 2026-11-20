@@ -1,0 +1,13 @@
+import {useState} from 'react'
+import {reminderToday,type ReminderRow} from './followupModel'
+import type {Customer} from './types'
+import './ReminderVisual.css'
+export function ReminderVisual({rows,open,table}:{rows:ReminderRow[];open:(c:Customer)=>void;table:()=>void}){
+ const [selected,setSelected]=useState('urgent'),today=reminderToday()
+ const overdue=rows.filter(r=>r.days!==null&&r.days<0),due=rows.filter(r=>r.days===0),soon=rows.filter(r=>r.days!==null&&r.days>0&&r.days<=3)
+ const week=Array.from({length:4},(_,i)=>{const d=new Date(today+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+i);const date=d.toISOString().slice(0,10);return{date,count:rows.filter(r=>r.date===date).length}}),max=Math.max(1,...week.map(d=>d.count))
+ const shown=selected==='urgent'?[...overdue,...due]:selected==='soon'?soon:rows.filter(r=>r.date===selected)
+ return <section className="reminder-visual"><div className="reminder-summary"><p>当前跟进提醒</p><strong>逾期 {overdue.length} 条 · 今日 {due.length} 条 · 3 天内 {soon.length} 条</strong><small>按 CRM 真实日期统计 · 待定与占位日期不触发提醒</small></div><div className="reminder-priorities"><button className="late" onClick={()=>setSelected('urgent')}><span>已逾期</span><b>{overdue.length}</b><small>需要重新核对安排</small></button><button className="now" onClick={()=>setSelected(today)}><span>今日到期</span><b>{due.length}</b><small>今天的客户跟进</small></button><button className="soon" onClick={()=>setSelected('soon')}><span>3 天内</span><b>{soon.length}</b><small>提前准备资料</small></button></div>
+ <div className="reminder-week-head"><h2>今天与未来 3 天</h2><button onClick={table}>完整跟进表 ↗</button></div><div className="reminder-week">{week.map((d,i)=><button key={d.date} aria-label={`${d.date} ${d.count}条跟进`} aria-pressed={selected===d.date} onClick={()=>setSelected(d.date)}><small>{i===0?'今天':new Date(d.date+'T12:00:00').toLocaleDateString('zh-CN',{weekday:'short'})}</small><b>{d.count}</b><span><i style={{height:`${d.count/max*100}%`}}/></span><time>{d.date.slice(5)}</time></button>)}</div>
+ <div className="reminder-week-head"><h2>{selected==='urgent'?'今天必须处理':selected==='soon'?'即将到期':selected+' 跟进'}</h2><button onClick={()=>setSelected('urgent')}>逾期＋今日</button></div><div className="reminder-urgent">{shown.slice(0,6).map(r=><button key={r.customer.id} onClick={()=>open(r.customer)}><span className={r.days!==null&&r.days<0?'late':'now'}>{r.days!==null&&r.days<0?`逾期 ${-r.days} 天`:r.days===0?'今天':`${r.days} 天后`}</span><div><b>{r.customer.company_name}</b><small>{r.next}</small></div><span>↗</span></button>)}{!shown.length&&<p>这个范围暂无已安排的跟进。</p>}</div><p className="trade-caption">显示 {Math.min(6,shown.length)} / {shown.length} 条。点击客户查看完整沟通记录；全部待定事项在跟进表中查看。</p></section>
+}

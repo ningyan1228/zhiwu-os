@@ -1,0 +1,16 @@
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const ts = require('typescript');
+const vm = require('node:vm');
+const output = ts.transpileModule(fs.readFileSync('src/followupModel.ts','utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText;
+const context = {exports:{},Date,Intl};
+vm.runInNewContext(output,context);
+const {reminderTiming,reminderRows,validDay} = context.exports;
+for(const [date,status] of [['2026-11-19','已逾期'],['2026-11-20','今日到期'],['2026-11-23','3 天内到期'],['2026-11-24','7 天内到期'],['2026-11-27','7 天内到期'],['2026-11-28','后续跟进'],[null,'待定']]) assert.equal(reminderTiming(date,'2026-11-20').status,status);
+assert.equal(validDay('2026-02-30'),false);
+assert.equal(reminderTiming('2027-01-01','2026-12-31').days,1);
+const data={customers:[{id:'a',company_name:'A',next_followup_date:'2026-11-27',followup_date_placeholder:true},{id:'b',company_name:'B',next_followup_date:'2026-11-19'},{id:'c',company_name:'C',next_followup_date:'2026-11-20',followup_closed:true}],followups:[{customer_id:'b',date:'2026-11-19',content:'人工确认',next_action:'核对规格',channel:'微信'},{customer_id:'b',date:'2026-11-20',content:'邮件自动归档：新邮件',next_action:'自动归档'}],emails:[]};
+const rows=reminderRows(data,'2026-11-20');
+assert.equal(rows.length,2);assert.equal(rows[0].customer.id,'b');assert.equal(rows[0].next,'核对规格');assert.equal(rows[0].source,'微信');assert.equal(rows[1].status,'待定');
+assert.equal(reminderRows(data,'2026-11-20',true).length,3);
+console.log('Follow-up model: date boundaries, placeholders, closed rows, and manual next action passed.');

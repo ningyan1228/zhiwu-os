@@ -83,6 +83,8 @@ const asMailEmail = (item: MailEmail): MailEmail => ({ ...item, subject: item.su
 const asTask = (item: Task): Task => ({ ...item, description: item.description || '', start_time: item.start_time || null, end_time: item.end_time || null, status: item.status || 'Pending', category: item.category || '外贸', priority: item.priority || 'normal' })
 
 export const api = {
+  reminders: () => request<import('./followupModel').ReminderSnapshot>('/api/followup-reminders').then(data=>({...data,customers:data.customers.map(c=>({...c,...asCustomer(c)}))})),
+  saveReminder: (payload: Record<string,unknown>) => request('/api/followup-reminders/save',{method:'POST',body:JSON.stringify(payload)}),
   onlineRecords: (resource:string) => request<Record<string, any>[]>(`/api/online-records/${resource}`),
   editOnlineRecord: (resource:string,id:string,changes:Record<string,unknown>,expected:Record<string,unknown>) => request<Record<string, any>>(`/api/online-records/${resource}/${id}`,{method:'PATCH',body:JSON.stringify({changes,expected})}),
   customers: () => request<Customer[]>('/api/customers').then(rows => rows.map(asCustomer)),

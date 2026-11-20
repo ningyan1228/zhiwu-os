@@ -479,6 +479,10 @@ def _sync_mailbox(store: MailStore, mailbox_config: MailboxRuntime) -> dict[str,
                 if customer_id:
                     _remember_mapping(store, mailbox_config.owner_user_id, sender, customer_id, contact_name_by_customer.get(customer_id))
                 saved += len(created)
+            try:
+                _sync_sent_evidence(mailbox, store, mailbox_config)
+            except Exception:
+                logger.warning('Sent reply evidence unavailable for mailbox %s; no replies inferred', mailbox_config.key)
         store.update_sync(mailbox_config, "Success", saved)
         logger.info("Mailbox %s sync finished: processed=%s saved=%s linked=%s crm_history=%s", mailbox_config.key, len(uids), saved, recovered, activity_backfilled)
         return {"processed": len(uids), "saved": saved, "linked": recovered}
@@ -486,6 +490,43 @@ def _sync_mailbox(store: MailStore, mailbox_config: MailboxRuntime) -> dict[str,
         logger.exception("Mailbox %s sync failed", mailbox_config.key)
         store.update_sync(mailbox_config, "Error", 0, str(exc)[:500])
         return {"processed": 0, "saved": 0, "linked": 0}
+
+
+def _sync_sent_evidence(mailbox, store, config):
+    """Read standard Sent folder headers only; exact Message-ID reply evidence."""
+    import re
+    from urllib.parse import quote
+    result, folders = mailbox.list()
+    if result != 'OK': return
+    sent = next((line for line in (folders or []) if isinstance(line, bytes) and b'\\Sent' in line), None)
+    if not sent: return
+    match = re.match(rb'\([^)]*\)\s+(?:"[^"]*"|NIL)\s+(.+)$', sent)
+    if not match: return
+    folder = match.group(1).decode('ascii')
+    result, _ = mailbox.select(folder, readonly=True)
+    if result != 'OK': return
+    result, data = mailbox.uid('search', None, 'ALL')
+    if result != 'OK': return
+    for uid in data[0].split()[-settings().mail_sync_max_messages:]:
+        result, parts = mailbox.uid('fetch', uid, '(BODY.PEEK[HEADER.FIELDS (FROM MESSAGE-ID IN-REPLY-TO DATE)])')
+        if result != 'OK': continue
+        raw = next((p[1] for p in parts if isinstance(p, tuple) and isinstance(p[1], bytes)), None)
+        if not raw: continue
+        message = BytesParser(policy=policy.default).parsebytes(raw)
+        sender = parseaddr(message.get('From',''))[1].lower()
+        if sender != config.username.lower(): continue
+        sent_id = str(message.get('Message-ID','')).strip()
+        parent = str(message.get('In-Reply-To','')).strip()
+        if not sent_id or not re.fullmatch(r'<[^<>\s]+>', parent): continue
+        original = store.request('GET', 'emails?select=id&user_id=eq.'+config.owner_user_id+'&mailbox_id=eq.'+config.id+'&message_id=eq.'+quote(parent,safe='')) or []
+        if not original: continue
+        try:
+            sent_date = parsedate_to_datetime(message.get('Date',''))
+            if sent_date.tzinfo is None: continue
+            sent_at = sent_date.astimezone(timezone.utc).isoformat()
+        except (TypeError, ValueError, IndexError):
+            continue
+        store.request('POST','mail_reply_evidence?on_conflict=user_id,sent_message_id,reply_to_message_id',{'user_id':config.owner_user_id,'mailbox_id':config.id,'reply_to_message_id':parent,'sent_message_id':sent_id,'sent_at':sent_at},'resolution=ignore-duplicates,return=representation')
 
 
 def sync_once() -> dict[str, int]:
