@@ -69,6 +69,7 @@ function currentAccount() {
 
 function App() {
   const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('zhiwu-access-token')))
+  useEffect(()=>{const expired=()=>{sessionStorage.removeItem('zhiwu-access-token');setAuthenticated(false)};window.addEventListener('workspace-session-expired',expired);return()=>window.removeEventListener('workspace-session-expired',expired)},[])
   const [theme, setTheme] = useState<'dark' | 'light'>(() => localStorage.getItem('zhiwu-theme') === 'light' ? 'light' : 'dark')
   const [view, setViewState] = useState<View>(() => isKnowledgeRoute() ? 'knowledge' : window.location.hash.startsWith('#mail') ? 'mail' : nav.some(([key])=>key===window.location.hash.slice(6)) ? window.location.hash.slice(6) as View : 'dashboard')
   const setView=(next:View)=>{if(next!=='knowledge') window.location.hash='work/'+next;setViewState(next)}

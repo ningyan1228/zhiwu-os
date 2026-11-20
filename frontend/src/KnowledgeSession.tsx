@@ -18,6 +18,7 @@ export function connectKnowledge() {
   try {
    const response=await fetch(`${import.meta.env.VITE_API_URL||'https://zhiwu-os-api.gjsx.uno'}/api/auth/knowledge-session`,{method:'POST',headers:{Authorization:`Bearer ${workspaceToken}`},signal:controller.signal,cache:'no-store'})
    const result=await response.json()
+   if(response.status===401){window.dispatchEvent(new Event('workspace-session-expired'));throw Error('工作站登录已过期，请重新登录。')}
    if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'暂时无法连接资料账号。')
    if(started!==generation||sessionStorage.getItem('zhiwu-access-token')!==workspaceToken)throw Error('工作站账号已变化，请重新打开资料。')
    const {data,error}=await supabase.auth.setSession({access_token:result.access_token,refresh_token:result.refresh_token})
