@@ -9,6 +9,7 @@ import json
 import re
 from typing import Any, Literal
 from urllib.parse import quote, urlparse
+from uuid import UUID, uuid5, NAMESPACE_URL
 
 import httpx
 from openpyxl import Workbook
@@ -936,6 +937,21 @@ async def list_workspace_members(authorization: str | None = Header(default=None
     """Read-only labels for customer ownership; RLS remains the source of truth."""
     return await supabase("workspace_members?select=user_id,display_name,role&order=display_name.asc", bearer(authorization))
 
+class CustomerArchiveIn(BaseModel):
+    archived: bool
+
+@app.get("/api/archived-customers")
+async def archived_customers(authorization: str | None = Header(default=None)):
+    return await supabase("customers?select=id,company_name,contact_person,archived_at&archived_at=not.is.null&import_reverted=eq.false&order=archived_at.desc&limit=1000", bearer(authorization))
+
+@app.post("/api/customers/{customer_id}/archive")
+async def archive_customer(customer_id: UUID, payload: CustomerArchiveIn, authorization: str | None = Header(default=None)):
+    # RLS applies to the existing owner/team. Related history is never deleted.
+    token=bearer(authorization)
+    rows=await supabase(f"customers?id=eq.{customer_id}&import_reverted=eq.false",token,"PATCH",{"archived_at":datetime.now().isoformat() if payload.archived else None})
+    if not rows: raise HTTPException(404,"客户不存在或当前账号无权修改。")
+    return rows[0]
+
 @app.post("/api/customers", status_code=201)
 async def create_customer(customer: CustomerIn, authorization: str | None = Header(default=None)):
     return await supabase("customers", bearer(authorization), "POST", customer.model_dump(exclude_none=True))
@@ -1039,13 +1055,47 @@ async def link_product_to_customer(product_id: str, payload: ProductCustomerRela
 
 @app.get("/api/followups")
 async def list_followups(authorization: str | None = Header(default=None)):
-    return await supabase("followups?select=*&import_reverted=eq.false&archived_at=is.null&order=date.desc", bearer(authorization))
+    token=bearer(authorization)
+    rows=[]
+    while True:
+        page=await supabase(f"followups?select=*&import_reverted=eq.false&archived_at=is.null&order=date.desc,created_at.desc,id.desc&limit=200&offset={len(rows)}",token)
+        rows.extend(page)
+        if len(page)<200: return rows
 
 @app.post("/api/followups", status_code=201)
 async def create_followup(followup: FollowupIn, authorization: str | None = Header(default=None)):
     token = bearer(authorization)
-    rows = await supabase("followups", token, "POST", followup.model_dump(exclude_none=True))
-    await record_timeline_event(token, title=f"跟进客户：{followup.content}", event_type="crm", source="followup", related_id=rows[0]["id"], customer_id=followup.customer_id, event_date=followup.date)
+    try:
+        if date.fromisoformat(followup.date).isoformat() != followup.date:
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(422, "实际沟通日期请填写 YYYY-MM-DD。")
+    values = followup.model_dump(exclude_none=True)
+    values["content"] = followup.content.strip()
+    values["next_action"] = (followup.next_action or "").strip()
+    if not values["content"]:
+        raise HTTPException(422, "请填写真实沟通内容。")
+    existing = await supabase(f"followups?customer_id=eq.{quote(followup.customer_id,safe='')}&date=eq.{followup.date}&archived_at=is.null&import_reverted=eq.false&select=*", token)
+    duplicate = next((row for row in existing if (row.get("content") or "").strip() == values["content"]), None)
+    if duplicate:
+        if (duplicate.get("next_action") or "").strip() != values["next_action"]:
+            raise HTTPException(409, "该客户同日同内容的记录已存在，下一步不同。请编辑原跟进记录，不要重复新增。")
+        return [duplicate]
+    # Stable primary key makes simultaneous retries safe across API processes.
+    values["id"] = str(uuid5(NAMESPACE_URL, json.dumps(["manual-followup-v1", followup.customer_id, followup.date, values["content"]], ensure_ascii=False)))
+    try:
+        rows = await supabase("followups", token, "POST", values)
+    except (HTTPException, httpx.RequestError):
+        rows = await supabase(f"followups?id=eq.{values['id']}&archived_at=is.null&import_reverted=eq.false&select=*", token)
+        if not rows:
+            raise
+        if (rows[0].get("next_action") or "").strip() != values["next_action"]:
+            raise HTTPException(409, "同一条沟通已保存，但下一步不同。请刷新并编辑原记录。")
+    # Timeline is supplementary; its delay must not disguise a saved follow-up.
+    try:
+        await asyncio.wait_for(record_timeline_event(token, title=f"跟进客户：{values['content']}", event_type="crm", source="followup", related_id=rows[0]["id"], customer_id=followup.customer_id, event_date=followup.date), timeout=3)
+    except (TimeoutError, httpx.RequestError):
+        pass
     return rows
 
 @app.get("/api/trade-commitments")

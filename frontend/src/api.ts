@@ -12,7 +12,9 @@ async function timedFetch(input: RequestInfo | URL, init: RequestInit = {}, time
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetch(input, { ...init, signal: controller.signal })
+    const response = await fetch(input, { ...init, signal: controller.signal })
+    const body = await response.arrayBuffer()
+    return new Response(response.status===204 ? null : body, {status:response.status,statusText:response.statusText,headers:response.headers})
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw new Error('请求超时，未确认保存结果。请先刷新核对，避免重复新增。')
     throw error
@@ -76,7 +78,7 @@ async function download(path: string, filename: string) {
 
 const asCustomer = (item: Customer): Customer => ({ ...item, whatsapp: item.whatsapp || '—', product_interest: item.product_interest || '—', last_contact_date: item.last_contact_date || '—', next_followup_date: item.next_followup_date || '—', notes: item.notes || '暂无备注', customer_summary: item.customer_summary || '待补充客户画像。', customer_background: item.customer_background || '待补充客户背景。', customer_need: item.customer_need || item.product_interest || '待确认客户需求。', important_notes: item.important_notes || '暂无特别注意事项。', customer_value: item.customer_value || 3, customer_tags: item.customer_tags || [], industry: item.industry || '待确认行业' })
 const asProduct = (item: Product): Product => ({ ...item, category: item.category || '未分类', application: item.application || '—', description: item.description || '暂无描述', notes: item.notes || '', technical_keywords: item.technical_keywords || [], confirmed_applications: item.confirmed_applications || [], target_industries: item.target_industries || [], target_company_types: item.target_company_types || [], exclusion_rules: item.exclusion_rules || [], evidence_urls: item.evidence_urls || [], profile_status: item.profile_status || '草稿' })
-const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '安排下一步跟进', status: item.status || 'Open' })
+const asFollowup = (item: Followup): Followup => ({ ...item, next_action: item.next_action || '', status: item.status || 'Open' })
 const asProject = (item: Project): Project => ({ ...item, application: item.application || '应用待确认', notes: item.notes || '' })
 const asQuote = (item: Quote): Quote => ({ ...item, currency: item.currency || 'USD', quantity: item.quantity || '待确认', status: item.status || '草稿', version: item.version || 1, internal_supplier_quote_refs: item.internal_supplier_quote_refs || [], internal_technical_document_refs: item.internal_technical_document_refs || [] })
 const asMailEmail = (item: MailEmail): MailEmail => ({ ...item, subject: item.subject || '(无主题)', content_preview: item.content_preview || '', attachment_count: item.attachment_count || 0, status: item.status || 'unread', category: item.category || 'customer_inquiry' })
@@ -88,6 +90,8 @@ export const api = {
   onlineRecords: (resource:string) => request<Record<string, any>[]>(`/api/online-records/${resource}`),
   editOnlineRecord: (resource:string,id:string,changes:Record<string,unknown>,expected:Record<string,unknown>) => request<Record<string, any>>(`/api/online-records/${resource}/${id}`,{method:'PATCH',body:JSON.stringify({changes,expected})}),
   customers: () => request<Customer[]>('/api/customers').then(rows => rows.map(asCustomer)),
+  archivedCustomers: () => request<{id:string;company_name:string;contact_person:string;archived_at:string}[]>('/api/archived-customers'),
+  archiveCustomer: (id:string,archived:boolean) => request<Customer>(`/api/customers/${id}/archive`,{method:'POST',body:JSON.stringify({archived})}),
   workspaceMembers: () => request<WorkspaceMember[]>('/api/workspace-members'),
   createCustomer: (payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>('/api/customers', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
   products: () => request<Product[]>('/api/products').then(rows => rows.map(asProduct)),

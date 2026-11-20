@@ -12,6 +12,7 @@ export function polishKnowledge(root) {
   edit('features/market/OutreachResults.tsx',s=>s.replace('看实际联系与后续进展，找到值得继续投入的方向。','来源：当前资料账号的客户开发记录；按公司去重及本页筛选统计，不含工作站 CRM 跟进计划。').replace('暂无到期计划','当前资料账号的客户开发记录暂无到期计划').replace('<summary>记录与查看实际结果</summary>','<summary>记录与查看实际结果</summary><p>第一步：搜索并选择公司；第二步：填写跟进计划或记录结果。</p>'))
   edit('lib/productMarketMap.ts',s=>s.replace("name: '环氧化亚麻油 ELO'","name: '环氧亚麻油 ELO（CAS 8016-11-3）'"))
   edit('lib/inquiries.ts',s=>s.replace('id: string; customer_name: string;', 'id: string; customer_name: string; country: string | null;').replace('id,customer_name,product,inquiry_time,status,version,position', 'id,customer_name,country,product,inquiry_time,status,version,position').replace("status: 'pending' | 'sent'", "status: 'pending' | 'sent' | 'replied' | 'closed'"))
+  edit('lib/inquiries.ts',s=>s.replace("  const db=await client(ownerId)\n  const {data,error}=await db.rpc('set_inquiry_status',{p_id:row.id,p_status:status,p_expected_version:row.version})", "  let timer:ReturnType<typeof setTimeout>|undefined\n  const db=await Promise.race([client(ownerId),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('登录确认超时，请刷新页面后重试。')),8000)})]).finally(()=>clearTimeout(timer))\n  const {data,error}=await db.rpc('set_inquiry_status',{p_id:row.id,p_status:status,p_expected_version:row.version}).abortSignal(AbortSignal.timeout(20000))"))
   edit('features/inquiries/Inquiries.tsx',s=>{
     s="import { InquiryEditor } from '@/InquiryEditor'\nimport { NewInquiry } from '@/KnowledgeEntryForms'\n"+s
     s=s.replace('<dl className="inquiry-metadata">', '<InquiryEditor row={row} ownerId={ownerId} onSaved={next=>{setRow(next);onStatus(next)}}/><dl className="inquiry-metadata">')
@@ -26,6 +27,11 @@ export function polishKnowledge(root) {
     s=s.replaceAll('{r.customer_name}', "{r.customer_name?.trim() || `未提供姓名${r.country ? `（${r.country}）` : ''}`}")
     s=s.replace(`<button className="primary-button" disabled={busy} onClick={()=>void update()}>{busy?'保存中…':row.status==='sent'?'更正为待发送':'确认已实际发送'}</button>`, `<label>回复状态<select aria-label="回复状态" disabled={busy} value={row.status} onChange={e=>void update(e.target.value as Inquiry['status'])}><option value="pending">待发送回复</option><option value="sent">回复已发送</option><option value="replied">客户已回信</option><option value="closed">已关闭</option></select></label>`)
     s=s.replace('<p className="inquiries-guidance">', '<NewInquiry onSaved={()=>setRevision(v=>v+1)}/><p className="inquiries-guidance">')
+    // Keep the chosen value separate from persisted state; saving is explicit.
+    s=s.replace('  const mounted=useRef(true)', "  const [draftStatus,setDraftStatus]=useState<Inquiry['status']|null>(null)\n  useEffect(()=>{setDraftStatus(null)},[row?.id,row?.version])\n  const mounted=useRef(true)")
+    s=s.replace(/    if\(!window\.confirm\([^\n]+\)\)return\n/, '')
+    s=s.replace('value={row.status} onChange={e=>void update(e.target.value as Inquiry[\'status\'])}', 'value={draftStatus??row.status} onChange={e=>{setDraftStatus(e.target.value as Inquiry[\'status\']);setNotice(\'尚未保存，请点击保存状态。\')}}')
+    s=s.replace('</select></label></footer>', '</select><button className="primary-button" disabled={busy||!draftStatus||draftStatus===row.status} onClick={()=>draftStatus&&void update(draftStatus)}>{busy?\'正在保存…\':\'保存状态\'}</button><small>只记录实际进展，不发送邮件。</small></label></footer>')
     return s
   })
   edit('features/market/CustomerFollowUp.tsx',s=>s.replace('<h1>客户跟进</h1>','<h1>团队台账</h1>').replace(

@@ -1,0 +1,4 @@
+const template={schema_version:'zhiwu-os-import/v1',intent:'upsert_customer_and_followup',source:{date:'YYYY-MM-DD',type:'manual_review',reference:'填写资料来源'},match:{website_customer_id:'填写网站现有客户ID'},customer:{background:'填写核对后的背景资料'}}
+export function ImportHelp(){
+ return <details><summary>支持哪些文件？下载填写模板</summary><p>支持 .json 文件，可多选，每个文件对应一位现有客户。Word、Markdown、Excel 不能直接导入；日常进度请用 CRM 的“记进展”。</p><p>用网站客户 ID 或唯一客户邮箱匹配。这里只订正客户字段，不创建客户、跟进、产品或任务。预览确认后才保存，空字段不会清除旧值。</p><p>可填写字段：company_name 公司、country 国家、contact_name 联系人、email 邮箱、wechat_or_whatsapp 联系方式、industry 行业、summary 客户画像、background 背景、current_need 当前需求、status_text 状态摘要。source.date 是资料整理日期，不是客户跟进日期。</p><a download="customer-correction-template.json" href={'data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(template,null,2))}>下载客户订正模板（JSON）</a></details>
+}
