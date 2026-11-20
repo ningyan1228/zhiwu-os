@@ -99,6 +99,7 @@ export const api = {
   updateProduct: (id: string, payload: Omit<Product, 'id'>) => request<Product>(`/api/products/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(asProduct),
   productCustomerRelations: () => request<ProductCustomerRelation[]>('/api/product-customer-relations'),
   linkProductCustomer: (productId: string, customerId: string) => request<ProductCustomerRelation>(`/api/products/${productId}/customers`, { method: 'POST', body: JSON.stringify({ customer_id: customerId }) }),
+  saveCustomerLocation: (c: Customer, notes: string) => request<Customer[]>(`/api/customers/${c.id}`, { method: 'PATCH', body: JSON.stringify({company_name:c.company_name,country:c.country,contact_person:c.contact_person,notes}) }),
   updateCustomer: (id: string, payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>(`/api/customers/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),
   followups: () => request<Followup[]>('/api/followups').then(rows => rows.map(asFollowup)),
   createFollowup: (payload: Omit<Followup, 'id'>) => request<Followup[]>('/api/followups', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asFollowup(rows[0])),
