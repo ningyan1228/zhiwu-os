@@ -1,6 +1,6 @@
 const fs=require('fs'),vm=require('vm'),ts=require('typescript'),assert=require('assert/strict'),React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
 const source=ts.transpileModule(fs.readFileSync('src/Maintenance.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2020}}).outputText;
 function check(now){const e={};class Clock extends Date{static now(){return now}};vm.runInNewContext(source,{exports:e,require:n=>n.endsWith('.css')?{}:require(n),Date:Clock});return renderToStaticMarkup(React.createElement(e.MaintenanceGate,null,React.createElement('div',null,'BUSINESS_CONTENT')))}
-const start=Date.parse('2026-11-20T15:59:00Z');assert.ok(check(start-1).includes('BUSINESS_CONTENT'));assert.ok(!check(start).includes('BUSINESS_CONTENT'));assert.ok(check(start).includes('工作站正在升级维护'));console.log('PASS before-deadline access and maintenance deadline blocks business tree');
+const start=Date.parse('2026-11-20T16:19:00Z');assert.ok(check(start-1).includes('BUSINESS_CONTENT'));assert.ok(!check(start).includes('BUSINESS_CONTENT'));assert.ok(check(start).includes('工作站正在升级维护'));console.log('PASS before-deadline access and maintenance deadline blocks business tree');
 
 const end=Date.parse('2026-11-21T01:00:00Z');assert.ok(!check(end-1).includes('BUSINESS_CONTENT'));assert.ok(check(end).includes('BUSINESS_CONTENT'));assert.ok(check(end+1).includes('BUSINESS_CONTENT'));assert.ok(check(start).includes('11 月 21 日上午 9:00'));console.log('PASS scheduled recovery at Beijing 09:00');

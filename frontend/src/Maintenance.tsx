@@ -2,7 +2,7 @@ import {useEffect,useState,type ReactNode} from 'react'
 import {Wrench,ArrowRight} from 'lucide-react'
 import './Maintenance.css'
 // Scheduled maintenance window, expressed in UTC (Beijing time is UTC+8).
-export const maintenanceStartsAt = Date.parse('2026-11-20T15:59:00Z')
+export const maintenanceStartsAt = Date.parse('2026-11-20T16:19:00Z')
 export const maintenanceEndsAt = Date.parse('2026-11-21T01:00:00Z')
 const isMaintenanceActive = () => Date.now() >= maintenanceStartsAt && Date.now() < maintenanceEndsAt
 export function MaintenanceGate({children}:{children:ReactNode}){const [active,setActive]=useState(()=>isMaintenanceActive());useEffect(()=>{const check=()=>setActive(isMaintenanceActive());const timer=setInterval(check,1000);window.addEventListener('focus',check);return()=>{clearInterval(timer);window.removeEventListener('focus',check)}},[]);return active?<Maintenance/>:<>{children}</>}
