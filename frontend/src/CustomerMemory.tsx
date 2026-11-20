@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Customer, Project, Product, Followup, MailEmail } from './types'
 import './customer-memory.css'
 
@@ -59,8 +59,8 @@ const defaultMemoryName = (customer: Customer, emails: MailEmail[]) => {
   const senderName = emails.filter(mail => mail.customer_id === customer.id && !mail.is_internal_sender).sort((a, b) => (b.received_at || '').localeCompare(a.received_at || '')).map(senderNameFromMail).find(Boolean)
   return `${countryName(customer.country || '地区待确认')} · ${senderName || customer.contact_person?.trim() || '联系人待补充'}`
 }
-type MemoryCRMProps = { customers: Customer[]; projects: Project[]; products: Product[]; followups: Followup[]; emails: MailEmail[]; open: (customer: Customer) => void; create: () => void; addFollowup: (customer: Customer) => void }
-export function MemoryCRM({ customers, projects, products, followups, emails, open, create, addFollowup }: MemoryCRMProps) {
+type MemoryCRMProps = { actions?: ReactNode; customers: Customer[]; projects: Project[]; products: Product[]; followups: Followup[]; emails: MailEmail[]; open: (customer: Customer) => void; create: () => void; addFollowup: (customer: Customer) => void }
+export function MemoryCRM({ customers, projects, products, followups, emails, open, create, addFollowup, actions }: MemoryCRMProps) {
   const storageKey = `zhiwu-customer-memory:${sessionStorage.getItem('zhiwu-account-email') || 'local'}`
   const [preferences, setPreferences] = useState<Preferences>(() => { try { return JSON.parse(localStorage.getItem(storageKey) || '{}') } catch { return {} } })
   const [query, setQuery] = useState('')
@@ -68,7 +68,8 @@ export function MemoryCRM({ customers, projects, products, followups, emails, op
   const [editing, setEditing] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<'next' | 'recent' | 'stale'>('next')
   const [page, setPage] = useState(1)
-  const pageSize = 6
+  const [filter,setFilter] = useState<'all'|'overdue'|'today'|'unset'>('all')
+  const pageSize = 12
   const save = (id: string, alias: string, pinned: boolean) => {
     const next = { ...preferences, [id]: { alias, pinned } }
     try { localStorage.setItem(storageKey, JSON.stringify(next)); setPreferences(next); setEditing(null); setError('') } catch { setError('浏览器未能保存记忆名，请检查存储空间后重试。') }
@@ -83,34 +84,34 @@ export function MemoryCRM({ customers, projects, products, followups, emails, op
     const nextB = isDate(b.next_followup_date) ? b.next_followup_date : '9999-12-31'
     return nextA.localeCompare(nextB) || (recentA || '0000-00-00').localeCompare(recentB || '0000-00-00')
   }
-  const visible = customers.filter(customer => `${preferences[customer.id]?.alias || ''} ${defaultMemoryName(customer, emails)} ${customer.company_name} ${countryName(customer.country)} ${customer.contact_person} ${readable(customer.product_interest)} ${readable(customer.application)} ${projects.filter(item => item.customer_id === customer.id).map(item => `${item.product_code || ''} ${readable(item.application)} ${item.project_name}`).join(' ')}`.toLowerCase().includes(query.toLowerCase())).sort(compare)
+  const visible = customers.filter(customer => filter==='all'||followupTimeLabel(customer.next_followup_date).tone===filter).filter(customer => `${preferences[customer.id]?.alias || ''} ${defaultMemoryName(customer, emails)} ${customer.company_name} ${countryName(customer.country)} ${customer.contact_person} ${readable(customer.product_interest)} ${readable(customer.application)} ${projects.filter(item => item.customer_id === customer.id).map(item => `${item.product_code || ''} ${readable(item.application)} ${item.project_name}`).join(' ')}`.toLowerCase().includes(query.toLowerCase())).sort(compare)
   const totalPages = Math.max(1, Math.ceil(visible.length / pageSize))
   const currentPage = Math.min(page, totalPages)
   const pageCustomers = visible.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
-  return <section className="page memory-crm">
-    <div className="page-heading"><div><h1>客户速记</h1><p>默认只看最重要的信息；完整邮件和全部历史请进入客户 360。</p></div><button className="primary" onClick={create}>新建客户</button></div>
-    <div className="memory-toolbar"><label className="memory-search">查找客户<input value={query} onChange={event => { setQuery(event.target.value); setPage(1) }} placeholder="输入中文记忆名、国家、产品或型号"/></label><label className="memory-sort">排序方式<select value={sortBy} onChange={event => { setSortBy(event.target.value as typeof sortBy); setPage(1) }}><option value="next">下次跟进：最早优先</option><option value="recent">最近进展：最新优先</option><option value="stale">最近进展：最久未更新优先</option></select></label></div>
-    <p>共 {customers.length} 位客户 · 当前显示第 {currentPage}/{totalPages} 页的 {pageCustomers.length} 位 · 每页 6 位；默认记忆名来自国家和客户邮件发件人。</p>
-    {error && <p role="alert">{error}</p>}
-    <div className="memory-grid">{pageCustomers.map(customer => {
-      const pref = preferences[customer.id]
-      const schedule = followupTimeLabel(customer.next_followup_date)
-      const defaultName = defaultMemoryName(customer, emails)
-      const memoryName = pref?.alias || defaultName
-      const latest = latestFollowup(customer, followups)
-      const useFollowup = latest && (!customer.last_contact_date || latest.date >= customer.last_contact_date)
-      const nextAction = customer.next_action?.join('；') || ''
-      return <article className="memory-customer" key={customer.id}>
-        <header><div><small>{customer.company_name}</small><h2>{memoryName}</h2><small>{pref?.alias ? `默认：${defaultName}` : '默认名称：国家 · 邮件发件人'}</small></div><button aria-label={`${pref?.pinned ? '取消置顶' : '置顶'} ${customer.company_name}`} onClick={() => save(customer.id, pref?.alias || '', !pref?.pinned)}>{pref?.pinned ? '★ 已置顶' : '☆ 置顶'}</button></header>
-        <p className={`memory-schedule ${schedule.tone}`}>时间安排：{schedule.text}</p>
-        <div className="memory-quick-facts"><div><small>档案阶段</small><b>{chineseStage[customer.customer_stage] || customer.customer_stage}</b></div><div><small>关注产品</small><b>{readable(customer.product_interest)}</b></div><div><small>当前计划（客户档案）</small><b>{brief(nextAction, 54)}</b>{latest?.next_action&&<small>最近沟通约定：{brief(latest.next_action,72)}</small>}</div></div>
-        {editing === customer.id ? <form className="memory-alias-form" onSubmit={event => { event.preventDefault(); save(customer.id, String(new FormData(event.currentTarget).get('alias') || '').trim(), Boolean(pref?.pinned)) }}><input autoFocus aria-label="中文记忆名" name="alias" maxLength={60} defaultValue={memoryName}/><button>保存</button>{pref?.alias && <button type="button" onClick={() => save(customer.id, '', Boolean(pref?.pinned))}>恢复默认</button>}<button type="button" onClick={() => setEditing(null)}>取消</button></form> : <button className="memory-alias-button" onClick={() => setEditing(customer.id)}>修改中文记忆名</button>}
-        <details className="memory-more"><summary>展开更多（最近记录、项目）</summary><MemorySummary customer={customer} projects={projects} products={products} followups={followups}/></details>
-        <footer><button className="primary" onClick={() => open(customer)}>客户 360</button><button onClick={() => addFollowup(customer)}>记录进展</button></footer>
+  const overdue=customers.filter(c=>followupTimeLabel(c.next_followup_date).tone==='overdue').length
+  const today=customers.filter(c=>followupTimeLabel(c.next_followup_date).tone==='today').length
+  return <section className="page memory-crm crm-workspace">
+    <div className="crm-heading"><div><span className="crm-eyebrow">CUSTOMER WORKSPACE</span><h1>客户管理 <span>{customers.length}</span></h1><p>看清进展，安排下一次沟通。</p></div><div className="crm-heading-actions">{actions}<button className="primary" onClick={create}>＋ 新建客户</button></div></div>
+    <div className="crm-workbench">
+    <div className="crm-controls"><nav aria-label="客户跟进筛选" className="crm-filters">{([['all','全部客户',customers.length],['overdue','待跟进',overdue],['today','今天',today],['unset','未排期',customers.filter(c=>!isDate(c.next_followup_date)).length]] as const).map(([id,label,count])=><button key={id} aria-pressed={filter===id} onClick={()=>{setFilter(id);setPage(1)}}>{label}<span>{count}</span></button>)}</nav><div className="crm-tools"><input aria-label="搜索客户" value={query} onChange={e=>{setQuery(e.target.value);setPage(1)}} placeholder="搜索客户、联系人或产品…"/><select aria-label="客户排序" value={sortBy} onChange={e=>{setSortBy(e.target.value as typeof sortBy);setPage(1)}}><option value="next">跟进日期 · 最早优先</option><option value="recent">最近更新 · 最新优先</option><option value="stale">最近更新 · 最久优先</option></select></div></div>
+    {error&&<p role="alert" className="crm-feedback">{error}</p>}
+    <div className="crm-column-head" aria-hidden="true"><span>客户 / 联系人</span><span>产品与阶段</span><span>下一步计划</span><span>跟进安排</span><span>操作</span></div>
+    <div className="crm-rows">{pageCustomers.map(customer=>{
+      const pref=preferences[customer.id],schedule=followupTimeLabel(customer.next_followup_date),latest=latestFollowup(customer,followups)
+      const memoryName=pref?.alias||defaultMemoryName(customer,emails)
+      const nextAction=customer.next_action?.join('；')||''
+      return <article className="crm-client-row" key={customer.id}>
+        <div className="crm-identity"><button className="crm-pin" aria-pressed={!!pref?.pinned} aria-label={`${pref?.pinned?'取消置顶':'置顶'} ${customer.company_name}`} onClick={()=>save(customer.id,pref?.alias||'',!pref?.pinned)}>{pref?.pinned?'★':'☆'}</button><div><button className="crm-company" onClick={()=>open(customer)}>{customer.company_name||'未填写公司'}</button><p>{memoryName}</p></div></div>
+        <div className="crm-product"><span className="crm-stage">{chineseStage[customer.customer_stage]||customer.customer_stage}</span><p title={readable(customer.product_interest)}>{readable(customer.product_interest)}</p></div>
+        <div className="crm-next"><p title={nextAction}>{nextAction||'尚未安排下一步'}</p>{latest&&<span>最近沟通 · {latest.date.slice(0,10)}</span>}</div>
+        <div className={`crm-due ${schedule.tone}`}><time>{isDate(customer.next_followup_date)?customer.next_followup_date:'未排期'}</time><span>{schedule.tone==='overdue'?schedule.text.split(' · ')[0]:schedule.tone==='today'?'今天跟进':schedule.tone==='unset'?'等待安排':schedule.text.split(' · ')[0]}</span></div>
+        <div className="crm-row-actions"><button onClick={()=>addFollowup(customer)}>记进展</button><button aria-label={`修改 ${customer.company_name} 的记忆名`} title="修改记忆名" onClick={()=>setEditing(editing===customer.id?null:customer.id)}>···</button></div>
+        {editing===customer.id&&<form className="crm-alias-editor" onSubmit={e=>{e.preventDefault();save(customer.id,String(new FormData(e.currentTarget).get('alias')||'').trim(),!!pref?.pinned)}}><label>显示记忆名<input name="alias" aria-label="显示记忆名" maxLength={60} defaultValue={memoryName}/></label><button type="submit">保存</button>{pref?.alias&&<button type="button" onClick={()=>save(customer.id,'',!!pref?.pinned)}>恢复默认</button>}<button type="button" onClick={()=>setEditing(null)}>取消</button></form>}
       </article>
     })}</div>
-    {!visible.length && <p>没有找到符合搜索条件的客户。</p>}
-    {visible.length > pageSize && <nav className="memory-pagination" aria-label="客户分页"><button disabled={currentPage === 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</button>{Array.from({ length: totalPages }, (_, index) => index + 1).map(value => <button key={value} className={value === currentPage ? 'active' : ''} aria-current={value === currentPage ? 'page' : undefined} onClick={() => setPage(value)}>{value}</button>)}<button disabled={currentPage === totalPages} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>下一页</button></nav>}
+    {!visible.length&&<div className="crm-empty"><h2>没有符合条件的客户</h2><p>试试其他关键词，或切换到全部客户。</p><button onClick={()=>{setFilter('all');setQuery('');setPage(1)}}>显示全部客户</button></div>}
+    <footer className="crm-list-footer"><span>当前筛选 {visible.length} 位 · 第 {currentPage} / {totalPages} 页</span><nav aria-label="客户分页"><button disabled={currentPage===1} onClick={()=>setPage(Math.max(1,currentPage-1))}>← 上一页</button><button disabled={currentPage===totalPages} onClick={()=>setPage(Math.min(totalPages,currentPage+1))}>下一页 →</button></nav></footer>
+    </div><p className="crm-source-note">跟进安排来自客户档案；点击客户名称查看完整计划、沟通约定和历史记录。</p>
   </section>
 }
