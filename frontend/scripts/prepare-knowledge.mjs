@@ -52,3 +52,5 @@ text=text.slice(0,start)+'    <main className="main-area">\n'+text.slice(end)
 writeFileSync(app,text)
 polishKnowledge(target)
 console.log(`Prepared public knowledge module ${revision}`)
+
+await import('./prepare-overview.mjs')

@@ -5,7 +5,7 @@ let connection: Promise<void> | null = null
 let connectionToken: string | null = null
 let generation = 0
 let linked: {token:string;userId:string;until:number}|null = null
-function connect() {
+export function connectKnowledge() {
  const workspaceToken=sessionStorage.getItem('zhiwu-access-token')
  if(connection&&connectionToken===workspaceToken)return connection
  const started=generation
@@ -38,7 +38,7 @@ export function KnowledgeSession({children}:{children:ReactNode}) {
   })
   return ()=>subscription?.data.subscription.unsubscribe()
  },[])
- useEffect(()=>{let active=true;setState('loading');void connect().then(()=>{if(active)setState('ready')}).catch(reason=>{if(active){setState('error');setError(reason?.name==='AbortError'?'连接资料超时，请重试。':reason instanceof Error?reason.message:'资料连接失败。')}});return()=>{active=false}},[attempt])
+ useEffect(()=>{let active=true;setState('loading');void connectKnowledge().then(()=>{if(active)setState('ready')}).catch(reason=>{if(active){setState('error');setError(reason?.name==='AbortError'?'连接资料超时，请重试。':reason instanceof Error?reason.message:'资料连接失败。')}});return()=>{active=false}},[attempt])
  if(state==='loading')return <section className="private-entry" role="status">正在使用工作站账号连接私人资料…</section>
  if(state==='error')return <section className="private-entry"><h2>资料连接尚未完成</h2><p role="alert">{error}</p><button onClick={()=>setAttempt(v=>v+1)}>重新连接</button></section>
  return <>{children}</>

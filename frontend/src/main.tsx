@@ -1,3 +1,4 @@
+import OverviewBoards from './OverviewBoards'
 import { ArchivedCustomers } from './ArchivedCustomers'
 import { ImportHelp } from './ImportHelp'
 import { FollowupBoard } from './FollowupBoard'
@@ -405,7 +406,7 @@ function App() {
       {globalQuery.trim() && <WorkspaceSearch query={globalQuery} customers={customers} products={products} projects={projects} emails={emails} close={() => setGlobalQuery('')} openCustomer={customer => { setView('crm'); setSelected(customer) }} openProduct={() => setView('products')} openProject={customer => { setView('projects'); setSelected(customer) }} openEmail={openEmail} />}
       {view === 'knowledge' && <KnowledgeBoundary><Suspense fallback={<div className="knowledge-loading" role="status">正在打开阳光心材料…</div>}><KnowledgeWorkspace theme={theme}/></Suspense></KnowledgeBoundary>}
       {['dashboard','tasks','calendar'].includes(view)&&<nav className="audit-tabs today-views" aria-label="今日工作视图">{([['dashboard','今日总览'],['tasks','跟进表'],['calendar','工作日历']] as const).map(([id,label])=><button key={id} aria-current={view===id?'page':undefined} aria-pressed={view===id} onClick={()=>openView(id)}>{label}</button>)}</nav>}
-      {view === 'dashboard' && <TradeDashboard customers={reminderData?.customers||customers} followups={reminderData?.followups||followupRows} tasks={tasks} commitments={tradeCommitments} status={dashboardStatus==='ready'?(reminderError?'error':reminderData?'ready':'loading'):dashboardStatus} reminderRows={reminderData&&!reminderError?sharedReminderRows:null} reminderError={reminderError} onCRM={()=>setView('crm')} onTasks={()=>setView('tasks')} onCommitments={()=>setView('commitments')} openCustomer={setSelected} refresh={()=>setDashboardRefresh(n=>n+1)}/>}
+      {view === 'dashboard' && <OverviewBoards navigate={route=>route.startsWith('work/')?openView(route.slice(5) as View):openKnowledge(route)}/>}
 
       {view==='tasks'&&<details className="page"><summary>历史独立任务（不参与客户跟进提醒）</summary><OnlineRecords resource="tasks" customers={customers} changed={async()=>setTasks(await api.tasks())}/></details>}
 

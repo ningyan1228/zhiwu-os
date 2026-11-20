@@ -1,0 +1,10 @@
+const fs=require('fs'),vm=require('vm'),ts=require('typescript'),assert=require('assert/strict');
+const output=ts.transpileModule(fs.readFileSync('src/OverviewBoards.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2020}}).outputText;
+const exportsObject={};const mockedRequire=name=>name==='./api'?{api:{}}:name==='./followupModel'?{reminderToday:()=> '2026-11-20'}:name.endsWith('.css')?{}:require(name);
+vm.runInNewContext(output,{exports:exportsObject,require:mockedRequire,Date,Intl,Number,Promise,setTimeout,clearTimeout,AbortSignal});
+const sorted=exportsObject.sortItems([{title:'old',detail:'',date:'2026-10-01'},{title:'unknown',detail:''},{title:'new',detail:'',date:'2026-11-20'},{title:'bad',detail:'',date:'not-a-date'}]);assert.equal(sorted.length,2);assert.equal(sorted[0].title,'new');
+const React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
+const view=states=>renderToStaticMarkup(React.createElement(exportsObject.OverviewBoardView,{states,navigate:()=>{},reload:()=>{}}));
+const loading=view(Array.from({length:6},()=>({})));assert.equal((loading.match(/ob-loading/g)||[]).length,6);assert.ok(!loading.includes('ob-metric'));
+const error=view(Array.from({length:6},()=>({error:'test failure'})));assert.equal((error.match(/暂时无法读取/g)||[]).length,6);assert.ok(!error.includes('ob-metric'));
+console.log('PASS newest-first ordering, missing date exclusion, six independent loading/error cards, no fake zero metrics');
