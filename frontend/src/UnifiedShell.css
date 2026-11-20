@@ -68,3 +68,25 @@
 
 /* Theme surfaces keep overdue rows readable in dark mode. */
 .app-shell .cockpit-priority-row{background:var(--ui-surface)!important;border-color:var(--ui-line)!important}.app-shell .cockpit-priority-row:hover{background:var(--ui-soft)!important}
+
+/* Compact desktop navigation is an icon rail, never a narrow text column. */
+@media(min-width:761px){
+  .app-shell.sidebar-compact>.sidebar{padding:24px 12px 16px;overflow-x:hidden}
+  .app-shell.sidebar-compact>.sidebar .brand{padding:0 0 24px;justify-content:center;gap:0}
+  .app-shell.sidebar-compact>.sidebar .brand>div:not(.brand-mark),
+  .app-shell.sidebar-compact>.sidebar .unified-nav>button>span,
+  .app-shell.sidebar-compact>.sidebar .unified-nav details>button,
+  .app-shell.sidebar-compact>.sidebar .nav-bottom>button>span,
+  .app-shell.sidebar-compact>.sidebar .nav-bottom>a>span,
+  .app-shell.sidebar-compact>.sidebar .profile>div:not(.avatar),
+  .app-shell.sidebar-compact>.sidebar .profile>svg{display:none!important}
+  .app-shell.sidebar-compact>.sidebar .unified-nav{overflow-x:hidden}
+  .app-shell.sidebar-compact>.sidebar .unified-nav>button,
+  .app-shell.sidebar-compact>.sidebar .unified-nav summary,
+  .app-shell.sidebar-compact>.sidebar .nav-bottom>button,
+  .app-shell.sidebar-compact>.sidebar .nav-bottom>a{display:flex;justify-content:center;align-items:center;width:100%;min-width:0;padding:10px 0!important;gap:0;font-size:0!important;white-space:nowrap}
+  .app-shell.sidebar-compact>.sidebar .unified-nav summary::after{display:none}
+  .app-shell.sidebar-compact>.sidebar svg{width:20px;height:20px;flex-shrink:0}
+  .app-shell.sidebar-compact>.sidebar .brand-mark{flex-shrink:0}
+  .app-shell.sidebar-compact>.sidebar .profile .avatar{font-size:12px;flex-shrink:0}
+}
