@@ -36,14 +36,14 @@ export function MemorySummary({ customer, projects, products, followups }: Summa
   const age = validDate ? Math.floor((Date.now() - Date.parse(date)) / 86400000) : null
   const related = projects.filter(item => item.customer_id === customer.id)
   const progress = useFollowup ? brief(latest.content, 180) : brief(customer.current_progress?.join('；') || customer.status_label, 180)
-  const nextAction = useFollowup ? latest.next_action : customer.next_action?.join('；')
+  const nextAction = customer.next_action?.join('；') || ''
 
   return <section className="customer-memory-summary" aria-label="客户中文速记">
     <dl>
       <div><dt>关注什么产品</dt><dd>{readable(customer.product_interest)}</dd></div>
       <div><dt>用在哪</dt><dd>{readable(customer.application)}</dd></div>
       <div><dt>最近记录</dt><dd>{progress}<small>{validDate ? date.slice(0, 10) : '记录日期待补充'} · {useFollowup ? '客户跟进记录' : '客户档案'}</small></dd></div>
-      <div><dt>下一步做什么</dt><dd>{brief(nextAction, 180)}<small>跟进日期：{customer.next_followup_date && customer.next_followup_date !== '—' ? customer.next_followup_date : '未设置'}</small></dd></div>
+      <div><dt>当前计划（客户档案）</dt><dd>{brief(nextAction, 180)}{latest?.next_action && <small>最近沟通中的约定：{brief(latest.next_action,180)}</small>}<small>跟进日期：{customer.next_followup_date && customer.next_followup_date !== '—' ? customer.next_followup_date : '未设置'}</small></dd></div>
     </dl>
     {(age === null || age >= 30) && <p className="memory-age">{age === null ? '进展日期待补充' : `这条记录距今 ${age} 天`}，当前情况需要重新确认。</p>}
     {related.length > 0 && <details className="memory-projects" open={related.length > 1}><summary>分别查看 {related.length} 个项目的产品与进展</summary>{related.map(project => {
@@ -100,11 +100,11 @@ export function MemoryCRM({ customers, projects, products, followups, emails, op
       const memoryName = pref?.alias || defaultName
       const latest = latestFollowup(customer, followups)
       const useFollowup = latest && (!customer.last_contact_date || latest.date >= customer.last_contact_date)
-      const nextAction = useFollowup ? latest.next_action : customer.next_action?.join('；')
+      const nextAction = customer.next_action?.join('；') || ''
       return <article className="memory-customer" key={customer.id}>
         <header><div><small>{customer.company_name}</small><h2>{memoryName}</h2><small>{pref?.alias ? `默认：${defaultName}` : '默认名称：国家 · 邮件发件人'}</small></div><button aria-label={`${pref?.pinned ? '取消置顶' : '置顶'} ${customer.company_name}`} onClick={() => save(customer.id, pref?.alias || '', !pref?.pinned)}>{pref?.pinned ? '★ 已置顶' : '☆ 置顶'}</button></header>
         <p className={`memory-schedule ${schedule.tone}`}>时间安排：{schedule.text}</p>
-        <div className="memory-quick-facts"><div><small>档案阶段</small><b>{chineseStage[customer.customer_stage] || customer.customer_stage}</b></div><div><small>关注产品</small><b>{readable(customer.product_interest)}</b></div><div><small>下一步</small><b>{brief(nextAction, 54)}</b></div></div>
+        <div className="memory-quick-facts"><div><small>档案阶段</small><b>{chineseStage[customer.customer_stage] || customer.customer_stage}</b></div><div><small>关注产品</small><b>{readable(customer.product_interest)}</b></div><div><small>当前计划（客户档案）</small><b>{brief(nextAction, 54)}</b>{latest?.next_action&&<small>最近沟通约定：{brief(latest.next_action,72)}</small>}</div></div>
         {editing === customer.id ? <form className="memory-alias-form" onSubmit={event => { event.preventDefault(); save(customer.id, String(new FormData(event.currentTarget).get('alias') || '').trim(), Boolean(pref?.pinned)) }}><input autoFocus aria-label="中文记忆名" name="alias" maxLength={60} defaultValue={memoryName}/><button>保存</button>{pref?.alias && <button type="button" onClick={() => save(customer.id, '', Boolean(pref?.pinned))}>恢复默认</button>}<button type="button" onClick={() => setEditing(null)}>取消</button></form> : <button className="memory-alias-button" onClick={() => setEditing(customer.id)}>修改中文记忆名</button>}
         <details className="memory-more"><summary>展开更多（最近记录、项目）</summary><MemorySummary customer={customer} projects={projects} products={products} followups={followups}/></details>
         <footer><button className="primary" onClick={() => open(customer)}>客户 360</button><button onClick={() => addFollowup(customer)}>记录进展</button></footer>

@@ -14,7 +14,7 @@ async function timedFetch(input: RequestInfo | URL, init: RequestInit = {}, time
   try {
     return await fetch(input, { ...init, signal: controller.signal })
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw new Error('请求超时，操作已自动解锁，请稍后重试。')
+    if (error instanceof DOMException && error.name === 'AbortError') throw new Error('请求超时，未确认保存结果。请先刷新核对，避免重复新增。')
     throw error
   } finally {
     window.clearTimeout(timer)
@@ -37,7 +37,7 @@ async function request<T>(path: string, init: RequestInit = {}) {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { detail?: string } | null
-    throw new Error(body?.detail || '保存失败，请稍后重试。')
+    throw new Error(Array.isArray(body?.detail) ? body.detail.map((e: {loc?: string[]; msg?: string}) => `${e.loc?.slice(1).join('.') || '字段'}：${e.msg || '格式错误'}`).join('；') : body?.detail || '保存失败，请稍后重试。')
   }
   return response.json() as Promise<T>
 }
@@ -83,6 +83,8 @@ const asMailEmail = (item: MailEmail): MailEmail => ({ ...item, subject: item.su
 const asTask = (item: Task): Task => ({ ...item, description: item.description || '', start_time: item.start_time || null, end_time: item.end_time || null, status: item.status || 'Pending', category: item.category || '外贸', priority: item.priority || 'normal' })
 
 export const api = {
+  onlineRecords: (resource:string) => request<Record<string, any>[]>(`/api/online-records/${resource}`),
+  editOnlineRecord: (resource:string,id:string,changes:Record<string,unknown>,expected:Record<string,unknown>) => request<Record<string, any>>(`/api/online-records/${resource}/${id}`,{method:'PATCH',body:JSON.stringify({changes,expected})}),
   customers: () => request<Customer[]>('/api/customers').then(rows => rows.map(asCustomer)),
   workspaceMembers: () => request<WorkspaceMember[]>('/api/workspace-members'),
   createCustomer: (payload: Omit<Customer, 'id' | 'created_at' | 'last_contact_date'>) => request<Customer[]>('/api/customers', { method: 'POST', body: JSON.stringify(payload) }).then(rows => asCustomer(rows[0])),

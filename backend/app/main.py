@@ -16,7 +16,7 @@ from openpyxl.styles import Font
 from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from .reviewed_customer_import import prepare_review
 from .strict_lead_import import import_cpph_strict_records
@@ -74,7 +74,7 @@ class CustomerIn(BaseModel):
     company_name: str
     country: str
     contact_person: str
-    email: str
+    email: str = ""
     whatsapp: str | None = None
     product_interest: str | None = None
     customer_stage: str = "New"
@@ -94,6 +94,18 @@ class CustomerIn(BaseModel):
     customer_value: int | None = Field(default=None, ge=1, le=5)
     customer_tags: list[str] | None = None
     next_action: list[str] | None = None
+
+    @field_validator("next_followup_date", mode="before")
+    @classmethod
+    def normalize_followup_date(cls, value):
+        if value is None or str(value).strip() in ("", "—"):
+            return None
+        value = str(value).strip()
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            raise ValueError("下次跟进日期请填写 YYYY-MM-DD，或留空")
+        return parsed.isoformat()
 
 class LoginIn(BaseModel):
     email: str
@@ -930,7 +942,7 @@ async def create_customer(customer: CustomerIn, authorization: str | None = Head
 
 @app.patch("/api/customers/{customer_id}")
 async def update_customer(customer_id: str, customer: CustomerIn, authorization: str | None = Header(default=None)):
-    return await supabase(f"customers?id=eq.{customer_id}&archived_at=is.null", bearer(authorization), "PATCH", customer.model_dump(exclude_none=True))
+    return await supabase(f"customers?id=eq.{customer_id}&archived_at=is.null", bearer(authorization), "PATCH", customer.model_dump(exclude_unset=True))
 
 @app.get("/api/products")
 async def list_products(authorization: str | None = Header(default=None)):
@@ -1105,7 +1117,7 @@ async def update_project(project_id: str, project: ProjectUpdateIn, authorizatio
     existing = await supabase(f"projects?id=eq.{project_id}&archived_at=is.null&select=id,customer_id", token)
     if not existing:
         raise HTTPException(404, "Project not found")
-    rows = await supabase(f"projects?id=eq.{project_id}", token, "PATCH", project.model_dump(exclude_none=True))
+    rows = await supabase(f"projects?id=eq.{project_id}", token, "PATCH", project.model_dump(exclude_unset=True))
     record = rows[0]
     await record_timeline_event(token, title=f"更新项目：{record['project_name']}", event_type="project", source="project", related_id=record["id"], customer_id=existing[0]["customer_id"], product_id=record.get("product_id"))
     return rows
@@ -2667,7 +2679,7 @@ async def create_supplier(payload: SupplierIn, authorization: str | None = Heade
 async def update_supplier(supplier_id: str, payload: SupplierUpdateIn, authorization: str | None = Header(default=None)):
     token = bearer(authorization)
     await require_supplier(token, supplier_id)
-    rows = await supabase(f"suppliers?id=eq.{supplier_id}", token, "PATCH", {**payload.model_dump(exclude_none=True), "company_name": payload.company_name.strip(), "updated_at": datetime.now().isoformat()})
+    rows = await supabase(f"suppliers?id=eq.{supplier_id}", token, "PATCH", {**payload.model_dump(exclude_unset=True), "company_name": payload.company_name.strip(), "updated_at": datetime.now().isoformat()})
     return rows[0]
 
 @app.delete("/api/suppliers/{supplier_id}")
@@ -3195,3 +3207,15 @@ async def get_current_mailbox(authorization: str | None = Header(default=None)):
     if not rows:
         return {"configured": False, "label": "当前邮件中心", "email_address": None, "is_active": False}
     return {**rows[0], "configured": True}
+
+# Online editing uses the same user JWT and existing row-level security.
+from .online_editing import install as install_online_editing
+install_online_editing(app, supabase, bearer, {
+    "followups": FollowupIn, "projects": ProjectIn, "tasks": TaskIn,
+    "supplier_contacts": SupplierContactIn, "supplier_products": SupplierProductIn,
+    "supplier_followups": SupplierFollowupIn, "supplier_project_links": SupplierProjectLinkIn,
+    "supplier_rfqs": SupplierRfqIn,
+})
+
+from .knowledge_session import install as install_knowledge_session
+install_knowledge_session(app, settings, bearer)

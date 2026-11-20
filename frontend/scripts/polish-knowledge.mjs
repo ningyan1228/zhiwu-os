@@ -6,7 +6,9 @@ export function polishKnowledge(root) {
   edit('lib/productMarketMap.ts',s=>s.replace("name: '环氧化亚麻油 ELO'","name: '环氧亚麻油 ELO（CAS 8016-11-3）'"))
   edit('lib/inquiries.ts',s=>s.replace('id: string; customer_name: string;', 'id: string; customer_name: string; country: string | null;').replace('id,customer_name,product,inquiry_time,status,version,position', 'id,customer_name,country,product,inquiry_time,status,version,position').replace("status: 'pending' | 'sent'", "status: 'pending' | 'sent' | 'replied' | 'closed'"))
   edit('features/inquiries/Inquiries.tsx',s=>{
-    s="import { NewInquiry } from '@/KnowledgeEntryForms'\n"+s
+    s="import { InquiryEditor } from '@/InquiryEditor'\nimport { NewInquiry } from '@/KnowledgeEntryForms'\n"+s
+    s=s.replace('<dl className="inquiry-metadata">', '<InquiryEditor row={row} ownerId={ownerId} onSaved={next=>{setRow(next);onStatus(next)}}/><dl className="inquiry-metadata">')
+    s=s.replace('{...r,status:next.status,version:next.version}', '{...r,customer_name:next.customer_name,country:next.country,product:next.product,inquiry_time:next.inquiry_time,status:next.status,version:next.version}')
     s=s.replace("const update=async()=>{", "const update=async(status:Inquiry['status'])=>{")
     s=s.replace("    const status=row.status==='pending'?'sent':'pending'", "")
     s=s.replace("status==='sent'?'确认已在原邮件线程实际发送这封回复？此操作只记录状态，不发送邮件。':'确认更正为待发送？原状态变更记录会保留。'", "'确认将回复状态改为'+({pending:'待发送回复',sent:'回复已发送',replied:'客户已回信',closed:'已关闭'}[status])+'？仅记录实际进展，不发送邮件。'")
