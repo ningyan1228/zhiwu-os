@@ -3,6 +3,14 @@ import { join } from 'node:path'
 export function polishKnowledge(root) {
   function edit(name,fn){const p=join(root,name);writeFileSync(p,fn(readFileSync(p,'utf8')))}
   edit('App.tsx',s=>{
+    s="import { ProductSpecs } from '@/ProductSpecs'\n"+s
+    const specStart=s.indexOf('<div className="detail-section"><h3 id="product-parameters">')
+    const specEnd=s.indexOf('<div className="detail-section two-columns">',specStart)
+    if(specStart<0||specEnd<0)throw Error('Product parameter layout changed')
+    s=s.slice(0,specStart)+`<ProductSpecs key={selected.id} specs={selected.specs} onSource={()=>knowledgeDocument().getElementById('product-handbook')?.scrollIntoView({behavior:'smooth'})}/>\n        `+s.slice(specEnd)
+    s=s.replace('每个参数，都能回到原文。','产品技术资料').replace('这里展示四类公开核心产品；私人资料库可另有导入条目，两者分开统计。','按产品查牌号、参数和来源；四类核心产品资料集中查看。')
+    s=s.replace('<div className="library-layout">','<div className="library-layout technical-library">')
+    s=s.replace('<StatusPill status={product.status} />','')
     const start=s.indexOf("{account.status === 'anonymous' && <div className=\"login-form\">")
     const end=s.indexOf('</section>{user ? <DocumentImporter',start)
     if(start<0||end<start)throw Error('Knowledge account settings changed; review integration')
