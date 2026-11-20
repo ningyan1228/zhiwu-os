@@ -33,6 +33,8 @@ export function polishKnowledge(root) {
   })
   edit('features/market/CustomerBrowseList.tsx',s=>s.replace('{marketProducts.find(p=>p.id===lead.productId)?.name}', '<span className="short-product-tag" title={marketProducts.find(p=>p.id===lead.productId)?.name}>{{\'cpp-cpo\':\'CPP / CPO\',\'nl-w1201\':\'NL-W1201\',\'elo\':\'ELO\',\'fertilizer-coating\':\'肥料包膜\'}[lead.productId]}</span>'))
   edit('features/market/CompanyDetail.tsx',s=>{
+    s="import { CustomerProfileHeader } from '@/CustomerProfileHeader'\n"+s
+    s=s.replace('<p className="eyebrow">COMPANY DETAIL · PUBLIC RESEARCH</p><h2 id="company-detail-title">{lead.company}</h2>', '<CustomerProfileHeader name={lead.company} subtitle="" source="客户档案 · 公开研究"/><span id="company-detail-title" className="sr-only">{lead.company}</span>')
     const start=s.indexOf('          <div className="company-detail-status">'),end=s.indexOf('</div>',start)+6
     if(start<0)throw Error('Company overview changed')
     const status=s.slice(start,end)
