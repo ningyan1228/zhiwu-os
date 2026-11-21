@@ -53,3 +53,34 @@
 @keyframes fp-firefly-breathe{0%,100%{opacity:.45;transform:scale(.75)}50%{opacity:1;transform:scale(1.2)}}
 @keyframes fp-firefly-glimmer{0%,100%{opacity:.75;transform:scale(.9)}50%{opacity:1;transform:scale(1.1)}}
 @media(prefers-reduced-motion:reduce){.fp-firefly-halo,.fp-firefly-core{animation:none}}
+/* Night atlas: quiet geography, warm customer lights and translucent controls. */
+.footprints.fp-immersive{background:#0b1c29}
+.footprints.fp-immersive .leaflet-container{background-color:#0b1c29;background-image:radial-gradient(ellipse at 52% 42%,#24455388,transparent 65%),radial-gradient(ellipse at 8% 0%,#28516066,transparent 45%),linear-gradient(155deg,#132d3c,#091722);background-size:100% 100%}
+.footprints.fp-immersive .fp-land{filter:drop-shadow(0 2px 3px #0006);stroke-linejoin:round}
+.footprints.fp-immersive .fp-heading{top:32px;left:36px;right:36px}
+.footprints.fp-immersive .fp-heading h1{color:#eef3f1!important;font-size:28px;font-weight:500!important;letter-spacing:2px}
+.footprints.fp-immersive .fp-heading small{color:#c8b88e;letter-spacing:4px;font-size:9px}
+.footprints.fp-immersive .fp-heading p{color:#94adb5;letter-spacing:1px}
+.footprints.fp-immersive .fp-heading button,.footprints.fp-immersive .fp-tools,.footprints.fp-immersive .fp-metrics,.footprints.fp-immersive .fp-reset{background:#122c3cd9!important;border:1px solid #7797a136!important;box-shadow:0 10px 36px #0002,inset 0 1px #ffffff06;backdrop-filter:blur(20px);color:#dce7e9!important}
+.footprints.fp-immersive .fp-heading button{border-radius:10px;padding:11px 17px}
+.footprints.fp-immersive .fp-tools{top:142px;left:36px;border-radius:12px;padding:5px;gap:4px}
+.footprints.fp-immersive .fp-tools input{background:#07192355!important;border-radius:8px;color:#e3edef!important;padding:11px 14px;width:230px}
+.footprints.fp-immersive .fp-tools input::placeholder{color:#90a8b3}
+.footprints.fp-immersive .fp-tools select,.footprints.fp-immersive .fp-tools button{background:transparent!important;color:#c6d7dc!important}
+.footprints.fp-immersive .fp-tools select{color-scheme:dark}
+.footprints.fp-immersive .fp-tools option{background:#142d3c;color:#e3edef}
+.footprints.fp-immersive .fp-tools button:hover{background:#ffffff0d!important;color:#fff4d6!important}
+.footprints.fp-immersive .fp-metrics{left:36px;bottom:46px;border-radius:14px}
+.footprints.fp-immersive .fp-metrics>div,.footprints.fp-immersive .fp-metrics>button{background:transparent!important;border-color:#71909b30!important;color:#e3d5ae!important;padding:17px 25px!important}
+.footprints.fp-immersive .fp-metrics b{font-size:25px;font-weight:500;letter-spacing:1px;color:#e3d5ae!important}
+.footprints.fp-immersive .fp-metrics span{color:#91a9b5!important;font-size:10px;letter-spacing:.3px;margin-top:6px}
+.footprints.fp-immersive .fp-legend{color:#7e9ca9;left:36px;bottom:16px;font-size:10px}
+.footprints.fp-immersive .fp-compass{color:#78929f;text-shadow:none;opacity:.55}
+.footprints.fp-immersive .leaflet-control-zoom{border:1px solid #7797a136!important;box-shadow:0 6px 20px #0002}
+.footprints.fp-immersive .leaflet-control-zoom a{background:#122c3ce8!important;color:#c4d4dc!important;border-color:#7797a130!important}
+.footprints.fp-immersive .leaflet-control-zoom a:hover{background:#254352!important}
+.footprints.fp-immersive .leaflet-control-attribution{background:#0b1c29b3;color:#8099a5;font-size:9px}
+.footprints.fp-immersive .leaflet-control-attribution a{color:#a8bbc3}
+.footprints.fp-immersive .leaflet-tooltip{background:#152f40f5;color:#ecdfbd;border:1px solid #bca77b55;box-shadow:0 8px 30px #0004}
+.footprints.fp-immersive .leaflet-tooltip-top:before{border-top-color:#152f40}
+@media(max-width:760px){.footprints.fp-immersive .fp-heading{top:18px;left:16px;right:16px}.footprints.fp-immersive .fp-heading h1{font-size:22px}.footprints.fp-immersive .fp-tools{top:92px;left:16px}.footprints.fp-immersive .fp-tools input{width:140px}.footprints.fp-immersive .fp-metrics{left:12px;bottom:44px}.footprints.fp-immersive .fp-metrics>div,.footprints.fp-immersive .fp-metrics>button{padding:10px 7px!important}.footprints.fp-immersive .fp-metrics b{font-size:20px}.footprints.fp-immersive .fp-legend{left:12px;bottom:18px;font-size:9px}}
