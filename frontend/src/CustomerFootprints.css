@@ -41,3 +41,15 @@
 .fp-immersive .leaflet-top.leaflet-left{top:auto;bottom:220px;left:auto;right:22px}.fp-immersive .leaflet-control-zoom{margin:0}.fp-immersive .leaflet-control-zoom a{background:#f8fbfce6;color:#25445b}
 .fp-immersive .fp-light{filter:drop-shadow(0 0 4px #226ac7) drop-shadow(0 0 10px #8bd6ff);cursor:pointer}
 @media(max-width:760px){.fp-immersive{height:calc(100dvh - 60px)}.fp-immersive .fp-heading{top:18px;left:16px;right:16px}.fp-immersive .fp-heading h1{font-size:21px}.fp-immersive .fp-heading p{display:none}.fp-immersive .fp-tools{top:92px;left:16px;max-width:calc(100% - 32px)}.fp-immersive .fp-tools input{width:140px}.fp-immersive .fp-metrics{bottom:40px;left:12px;right:12px;justify-content:space-around}.fp-immersive .fp-metrics>div,.fp-immersive .fp-metrics>button{padding:10px 7px!important;flex:1}.fp-immersive .fp-metrics b{font-size:20px}.fp-immersive .fp-metrics span{font-size:9px}.fp-immersive .fp-panel,.fp-immersive .fp-extra{top:175px;bottom:130px;right:12px;width:350px;max-width:calc(100% - 24px)}.fp-immersive .fp-editor{top:170px;max-height:calc(100% - 190px);right:12px}.fp-immersive .fp-legend{left:12px;font-size:9px;bottom:20px}.fp-immersive .fp-compass{display:none}}
+/* Animate the inner light only: Leaflet owns the marker's geographic transform. */
+.fp-map .fp-firefly-marker{background:none;border:0;cursor:pointer}
+.fp-firefly{position:relative;display:grid;place-items:center;width:32px;height:32px;pointer-events:none}
+.fp-firefly-halo{position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle,#fff1b98c 0%,#f3c96550 28%,#e7b74b18 52%,transparent 72%);animation:fp-firefly-breathe var(--firefly-duration) ease-in-out var(--firefly-delay) infinite}
+.fp-firefly-core{position:relative;width:var(--firefly-size);height:var(--firefly-size);border-radius:50%;background:radial-gradient(circle at 40% 35%,#fffef2 10%,#fff1b0 48%,#d8a747 100%);box-shadow:0 0 4px #fff9d9,0 0 9px #eebc62b0,0 0 17px #e6b44955;animation:fp-firefly-glimmer var(--firefly-duration) ease-in-out var(--firefly-delay) infinite}
+.fp-firefly-marker.is-shipping .fp-firefly-core{outline:1px solid #fff9dd;outline-offset:3px}
+.fp-firefly-marker.is-selected .fp-firefly:after{content:'';position:absolute;inset:3px;border:1px solid #fff4c9;border-radius:50%;box-shadow:0 0 8px #e9bb61}
+.fp-firefly-marker:hover .fp-firefly-core,.fp-firefly-marker:focus-visible .fp-firefly-core{box-shadow:0 0 5px #fff,0 0 14px #ffd26c,0 0 24px #e9bd68}
+.fp-firefly-marker:focus-visible{outline:2px solid #735823;outline-offset:3px;border-radius:50%}
+@keyframes fp-firefly-breathe{0%,100%{opacity:.45;transform:scale(.75)}50%{opacity:1;transform:scale(1.2)}}
+@keyframes fp-firefly-glimmer{0%,100%{opacity:.75;transform:scale(.9)}50%{opacity:1;transform:scale(1.1)}}
+@media(prefers-reduced-motion:reduce){.fp-firefly-halo,.fp-firefly-core{animation:none}}
