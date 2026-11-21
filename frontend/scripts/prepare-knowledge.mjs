@@ -51,6 +51,7 @@ if(start<0||end<0) throw new Error('Knowledge shell changed; review adapter befo
 text=text.slice(0,start)+'    <main className="main-area">\n'+text.slice(end)
 writeFileSync(app,text)
 polishKnowledge(target)
+cpSync(resolve('src/knowledge-overrides/customerFollowup.ts'),join(target,'lib/customerFollowup.ts'))
 console.log(`Prepared public knowledge module ${revision}`)
 
 await import('./prepare-overview.mjs')
