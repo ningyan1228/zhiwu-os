@@ -55,3 +55,7 @@ cpSync(resolve('src/knowledge-overrides/customerFollowup.ts'),join(target,'lib/c
 console.log(`Prepared public knowledge module ${revision}`)
 
 await import('./prepare-overview.mjs')
+
+// Respect a source ledger's explicitly declared contact-priority ordering.
+const followupView=join(target,'features/market/FollowupViews.tsx')
+writeFileSync(followupView,readFileSync(followupView,'utf8').replace("const defaultOrder = 'schedule'","const defaultOrder = document.metadata.default_sort_field === 'contact_priority_rank' ? 'priority' : 'schedule'"))
