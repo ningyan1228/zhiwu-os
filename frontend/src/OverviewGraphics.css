@@ -3,3 +3,6 @@
 @media(max-width:1150px){.gv-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.gv-heading h1 span{display:none}.gv-attention{gap:16px}.graph-overview{padding:18px}}
 @media(max-width:700px){.gv-grid{grid-template-columns:1fr}.gv-sync>span{display:none}.gv-heading h1{font-size:29px!important}.gv-attention{flex-wrap:wrap;gap:12px;padding:12px}.gv-attention>div{width:100%}.gv-all-tasks{margin-left:0}.gv-inquiry{justify-content:center}.graph-overview{padding:15px}.gv-legend button{font-size:13px}}
 @media(min-width:1151px) and (max-width:1699px){.gv-panel{padding-top:16px}.gv-coverage{height:146px}.gv-inquiry{height:176px}.gv-week{height:141px}.gv-week-track{height:81px}.gv-ranking{height:144px;padding-top:16px;gap:12px}.gv-stages{height:146px}.gv-stage-bar{height:92px}.gv-resource-stats{height:125px;padding-top:18px}.gv-latest{padding-top:9px;padding-bottom:7px}.gv-panel-heading{margin-bottom:6px}}
+
+.gv-empty:has(.gv-read-error){flex-wrap:wrap}.gv-read-error{flex-basis:100%;font-size:13px;text-align:center;overflow-wrap:anywhere}.gv-read-error summary{cursor:pointer}.gv-read-error p{margin:8px 16px}
+

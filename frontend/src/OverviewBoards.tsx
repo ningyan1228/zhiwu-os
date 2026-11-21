@@ -1,6 +1,7 @@
 import {useEffect,useState} from 'react'
 import {Radar,Mail,Users,Package,Layers3,Sparkles,ArrowUpRight,RefreshCw,ArrowRight,CheckSquare,Clock3} from 'lucide-react'
 import {api} from './api'
+import {readOverviewWithRetry,overviewReadError} from './overviewRead'
 import {reminderRows,reminderToday} from './followupModel'
 import './OverviewBoards.css'
 import {OverviewBoardView} from './OverviewCanvas'
@@ -24,6 +25,7 @@ async function loaders():Promise<Array<()=>Promise<Board>>>{return [
 ]}
 export default function OverviewBoards({navigate}:{navigate:(route:string)=>void}){
  const [states,setStates]=useState<State[]>(Array.from({length:6},()=>({}))),[version,setVersion]=useState(0)
- useEffect(()=>{let alive=true;setStates(Array.from({length:6},()=>({})));void loaders().then(list=>Promise.allSettled(list.map(async(load,index)=>{try{const data=await limited(load);if(alive)setStates(old=>old.map((s,i)=>i===index?{data,loaded:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}:s))}catch(error){if(alive)setStates(old=>old.map((s,i)=>i===index?{error:error instanceof Error?error.message:(error as {message?:string})?.message||'暂时无法读取'}:s))}})));return()=>{alive=false}},[version])
+ useEffect(()=>{let alive=true;setStates(Array.from({length:6},()=>({})));void loaders().then(list=>Promise.allSettled(list.map(async(load,index)=>{try{const data=await readOverviewWithRetry(()=>limited(load),()=>alive);if(alive)setStates(old=>old.map((s,i)=>i===index?{data,loaded:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}:s))}catch(error){if(alive)setStates(old=>old.map((s,i)=>i===index?{error:overviewReadError(error)}:s))}})));return()=>{alive=false}},[version])
  return <OverviewBoardView states={states} navigate={navigate} reload={()=>setVersion(x=>x+1)}/>
 }
+

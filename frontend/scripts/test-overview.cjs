@@ -1,5 +1,5 @@
 const fs=require('fs'),vm=require('vm'),ts=require('typescript'),assert=require('assert/strict');
-const modules={};function load(file){if(modules[file])return modules[file];const out={};modules[file]=out;const output=ts.transpileModule(fs.readFileSync('src/'+file+'.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2020}}).outputText;vm.runInNewContext(output,{exports:out,require:name=>name==='./OverviewCanvas'?load('OverviewCanvas'):name==='./api'?{api:{}}:name==='./followupModel'?{reminderToday:()=> '2026-11-20'}:name.endsWith('.css')?{}:require(name),Date,Intl,Number,Promise,setTimeout,clearTimeout,AbortSignal});return out}
+const modules={};function load(file){if(modules[file])return modules[file];const out={};modules[file]=out;const output=ts.transpileModule(fs.readFileSync('src/'+file+'.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2020}}).outputText;vm.runInNewContext(output,{exports:out,require:name=>name==='./OverviewCanvas'?load('OverviewCanvas'):name==='./overviewRead'?{}:name==='./api'?{api:{}}:name==='./followupModel'?{reminderToday:()=> '2026-11-20'}:name.endsWith('.css')?{}:require(name),Date,Intl,Number,Promise,setTimeout,clearTimeout,AbortSignal});return out}
 const exportsObject=load('OverviewBoards');
 const sorted=exportsObject.sortItems([{title:'old',detail:'',date:'2026-10-01'},{title:'unknown',detail:''},{title:'new',detail:'',date:'2026-11-20'},{title:'bad',detail:'',date:'not-a-date'}]);assert.equal(sorted.length,2);assert.equal(sorted[0].title,'new');
 const React=require('react'),{renderToStaticMarkup}=require('react-dom/server');const view=states=>renderToStaticMarkup(React.createElement(exportsObject.OverviewBoardView,{states,navigate:()=>{},reload:()=>{}}));
@@ -10,3 +10,4 @@ const ready=view(Array.from({length:6},()=>({data})));assert.ok(ready.includes('
 console.log('PASS date ordering, six independent states, partial-data warning, real tasks, unsupported metrics hidden');
 
 const ring=renderToStaticMarkup(React.createElement(load('OverviewCanvas').GraphicRing,{slices:[{label:'零记录',value:0}],value:0,label:'测试'}));assert.ok(!ring.includes('NaN'));assert.ok(!ring.includes('Infinity'));console.log('PASS zero-total graphic');
+
