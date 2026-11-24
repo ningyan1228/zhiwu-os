@@ -5,10 +5,15 @@ export type ReminderSnapshot={customers:ReminderCustomer[];followups:ReminderFol
 export const reminderToday=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
 export function validDay(value?:string|null){return !!value&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&!Number.isNaN(Date.parse(value))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value}
 export function latestManualFollowup(customerId:string, followups:ReminderFollowup[]){
- return followups.filter(f=>f.customer_id===customerId&&validDay(f.date)&&!f.content.startsWith('邮件自动归档：')).sort((a,b)=>b.date.localeCompare(a.date)||(b.created_at||'').localeCompare(a.created_at||'')||(b.id||'').localeCompare(a.id||''))[0]
+ return followups.filter(f=>f.customer_id===customerId&&validDay(f.date)&&!f.content.startsWith('邮件自动归档：')&&!f.content.startsWith('资料补充：')&&f.channel!=='archive_evidence'&&f.channel!=='archive_snapshot').sort((a,b)=>b.date.localeCompare(a.date)||(b.created_at||'').localeCompare(a.created_at||'')||(b.id||'').localeCompare(a.id||''))[0]
+}
+export function archiveIsCurrent(customer:Customer,followups:ReminderFollowup[]){
+ const synced=customer.customer_tags?.find(t=>t.startsWith('archive-sync:'))?.slice(13),latest=latestManualFollowup(customer.id,followups)
+ return !!synced&&(!latest||!latest.created_at||Date.parse(latest.created_at)<=Date.parse(synced))
 }
 export function customerPlan(customer:Customer,followups:ReminderFollowup[]){
  const latest=latestManualFollowup(customer.id,followups)
+ if(archiveIsCurrent(customer,followups))return {latest,text:customer.next_action?.join('；')||'',source:'完整档案当前计划'}
  return {latest,text:latest ? latest.next_action?.trim()||'' : customer.next_action?.join('；')||'',source:latest?'最近沟通约定':'客户档案计划'}
 }
 export const effectiveFollowupDate=(customer:ReminderCustomer)=>customer.followup_closed||customer.followup_date_placeholder?null:validDay(customer.next_followup_date)?customer.next_followup_date:null
@@ -27,7 +32,7 @@ export function reminderRows(data:ReminderSnapshot,today=reminderToday(),include
   const manual=latestManualFollowup(c.id,data.followups)
   const date=c.followup_date_placeholder?null:validDay(c.next_followup_date)?c.next_followup_date:null
   const emails=data.emails.filter(e=>e.customer_id===c.id&&!e.is_internal_sender).sort((a,b)=>b.received_at.localeCompare(a.received_at))
-  return {customer:c,latest,date,...followupAssessment(c,data.followups,today),next:manual?.next_action||'尚未记录下一步',source:manual?.channel||(manual?.email_id?'邮箱':c.followup_source)||'未注明',emails}
+  return {customer:c,latest,date,...followupAssessment(c,data.followups,today),next:customerPlan(c,data.followups).text||'尚未记录下一步',source:manual?.channel||(manual?.email_id?'邮箱':c.followup_source)||'未注明',emails}
  }).sort((a,b)=>(a.dateReview?1e8:a.days??Infinity)-(b.dateReview?1e8:b.days??Infinity)||a.customer.company_name.localeCompare(b.customer.company_name))
 }
 export type ReminderRow=ReturnType<typeof reminderRows>[number]

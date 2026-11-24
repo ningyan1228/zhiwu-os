@@ -281,8 +281,44 @@ function parseDocument(markdown: string): FollowupDocument {
 
 export function timePrecision(value: string) { return /未核|未知|待核/.test(value) ? '时间待核（保留原文）' : /约/.test(value) ? '约略时间（按原文）' : /\d{1,2}:\d{2}/.test(value) ? '时分（时区按原文）' : '日期／范围（不补时分）' }
 
+function parseFullArchive(markdown: string): FollowupDocument {
+  const blocks = markdownBlocks(markdown), lines = markdown.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n')
+  const metadata: Record<string, string> = { default_sort_field: 'contact_priority_rank' }
+  for (const line of lines.slice(1, lines.indexOf('---', 1))) { const m = /^(\w+):\s*(.*)$/.exec(line); if (m) metadata[m[1]] = m[2] }
+  const archiveStart = blocks.find(b => b.kind === 'heading' && b.level === 2 && /完整历史原档/.test(b.text))?.start ?? Infinity
+  const sections: Source[] = blocks.filter(b => b.kind === 'heading' && b.level === 2).map((b, i, all) => ({ ...b, end: (all[i+1]?.start ?? lines.length+1)-1, raw: lines.slice(b.start-1,(all[i+1]?.start ?? lines.length+1)-1).join('\n'), historical: b.start >= archiveStart }))
+  const summary = blocks.find((b): b is Extract<MarkdownBlock,{kind:'table'}> => b.kind === 'table' && b.section.includes('全部客户索引') && b.headers.includes('编号'))
+  if (!summary) throw new Error('Missing archive index')
+  const identities: FollowupIdentity[] = [], customers: FollowupCustomer[] = [], domestic: Source[] = [], events: FollowupEvent[] = [], tasks: FollowupTask[] = []
+  for (const [n, row] of summary.rows.entries()) {
+    const id = row[1], display = row[2].replace(/^\[([\s\S]*)\]\(#[^)]+\)$/, '$1')
+    if (!/^[CD]\d+$/.test(id) || identities.some(i => i.id === id)) throw new Error('Invalid archive identity')
+    const identity = identityFromLabel(id, display, id.startsWith('D') ? 'domestic' : 'overseas'); identities.push(identity)
+    const heading = blocks.find(b => b.kind === 'heading' && b.level === 3 && b.start < archiveStart && new RegExp('^\\d+\\.\\s+' + id + '｜').test(b.text))
+    if (!heading) throw new Error('Missing customer history')
+    const end = (blocks.find(b => b.start > heading.start && b.kind === 'heading' && b.level <= 3)?.start ?? lines.length+1)-1
+    const owned = blocks.filter(b => b.start > heading.start && b.end <= end)
+    const historyStart = owned.find(b => b.kind === 'heading' && b.level === 4 && /历史往来/.test(b.text))?.start ?? end+1
+    const source: Source = { ...heading, end, raw: lines.slice(heading.start-1,end).join('\n') }
+    const current = owned.find((b): b is Extract<MarkdownBlock,{kind:'table'}> => b.kind === 'table' && b.headers[0] === '字段' && b.start < historyStart)
+    const field = (key: string) => markdownText(current?.rows.find(r => r[0] === key)?.[1] ?? '')
+    identity.product = field('产品/牌号') || identity.product
+    const currentSource = { ...source, end: historyStart-1, raw: lines.slice(heading.start-1,historyStart-1).join('\n') }
+    const history: Source = { ...source, id: source.id+'-history', start: historyStart, historical: true, raw: lines.slice(historyStart-1,end).join('\n') }
+    const rowSource: Source = { id: 'source-L'+summary.rowLines[n], start: summary.rowLines[n], end: summary.rowLines[n], section: summary.section, raw: [lines[summary.start-1],lines[summary.start],lines[summary.rowLines[n]-1]].join('\n') }
+    const action = field('下一步') || markdownText(row[6] ?? '')
+    const task: FollowupTask = { id: id+'-suggested-L'+summary.rowLines[n], customerId:id, project:identity.product, action, waiting:'按原文核对', dateNature:'实际跟进日期待确认，未以整理日期代填', status:'处理情况待核', evidence:'以实际执行记录为准', source:rowSource };tasks.push(task)
+    const customerEvents: FollowupEvent[] = []
+    for (const b of owned) if (b.kind === 'table' && b.headers[0] === '日期' && b.headers[1] === '记录性质') b.rows.forEach((r,i) => { const event: FollowupEvent = { id:id+'-history-L'+b.rowLines[i], customerId:id, project:identity.product, time:r[0], precision:timePrecision(r[0]), type:r[1], content:markdownText(r[2] ?? ''), source:{id:'source-L'+b.rowLines[i],start:b.rowLines[i],end:b.rowLines[i],section:b.section,raw:[lines[b.start-1],lines[b.start],lines[b.rowLines[i]-1]].join('\n'),historical:b.start>=historyStart} };customerEvents.push(event);events.push(event) })
+    if (id.startsWith('D')) { domestic.push(source); continue }
+    customers.push({id,customer:identity.name,product:identity.product,contactPriorityRank:n+1,contactPriority:field('联系优先级'),priorityReason:'',actionDate:null,actionLabel:'实际跟进日期待确认',lastEmailProcessedDate:null,processingDateLabel:field('最近处理邮件/沟通记录') || '待核',processingActionText:'邮件／沟通混合记录，具体性质见日期依据',processingDatePrecision:'待核',processingSourceText:field('日期依据'),processingSources:current?[current]:[],sourceOrder:n,progress:field('当前状态') || markdownText(row[5] ?? ''),status:field('当前状态'),next:action,detail:source.raw,fields:(current?.rows ?? []).map(r=>({label:r[0],value:markdownText(r[1] ?? '')})),customerTime:'',sentTime:'',waiting:'按原文核对',dateNature:'实际排期待确认',uncertainty:field('仍待确认'),currentFields:current?[current]:[],sources:historyStart<=end?[currentSource,history]:[source],events:customerEvents,tasks:[task]})
+  }
+  if (customers.length !== Number(metadata.overseas_or_inquiry_count) || domestic.length !== Number(metadata.domestic_record_count)) throw new Error('Archive count mismatch')
+  return {title:'外贸客户全量档案',blocks,customers,domestic,sections,events,tasks,identities,warnings:[],metadata,coverage:{total:blocks.length,retained:blocks.length,unretained:0},failed:false}
+}
+
 export function parseFollowup(markdown: string): FollowupDocument {
-  try { return parseDocument(markdown) } catch {
+  try { return markdown.slice(0, 200).includes('dataset_id: neon-lion-all-customer-archive') ? parseFullArchive(markdown) : parseDocument(markdown) } catch {
     return { title: '原文已保留，解析失败', blocks: [], customers: [], domestic: [], sections: [], events: [], tasks: [], identities: [], warnings: ['解析失败：仅显示本版本完整源文本；未使用旧版索引。'], metadata: {}, coverage: { total: 1, retained: 1, unretained: 0 }, failed: true }
   }
 }

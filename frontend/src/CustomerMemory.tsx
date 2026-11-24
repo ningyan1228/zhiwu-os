@@ -1,4 +1,4 @@
-import { followupAssessment, customerPlan, latestManualFollowup, effectiveFollowupDate, reminderToday } from './followupModel'
+import { archiveIsCurrent, followupAssessment, customerPlan, latestManualFollowup, effectiveFollowupDate, reminderToday } from './followupModel'
 import { useState, type ReactNode } from 'react'
 import type { Customer, Project, Product, Followup, MailEmail } from './types'
 import './customer-memory.css'
@@ -32,7 +32,7 @@ const customerSchedule=(c:Customer,fs:Followup[])=>followupAssessment(c,fs).date
 type SummaryProps = { customer: Customer; projects: Project[]; products: Product[]; followups: Followup[] }
 export function MemorySummary({ customer, projects, products, followups }: SummaryProps) {
   const latest = latestFollowup(customer, followups)
-  const useFollowup = latest && (!customer.last_contact_date || latest.date >= customer.last_contact_date)
+  const useFollowup = !archiveIsCurrent(customer,followups) && latest && (!customer.last_contact_date || latest.date >= customer.last_contact_date)
   const date = useFollowup ? latest.date : customer.last_contact_date
   const validDate = isDate(date)
   const age = validDate ? Math.floor((Date.now() - Date.parse(date)) / 86400000) : null
