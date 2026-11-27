@@ -161,7 +161,7 @@
 .explorer-inspector .customer-business-brief>.customer-business-evidence {order:-1}
 .explorer-inspector .customer-evidence-original {overflow-wrap:anywhere}
 :host .company-detail.company-detail-drawer {
- --drawer-tint:color-mix(in srgb,var(--ui-surface) 54%,transparent);
+ --drawer-tint:color-mix(in srgb,var(--ui-surface) 92%,transparent);
  background:var(--drawer-tint)!important;
  border-color:var(--glass-edge)!important;backdrop-filter:var(--glass-filter);-webkit-backdrop-filter:var(--glass-filter)
 }
@@ -187,3 +187,17 @@
 .market-workspace-page .work-dimensions-dialog .atlas-filter-group>summary {padding:5px 0;cursor:pointer;font-size:14px;font-weight:600}
 .market-workspace-page .work-dimensions-dialog .atlas-filter-group[open]>summary {margin-bottom:8px}
 @media(max-width:640px){.market-workspace-page dialog.work-dimensions-dialog[open]{width:100%}}
+
+/* Diffuse map labels behind the overlay; keep long-form reading surfaces solid. */
+:host .company-detail-backdrop.company-detail-drawer-backdrop:not(.company-detail-inline) {
+ -webkit-backdrop-filter:blur(9px);backdrop-filter:blur(9px)
+}
+:host .company-detail.company-detail-drawer .outreach-email-preview {
+ background:var(--ui-surface)!important;color:var(--ui-text)
+}
+:host .company-detail.company-detail-drawer .outreach-email-body pre {
+ color:var(--ui-text);line-height:1.75
+}
+@media(prefers-reduced-transparency:reduce){
+ :host .company-detail-backdrop.company-detail-drawer-backdrop:not(.company-detail-inline) {backdrop-filter:none;-webkit-backdrop-filter:none}
+}
