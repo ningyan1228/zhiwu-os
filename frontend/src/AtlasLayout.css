@@ -131,3 +131,14 @@
 .market-workspace-page .work-dimensions-dialog .work-business-filters {grid-template-columns:minmax(0,1fr)}
 .market-workspace-page .work-dimensions-dialog>.work-preparation {padding:10px}
 }
+
+@media(min-width:1050px){
+.customer-map-view .customer-explorer>.explorer-inspector {display:flex;flex-direction:column;align-self:stretch;min-height:0;overflow:auto}
+.customer-map-view .explorer-inspector>:is(.explorer-profile,.explorer-detail-heading) {flex:none}
+.market-workspace-page .customer-explorer .explorer-inspector>.customer-lead-card {flex:1 0 auto;display:flex;flex-direction:column;width:100%;min-height:0;box-sizing:border-box;overflow:visible}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-card-evidence {flex:1 0 auto;display:flex;flex-direction:column}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-business-brief {flex:1;display:flex;flex-direction:column}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-brief-row {flex:1 0 auto}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-card-actions {position:sticky;bottom:0;z-index:2;margin-top:auto;background:var(--ui-surface);width:100%;box-sizing:border-box}
+.market-map-workspace:has(.atlas-panel-toggle[aria-expanded=false]) .customer-explorer>.explorer-inspector {display:none}
+}
