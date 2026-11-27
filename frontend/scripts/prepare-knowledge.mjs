@@ -67,3 +67,11 @@ writeFileSync(mapWorkspace, readFileSync(mapWorkspace, 'utf8').replace('classNam
 const leadCardFile = join(target, 'features/market/LeadCard.tsx')
 const leadCardSource = readFileSync(leadCardFile, 'utf8')
 writeFileSync(leadCardFile, leadCardSource.replace('<div className="customer-card-meta">', '<div className="customer-card-meta"><h3 className="atlas-business-title">业务与开发</h3>'))
+
+// The map inspector shows the source alongside its short business summary.
+writeFileSync(leadCardFile, readFileSync(leadCardFile, 'utf8')
+  .replace("variant?: 'card' | 'row'", "variant?: 'card' | 'row' | 'inspector'")
+  .replace('showContacts = true }: { lead: PublicLead; showContacts?: boolean', 'showContacts = true, inspector = false }: { lead: PublicLead; showContacts?: boolean; inspector?: boolean')
+  .replace('<details className="customer-business-evidence">', '<details open={inspector || undefined} className="customer-business-evidence">')
+  .replace('<BusinessEvidence lead={lead} />', '<BusinessEvidence lead={lead} inspector={variant === "inspector"} />'))
+writeFileSync(mapWorkspace, readFileSync(mapWorkspace, 'utf8').replace('<LeadCard key={activeLead.id}', '<LeadCard variant="inspector" key={activeLead.id}'))
