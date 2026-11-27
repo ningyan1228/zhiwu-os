@@ -161,8 +161,8 @@
 .explorer-inspector .customer-business-brief>.customer-business-evidence {order:-1}
 .explorer-inspector .customer-evidence-original {overflow-wrap:anywhere}
 :host .company-detail.company-detail-drawer {
- --drawer-tint:color-mix(in srgb,var(--workspace-glass) 85%,transparent);
- background:linear-gradient(145deg,var(--drawer-tint),var(--workspace-glass)),var(--workspace-wallpaper)!important;
+ --drawer-tint:color-mix(in srgb,var(--ui-surface) 54%,transparent);
+ background:var(--drawer-tint)!important;
  border-color:var(--glass-edge)!important;backdrop-filter:var(--glass-filter);-webkit-backdrop-filter:var(--glass-filter)
 }
 :host .company-detail.company-detail-drawer :is(.company-detail-header,.company-detail-navigation,.company-detail-tabs,.outreach-actions,.outreach-email-preview) {
@@ -171,3 +171,10 @@
 }
 :host .company-detail.company-detail-drawer :is(.company-detail-body,.company-detail-section,.outreach-email-subject,.outreach-email-body,.outreach-email-body pre) {background:transparent!important}
 :host .company-detail.company-detail-drawer .outreach-email-preview {border:1px solid var(--glass-edge);border-radius:14px;padding:clamp(12px,2vw,20px);box-shadow:inset 0 1px var(--glass-inset)}
+
+:host .company-detail.company-detail-drawer :is(.company-detail-header,.company-detail-navigation,.company-detail-tabs,.outreach-actions,.outreach-email-preview) {
+ background:var(--glass-inset)!important;
+}
+@media(prefers-reduced-transparency:reduce) {
+ :host .company-detail.company-detail-drawer {--drawer-tint:var(--ui-surface)}
+}
