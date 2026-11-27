@@ -46,10 +46,10 @@ export function polishKnowledge(root) {
     "const access = await followupRequest<FollowupAccess>(userId, '/access', undefined, controller.signal)\n      const index = await followupRequest<FollowupVersions>(userId, '/versions', undefined, controller.signal)",
     "const [access,index] = await Promise.all([followupRequest<FollowupAccess>(userId, '/access', undefined, controller.signal),followupRequest<FollowupVersions>(userId, '/versions', undefined, controller.signal)])"))
   edit('features/market/MarketIntelligence.tsx',s=>{
-    s="import { MarketNavigation, PaneResize } from '@/KnowledgePolish'\n"+s
+    s="import { PaneResize } from '@/KnowledgePolish'\n"+s
     const start=s.indexOf('<nav className="market-tabs"'),end=s.indexOf('</nav>',start)+6
     if(start<0||end<6)throw Error('Market navigation changed')
-    s=s.slice(0,start)+'<MarketNavigation customerView={customerView} tab={tab} preferredView={preferredView} onOpen={openTab}/>'+s.slice(end)
+    s=s.slice(0,start)+s.slice(end)
     const toolsBar = s.indexOf('<div className="market-results-bar compact-customer-results">')
     const nextPane = s.indexOf('<div ref={workspaceRef}', toolsBar)
     if (toolsBar < 0 || nextPane < 0) throw Error('Customer tools markup changed')
@@ -74,5 +74,6 @@ export function polishKnowledge(root) {
     return s
   })
 }
+
 
 

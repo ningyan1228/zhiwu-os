@@ -201,3 +201,4 @@
 @media(prefers-reduced-transparency:reduce){
  :host .company-detail-backdrop.company-detail-drawer-backdrop:not(.company-detail-inline) {backdrop-filter:none;-webkit-backdrop-filter:none}
 }
+.market-workspace-page>.market-heading:empty {display:none}

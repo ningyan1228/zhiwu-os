@@ -395,7 +395,13 @@ function App() {
       <div className="brand"><div className="brand-mark"><img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="干就是学工作站"/></div><div><strong>干就是学</strong><span>工作站</span></div><button className="mobile-close" onClick={() => setSidebar(false)}><X size={18}/></button></div>
       <nav className="unified-nav">
         <button className={['dashboard','tasks','calendar'].includes(view)?'active':''} title="今日工作" onClick={()=>openView('dashboard')}><Grid2X2 size={18}/><span>今日工作</span></button>
-        <button className={view==='knowledge'&&location.hash.startsWith('#market-intelligence')&&!location.hash.includes('follow-up')?'active':''} title="客户开发" onClick={()=>openKnowledge('market-intelligence')}><Radar size={18}/><span>客户开发</span></button>
+        <details open={view === 'knowledge' && /^#market-intelligence(?:\/(?:results|map|leads)(?:\/.*)?)?$/.test(location.hash)}>
+          <summary title="客户开发"><Radar size={18}/>客户开发</summary>
+          {[['market-intelligence','客户库'],['market-intelligence/results','开发成果']].map(([route,label]) => {
+            const active = view === 'knowledge' && (route.endsWith('/results') ? location.hash === '#' + route : /^#market-intelligence(?:\/(?:map|leads)(?:\/.*)?)?$/.test(location.hash))
+            return <button key={route} className={active ? 'active' : ''} aria-current={active ? 'page' : undefined} onClick={() => openKnowledge(route)}>{label}</button>
+          })}
+        </details>
         <button className={view==='knowledge'&&location.hash==='#inquiries'?'active':''} title="询盘往来" onClick={()=>openKnowledge('inquiries')}><Mail size={18}/><span>询盘往来</span></button>
         <details key={`followup-${view}-${location.hash}`} open={["crm","mail","business-map"].includes(view)||(view==="knowledge"&&location.hash.includes("follow-up"))}><summary title="客户跟进"><Users size={18}/>客户跟进</summary><button className={view==='crm'?'active':''} onClick={()=>openView('crm')}>客户 CRM</button><button onClick={()=>openKnowledge('market-intelligence/follow-up')}>团队台账</button><button onClick={()=>openView('mail')}>邮件中心</button><button onClick={()=>openView('business-map')}>生意地图</button></details>
         <details><summary title="产品中心"><Package size={18}/>产品中心</summary><button onClick={()=>openView('products')}>产品画像库</button><button onClick={()=>openKnowledge('products')}>产品技术资料</button><button onClick={()=>openView('relationships')}>产品关系</button></details>
@@ -1084,6 +1090,7 @@ function SupplierEditForm({ supplier, close, submit }: { supplier: Supplier; clo
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
+
 
 
 
