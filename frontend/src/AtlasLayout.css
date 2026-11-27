@@ -178,3 +178,12 @@
 @media(prefers-reduced-transparency:reduce) {
  :host .company-detail.company-detail-drawer {--drawer-tint:var(--ui-surface)}
 }
+.market-workspace-page dialog.work-dimensions-dialog[open] {width:min(590px,calc(100vw - 24px))}
+.market-workspace-page .work-dimensions-dialog .customer-extra-filters {gap:8px}
+.market-workspace-page .work-dimensions-dialog .market-product-row,.market-workspace-page .work-dimensions-dialog :is(.work-business-filters,.lead-geography-filters) label {display:flex!important;flex-direction:row!important;justify-content:space-between;align-items:center;text-align:left;min-width:0;font-size:14px;gap:10px}
+.market-workspace-page .work-dimensions-dialog .market-product-row>span {display:block}
+.market-workspace-page .work-dimensions-dialog .market-product-row select {min-width:0;max-width:78%;padding:8px;border:0;background:transparent;color:var(--ui-accent);font:inherit}
+.market-workspace-page .work-dimensions-dialog :is(.lead-geography-filters,.work-business-filters) {display:grid;grid-template-columns:minmax(0,1fr);gap:0}
+.market-workspace-page .work-dimensions-dialog .atlas-filter-group>summary {padding:5px 0;cursor:pointer;font-size:14px;font-weight:600}
+.market-workspace-page .work-dimensions-dialog .atlas-filter-group[open]>summary {margin-bottom:8px}
+@media(max-width:640px){.market-workspace-page dialog.work-dimensions-dialog[open]{width:100%}}
