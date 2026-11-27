@@ -400,7 +400,7 @@ function App() {
         <details key={`followup-${view}-${location.hash}`} open={["crm","mail","business-map"].includes(view)||(view==="knowledge"&&location.hash.includes("follow-up"))}><summary title="客户跟进"><Users size={18}/>客户跟进</summary><button className={view==='crm'?'active':''} onClick={()=>openView('crm')}>客户 CRM</button><button onClick={()=>openKnowledge('market-intelligence/follow-up')}>团队台账</button><button onClick={()=>openView('mail')}>邮件中心</button><button onClick={()=>openView('business-map')}>生意地图</button></details>
         <details><summary title="产品中心"><Package size={18}/>产品中心</summary><button onClick={()=>openView('products')}>产品画像库</button><button onClick={()=>openKnowledge('products')}>产品技术资料</button><button onClick={()=>openView('relationships')}>产品关系</button></details>
         <details><summary title="经营管理"><Layers3 size={18}/>经营管理</summary>{nav.filter(([key])=>['suppliers','commitments','quotes','projects'].includes(key)).map(([key,label,Icon])=><button key={key} className={view===key?'active':''} onClick={()=>openView(key as View)}><Icon size={16}/>{label}</button>)}</details>
-        <details><summary title="更多工具"><Sparkles size={18}/>更多工具</summary>{[['intelligence','行业情报'],['practice','外贸学习'],['assistant','回复助手'],['studio','内容工作室'],['settings','资料账号与设置']].map(([route,label])=><button key={route} onClick={()=>openKnowledge(route)}>{label}</button>)}<button onClick={()=>openView('imports')}>AI 导入暂存箱</button></details>
+        <details><summary title="更多工具"><Sparkles size={18}/>更多工具</summary>{[['market-intelligence/overview','开发总览'],['market-intelligence/products','产品匹配'],['market-intelligence/sources','来源与核验'],['intelligence','行业情报'],['practice','外贸学习'],['assistant','回复助手'],['studio','内容工作室'],['settings','资料账号与设置']].map(([route,label])=><button key={route} onClick={()=>openKnowledge(route)}>{label}</button>)}<button onClick={()=>openView('imports')}>AI 导入暂存箱</button></details>
       </nav>
       <div className="nav-bottom"><a href="https://notes.101921.xyz/" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开知识库"><CalendarDays size={18}/><span>知识库 ↗</span></a><button onClick={() => setModal('password')}><Settings size={18}/><span>设置</span></button><button className="profile" onClick={() => setModal('password')}><div className="avatar">{account.initial}</div><div><b>{account.name}</b><small>{account.role} · 修改密码</small></div><ChevronRight size={16}/></button></div>
     </aside>
@@ -1084,6 +1084,7 @@ function SupplierEditForm({ supplier, close, submit }: { supplier: Supplier; clo
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
+
 
 
 
