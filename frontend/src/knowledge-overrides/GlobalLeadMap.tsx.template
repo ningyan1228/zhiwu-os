@@ -183,6 +183,7 @@ export function GlobalLeadMap({ leads, selectedLead, hoveredLead, onSelectLead, 
       <MapBoundsObserver onChange={onBoundsChange} />
       <MapLayers leads={leads} selectedLead={selectedLead} hoveredLead={hoveredLead} showDensity={showDensity} onSelectLead={onSelectLead} onSelectGroup={onSelectGroup} />
     </MapContainer>
-    <p className="lead-map-legend">数字为当前筛选内的公司数，彩色点按产品区分。{showDensity && '黄圈表示各国已核验公开线索数量，位置为客户坐标汇总。'}数量不代表市场规模、成交概率或真实需求量。</p>
+    <details className="atlas-map-key"><summary aria-label="地图说明" title="地图说明">ⓘ</summary><p>数字为当前筛选内的公司数，彩色点按产品区分。{showDensity && '黄圈表示各国已核验公开线索数量，位置为客户坐标汇总。'}数量不代表市场规模、成交概率或真实需求量。</p></details>
   </div>
 }
+

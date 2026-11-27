@@ -50,6 +50,11 @@ export function polishKnowledge(root) {
     const start=s.indexOf('<nav className="market-tabs"'),end=s.indexOf('</nav>',start)+6
     if(start<0||end<6)throw Error('Market navigation changed')
     s=s.slice(0,start)+'<MarketNavigation customerView={customerView} tab={tab} preferredView={preferredView} onOpen={openTab}/>'+s.slice(end)
+    const toolsBar = s.indexOf('<div className="market-results-bar compact-customer-results">')
+    const nextPane = s.indexOf('<div ref={workspaceRef}', toolsBar)
+    if (toolsBar < 0 || nextPane < 0) throw Error('Customer tools markup changed')
+    const tools = s.slice(toolsBar, nextPane).trim()
+    s = s.slice(0, toolsBar) + "{view === 'map' ? <details className=\"atlas-data-tools\"><summary>数据工具</summary>" + tools + "</details> : " + tools + "}\n    " + s.slice(nextPane)
     s=s.replace("'下载开发信'","'导出可开发客户'").replace('<span>{unsentEmails.length}</span>','<span>（{unsentEmails.length}）</span>')
     s=s.replace("{view === 'leads' && <CompanyDetail", "{view === 'leads' && wide && <PaneResize/>}\n      {view === 'leads' && <CompanyDetail")
     return s
@@ -68,3 +73,4 @@ export function polishKnowledge(root) {
     return s
   })
 }
+

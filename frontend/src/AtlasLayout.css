@@ -50,3 +50,24 @@
 .market-workspace-page .customer-map-view .explorer-profile[data-product="fertilizer-coating"] {--cover:url('/material-covers/granules.jpg')}
 .market-workspace-page .customer-map-view .explorer-profile :is(h2,p,.explorer-eyebrow) {color:white!important;text-shadow:0 1px 4px #101820}
 @media(min-width:1600px){.market-workspace-page .market-map-workspace:has(.customer-explorer){grid-template-columns:clamp(320px,21vw,420px) minmax(0,1fr) clamp(360px,24vw,510px)}}
+:host .market-workspace-page:has(.customer-explorer){background:transparent!important}
+.market-workspace-page:has(.customer-explorer) .market-heading {margin-bottom:8px;padding-block:2px}
+.atlas-map-key {position:absolute;bottom:12px;left:12px;z-index:500;color:var(--text);font-size:13px}
+.atlas-map-key summary {width:30px;height:30px;display:grid;place-items:center;border-radius:50%;background:var(--surface);cursor:pointer;font-size:17px}
+.atlas-map-key p {position:absolute;bottom:35px;left:0;width:min(245px,60vw);margin:0;padding:12px;border:1px solid var(--line);background:var(--surface);border-radius:10px;line-height:1.6}
+.customer-map-view .customer-explorer .leaflet-control-attribution {margin-bottom:0}
+.atlas-data-tools {grid-column:1;grid-row:2;min-width:0;padding:6px 12px;background:var(--surface);font-size:13px}
+.atlas-data-tools summary {cursor:pointer;color:var(--muted)}
+@media(min-width:1050px){
+.market-workspace-page .market-map-workspace:has(.customer-explorer) .customer-work-toolbar {display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}
+.customer-work-toolbar:has(.work-view-toggle) h1 {grid-area:1/1;font-size:21px!important;margin:0}
+.market-map-workspace:has(.customer-explorer) .work-view-toggle {grid-area:1/2;margin:0;justify-self:end}
+.market-map-workspace:has(.customer-explorer) .work-search {grid-area:2/1;min-width:0;box-sizing:border-box}
+.market-map-workspace:has(.customer-explorer) .work-dimensions-open {grid-area:2/2}
+.market-map-workspace:has(.customer-explorer) .work-preparation-quick {grid-column:1/-1;margin:0}
+.market-map-workspace:has(.customer-explorer) .map-list-toolbar {padding:6px 12px}
+.market-map-workspace:has(.customer-explorer) .map-show-all {display:none}
+.market-map-workspace:has(.customer-explorer) .work-controls-compact {padding:12px!important;margin:0;border-radius:12px 12px 0 0}
+.customer-explorer .explorer-company {padding:9px 8px;margin-block:2px}
+.customer-explorer .explorer-company-tags i {display:none}
+}
