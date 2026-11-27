@@ -32,7 +32,7 @@ function ConnectedWorkspace({theme,brief}:{brief?:boolean;theme:'light'|'dark'})
     return ()=>{if(!brief)setKnowledgeRoot(null)}
   },[])
   const accountSlot=document.getElementById('knowledge-account-slot')
-  return <><div ref={host} data-theme={theme} data-brief={brief || undefined} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme+'\n'+atlasLayout+'\n'+briefStyles}</style>{!brief&&location.hash.split('/')[0]==='#products'&&<ParameterVerification/>}{brief?<Intelligence/>:<App/>}</>,root)}</div>{!brief&&accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
+  return <><div ref={host} data-theme={theme} data-brief={brief || undefined} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme+'\n'+atlasLayout+'\n'+briefStyles}</style>{!brief&&location.hash.split('/')[0]==='#products'&&<ParameterVerification/>}{brief?<Intelligence brief/>:<App/>}</>,root)}</div>{!brief&&accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
 }
 
 export default function KnowledgeWorkspace({theme,brief}:{brief?:boolean;theme:'light'|'dark'}) {

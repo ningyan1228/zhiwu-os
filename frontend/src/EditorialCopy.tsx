@@ -27,6 +27,23 @@ export function EditorialProvider({children}:{children:ReactNode}) {
   return <Context.Provider value={{owner,rows,saved:(key,copy)=>setRows(old=>({...old,[key]:copy}))}}>{error&&<button onClick={()=>retry(n=>n+1)}>{error} · 重试</button>}{children}</Context.Provider>
 }
 
+type BriefItem = Copy & { id:string; label:string; url?:string; excerpt?:string }
+
+export function BriefList({items}:{items:BriefItem[]}) {
+  const {rows}=useContext(Context)!
+  const manual:BriefItem[]=Object.entries(rows).filter(([,copy])=>copy.createdAt)
+    .sort(([,a],[,b])=>b.createdAt!.localeCompare(a.createdAt!))
+    .map(([id,copy])=>({...copy,id,label:'手动录入'}))
+  return <><ManualIntelligence category="" showNews={()=>{}}/>
+    <div className="brief-list">{[...manual,...items].slice(0,2).map(item=>{
+      const copy=rows[editorialKey(item.id)]??item
+      return <details key={item.id} className="brief-item"><summary><span className="brief-meta">{item.label}</span><strong>{copy.title}</strong><span className="brief-preview">{copy.summary}</span></summary>
+        <div className="brief-reading"><EditorialCopy id={item.id} title={item.title} summary={item.summary}/>
+        {item.excerpt&&item.excerpt!==copy.summary&&<p>{item.excerpt}</p>}
+        {item.url&&<a href={item.url} target="_blank" rel="noreferrer">查看来源 ↗</a>}</div>
+      </details>
+    })}</div></>
+}
 export function ManualIntelligence({category,showNews}:{category:string;showNews:()=>void}) {
   const context=useContext(Context)!
   const [newId,setNewId]=useState('')

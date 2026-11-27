@@ -17,3 +17,14 @@
 .editorial-brief-summary, :host([data-brief]) .editorial-full-summary { display:none }
 :host([data-brief]) .editorial-brief-summary { display:inline }
 .editorial-create { display:flex; justify-content:flex-end }
+.brief-list { display:grid; margin-block:8px 16px }
+.brief-item { border-bottom:1px solid var(--line); min-width:0 }
+.brief-item summary { display:grid; gap:4px; padding:12px 28px 12px 4px; cursor:pointer; position:relative; list-style:none }
+.brief-item summary::-webkit-details-marker { display:none }
+.brief-item summary::after { content:'›'; position:absolute; right:6px; top:35%; color:var(--muted) }
+.brief-item[open] summary::after { transform:rotate(90deg) }
+.brief-meta,.brief-preview { color:var(--muted); font-size:13px }
+.brief-preview,.brief-item summary strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.brief-item[open] .brief-preview { display:none }
+.brief-reading { padding:4px 4px 16px; overflow-wrap:anywhere }
+.brief-reading p { line-height:1.65; white-space:pre-wrap }

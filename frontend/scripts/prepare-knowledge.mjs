@@ -92,10 +92,11 @@ writeFileSync(marketViewFile, "import { CountryGallery } from '@/CountryGallery'
 // Both entry points use the same source cards and account-backed editorial text.
 const originalIntel = readFileSync(app,'utf8')
 const editableIntel = originalIntel
-  .replace('function Intelligence() {', 'export function Intelligence() { return <EditorialProvider><IntelligenceFeed/></EditorialProvider> }\nfunction IntelligenceFeed() {')
+  .replace('function Intelligence() {', 'export function Intelligence({brief=false}:{brief?:boolean}={}) { return <EditorialProvider><IntelligenceFeed brief={brief}/></EditorialProvider> }\nfunction IntelligenceFeed({brief}:{brief:boolean}) {')
+  .replace(/(function IntelligenceFeed[\s\S]*?)(  return <>)/, '$1  if (brief) return loaded ? <BriefList items={actual.length ? actual.map(a=>({id:a.id,title:a.title,summary:summaries[a.id]?.summary_zh || a.content_text || "",excerpt:a.content_text || undefined,label:a.kind,url:a.canonical_url})) : articles.map(a=>({id:a.id,title:a.title,summary:a.relevance,label:a.source+" · 候选来源",url:a.sourceUrl}))}/> : <p role="status">正在读取情报…</p>\n$2')
   .replace('<div className="article-list">{actual.length', '<div className="article-list"><ManualIntelligence category={category} showNews={()=>setCategory("全部")}/>{actual.length')
   .replace("...new Set((actual.length ? actual : articles).map(a => a.kind))", "...new Set(['行业资讯', ...(actual.length ? actual : articles).map(a => a.kind)])")
   .replace(/<h2>\{article.title\}<\/h2><p>\{(summaries\[article.id\][^}]+)\}<\/p>/, '<EditorialCopy id={article.id} title={article.title} summary={$1}/>')
   .replace('<h2>{article.title}</h2><p>{article.summary}</p>', '<EditorialCopy id={article.id} title={article.title} summary={article.summary} preview={article.relevance}/>')
 if ((editableIntel.match(/<EditorialCopy /g)||[]).length !== 2) throw Error('Review industry intelligence card adapter')
-writeFileSync(app,"import { EditorialCopy, EditorialProvider, ManualIntelligence } from '../EditorialCopy'\n"+editableIntel)
+writeFileSync(app,"import { BriefList, EditorialCopy, EditorialProvider, ManualIntelligence } from '../EditorialCopy'\n"+editableIntel)
