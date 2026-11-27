@@ -59,6 +59,7 @@ export function polishKnowledge(root) {
     s=s.replace("{view === 'leads' && <CompanyDetail", "{view === 'leads' && wide && <PaneResize/>}\n      {view === 'leads' && <CompanyDetail")
     return s
   })
+  edit('features/market/MarketConnectionStatus.tsx', s => s.replace('  return <div className=', '  if (ready) return null\n  return <div className='))
   edit('features/market/CustomerBrowseList.tsx',s=>s.replace('{marketProducts.find(p=>p.id===lead.productId)?.name}', '<span className="short-product-tag" title={marketProducts.find(p=>p.id===lead.productId)?.name}>{{\'cpp-cpo\':\'CPP / CPO\',\'nl-w1201\':\'NL-W1201\',\'elo\':\'ELO\',\'fertilizer-coating\':\'肥料包膜\'}[lead.productId]}</span>'))
   edit('features/market/CompanyDetail.tsx',s=>{
     s="import { CustomerProfileHeader } from '@/CustomerProfileHeader'\n"+s
@@ -73,4 +74,5 @@ export function polishKnowledge(root) {
     return s
   })
 }
+
 

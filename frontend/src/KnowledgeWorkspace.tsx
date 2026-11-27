@@ -17,6 +17,7 @@ const layout = `:host{display:block;min-width:0;min-height:0;color:var(--text);f
 
 function AccountBar() {
   const account=useAccountSession()
+  if (account.user) return null // Account settings remain available in the workstation navigation.
   return <details className="knowledge-account-menu"><summary>{account.user?'共用资料已连接':account.status==='loading'?'确认账号…':'连接资料'}</summary><div><strong>阳光心材料共用资料</strong><span>{account.user?.email||'尚未登录'}</span><small>{account.user?'已通过工作站账号连接，无需再次登录。':'正在连接工作站授权的共用资料。'}</small><button onClick={e=>{window.location.hash='settings';e.currentTarget.closest('details')?.removeAttribute('open')}}>资料账号与设置</button></div></details>
 }
 
@@ -36,4 +37,5 @@ function ConnectedWorkspace({theme}:{theme:'light'|'dark'}) {
 export default function KnowledgeWorkspace({theme}:{theme:'light'|'dark'}) {
   return <KnowledgeSession><ConnectedWorkspace theme={theme}/></KnowledgeSession>
 }
+
 

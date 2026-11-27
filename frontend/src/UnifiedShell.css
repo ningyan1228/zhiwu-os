@@ -111,3 +111,6 @@ html:has(.drawer-layer),body:has(.drawer-layer){overflow:hidden}
 .app-shell,.app-shell>main {background:var(--workspace-wallpaper) fixed!important}
 .app-shell>.sidebar,.app-shell>main>header {background:var(--workspace-glass)!important;-webkit-backdrop-filter:blur(22px) saturate(1.2);backdrop-filter:blur(22px) saturate(1.2)}
 .app-shell main .page:has(.knowledge-host),.app-shell main .knowledge-host {max-width:none!important;width:100%;box-sizing:border-box}
+.app-shell>main>header:has(.knowledge-account-menu[open]) {z-index:2000}
+.knowledge-host {isolation:isolate}
+#knowledge-account-slot:empty {display:none}
