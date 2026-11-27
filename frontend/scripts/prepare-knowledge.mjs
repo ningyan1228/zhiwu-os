@@ -78,9 +78,10 @@ writeFileSync(mapWorkspace, readFileSync(mapWorkspace, 'utf8').replace('<LeadCar
 
 const marketViewFile = join(target, 'features/market/MarketIntelligence.tsx')
 const marketView = readFileSync(marketViewFile, 'utf8')
-writeFileSync(marketViewFile, marketView.replace('<ProductPicker value={productId} onChange={onProduct} />', '<select aria-label="按产品筛选" value={productId} onChange={e=>onProduct(e.target.value)}><option value="all">全部产品</option>{marketProducts.map(product=><option key={product.id} value={product.id}>{product.name}</option>)}</select>'))
+writeFileSync(marketViewFile, marketView.replace('<span>产品</span><ProductPicker value={productId} onChange={onProduct} />', '<span>产品</span><select aria-label="按产品筛选" value={productId} onChange={e=>onProduct(e.target.value)}><option value="all">全部产品</option>{marketProducts.map(product=><option key={product.id} value={product.id}>{product.name}</option>)}</select>'))
 const controlsFile = join(target, 'features/market/LeadWorkbench.tsx')
 writeFileSync(controlsFile, readFileSync(controlsFile, 'utf8')
   .replace('<div className="work-business-filters" role="group"', '<details className="atlas-filter-group"><summary>行业、应用与开发条件</summary><div className="work-business-filters" role="group"')
   .replace('{advancedContent}', '</details><details className="atlas-filter-group"><summary>收录日期与名单管理</summary>{advancedContent}')
   .replace('<LeadListManager work={work} leads={leads} />', '<LeadListManager work={work} leads={leads} /></details>'))
+
