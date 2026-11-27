@@ -88,3 +88,12 @@ writeFileSync(controlsFile, readFileSync(controlsFile, 'utf8')
 
 const galleryMarket = readFileSync(marketViewFile, 'utf8')
 writeFileSync(marketViewFile, "import { CountryGallery } from '@/CountryGallery'\n" + galleryMarket.replace('  const customerView =', "  if (currentRoute[1] === 'gallery') return <CountryGallery leads={data.leads}/>\n  const customerView ="))
+
+// Both entry points use the same source cards and account-backed editorial text.
+const originalIntel = readFileSync(app,'utf8')
+const editableIntel = originalIntel
+  .replace('function Intelligence() {', 'export function Intelligence() { return <EditorialProvider><IntelligenceFeed/></EditorialProvider> }\nfunction IntelligenceFeed() {')
+  .replace(/<h2>\{article.title\}<\/h2><p>\{(summaries\[article.id\][^}]+)\}<\/p>/, '<EditorialCopy id={article.id} title={article.title} summary={$1}/>')
+  .replace('<h2>{article.title}</h2><p>{article.summary}</p>', '<EditorialCopy id={article.id} title={article.title} summary={article.summary}/>')
+if ((editableIntel.match(/<EditorialCopy /g)||[]).length !== 2) throw Error('Review industry intelligence card adapter')
+writeFileSync(app,"import { EditorialCopy, EditorialProvider } from '../EditorialCopy'\n"+editableIntel)

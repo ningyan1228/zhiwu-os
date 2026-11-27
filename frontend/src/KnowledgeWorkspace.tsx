@@ -2,7 +2,7 @@ import { ParameterVerification } from './KnowledgeEntryForms'
 import { KnowledgeSession } from './KnowledgeSession'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { App } from './knowledge-generated/App'
+import { App, Intelligence } from './knowledge-generated/App'
 import { supabase } from './knowledge-generated/lib/supabase'
 import { useAccountSession } from './knowledge-generated/lib/accountSession'
 import { setKnowledgeRoot } from './KnowledgeDocument'
@@ -21,21 +21,21 @@ function AccountBar() {
   return <details className="knowledge-account-menu"><summary>{account.status==='loading'?'确认账号…':'连接资料'}</summary><div><strong>阳光心材料共用资料</strong><span>尚未登录</span><small>正在连接工作站授权的共用资料。</small><button onClick={e=>{window.location.hash='settings';e.currentTarget.closest('details')?.removeAttribute('open')}}>资料账号与设置</button></div></details>
 }
 
-function ConnectedWorkspace({theme}:{theme:'light'|'dark'}) {
+function ConnectedWorkspace({theme,brief}:{brief?:boolean;theme:'light'|'dark'}) {
   const host=useRef<HTMLDivElement>(null)
   const [root,setRoot]=useState<ShadowRoot|null>(null)
   useEffect(()=>{
     if(!host.current)return
     const shadow=host.current.shadowRoot || host.current.attachShadow({mode:'open'})
-    setKnowledgeRoot(shadow);setRoot(shadow)
-    return ()=>{setKnowledgeRoot(null)}
+    if(!brief)setKnowledgeRoot(shadow);setRoot(shadow)
+    return ()=>{if(!brief)setKnowledgeRoot(null)}
   },[])
   const accountSlot=document.getElementById('knowledge-account-slot')
-  return <><div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme+'\n'+atlasLayout}</style>{location.hash.split('/')[0]==='#products'&&<ParameterVerification/>}<App/></>,root)}</div>{accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
+  return <><div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme+'\n'+atlasLayout}</style>{location.hash.split('/')[0]==='#products'&&<ParameterVerification/>}{brief?<Intelligence/>:<App/>}</>,root)}</div>{!brief&&accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
 }
 
-export default function KnowledgeWorkspace({theme}:{theme:'light'|'dark'}) {
-  return <KnowledgeSession><ConnectedWorkspace theme={theme}/></KnowledgeSession>
+export default function KnowledgeWorkspace({theme,brief}:{brief?:boolean;theme:'light'|'dark'}) {
+  return <KnowledgeSession><ConnectedWorkspace theme={theme} brief={brief}/></KnowledgeSession>
 }
 
 
