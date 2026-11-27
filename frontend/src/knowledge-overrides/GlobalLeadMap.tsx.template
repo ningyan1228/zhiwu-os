@@ -146,6 +146,7 @@ export function GlobalLeadMap({ leads, selectedLead, hoveredLead, onSelectLead, 
   onSelectLead: (lead: PublicLead) => void; onSelectGroup: (group: LeadMapGroup) => void; overviewToken: number; closeUp?: boolean; onReturnRegions?: () => void;
   onBoundsChange?: (bounds: LeadMapBounds) => void; detailOpen?: boolean; onReset: () => void;
 }) {
+  const [panelClosed, setPanelClosed] = useState(false)
   const [showDensity, setShowDensity] = useState(false)
   const frameRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -172,6 +173,7 @@ export function GlobalLeadMap({ leads, selectedLead, hoveredLead, onSelectLead, 
   }, [])
   const viewport = leadMapViewport(leads, closeUp)
   return <div ref={frameRef} className={`lead-map-frame ${viewport.wide ? 'is-world-framing' : 'is-region-framing'}`}>
+    <button type="button" className="atlas-panel-toggle" aria-expanded={!panelClosed} aria-label={panelClosed ? "展开客户详情" : "收起客户详情"} title={panelClosed ? "展开客户详情" : "收起客户详情"} onClick={() => setPanelClosed(!panelClosed)}>{panelClosed ? "‹" : "›"}</button>
     {onReturnRegions && <button className="map-return-regions" type="button" onClick={onReturnRegions}><ArrowLeft size={13} />返回全部地区</button>}
     <div className="lead-map-controls"><span>点击聚合点展开 · 点击公司联动客户卡片</span><label><input type="checkbox" checked={showDensity} onChange={(event) => setShowDensity(event.target.checked)} />显示线索密度</label></div>
     <button type="button" className="explorer-map-reset" title="回到全部筛选客户" onClick={onReset}><RotateCcw size={17} /><span>复位地图</span></button>
