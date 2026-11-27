@@ -1,0 +1,16 @@
+.editorial-title { display:flex; align-items:baseline; justify-content:space-between; gap:16px }
+.editorial-title h2 { margin:0; overflow-wrap:anywhere }
+.editorial-title button,.editorial-form button { border:0; border-radius:8px; padding:6px 10px; font:inherit; font-size:13px; color:var(--blue); background:var(--blue-soft); cursor:pointer; flex:none }
+.editorial-form label { display:grid; gap:5px; font-size:13px }
+.editorial-form input,.editorial-form textarea { width:100%; box-sizing:border-box; padding:9px 12px; color:var(--text); background:var(--surface); border:1px solid var(--line); border-radius:8px; font:inherit }
+:host([data-brief]) { background:transparent!important; padding:0!important }
+:host([data-brief]) .page-heading, :host([data-brief]) .callout { display:none }
+:host([data-brief]) .filter-bar { margin:0 0 14px; gap:6px; flex-wrap:wrap }
+:host([data-brief]) .filter:first-child { order:1; margin-inline-start:auto }
+:host([data-brief]) .article-list { display:grid; gap:10px }
+:host([data-brief]) .article-card { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:16px 18px; box-shadow:none }
+:host([data-brief]) .article-meta { margin:0 0 8px; font-size:12px }
+:host([data-brief]) .editorial-title h2 { font-size:19px; line-height:1.4 }
+:host([data-brief]) .article-card p { margin:7px 0; font-size:14px; line-height:1.6 }
+:host([data-brief]) .article-footer { margin-top:12px; padding-top:10px; flex-wrap:wrap; gap:8px }
+:host([data-brief]) .article-footer .muted { display:none }

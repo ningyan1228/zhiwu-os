@@ -8,6 +8,7 @@ import { useAccountSession } from './knowledge-generated/lib/accountSession'
 import { setKnowledgeRoot } from './KnowledgeDocument'
 import leafletStyles from 'leaflet/dist/leaflet.css?inline'
 import polishStyles from './KnowledgePolish.css?inline'
+import briefStyles from './IndustryBrief.css?inline'
 import atlasLayout from './AtlasLayout.css?inline'
 import unifiedTheme from './UnifiedTheme.css?inline'
 
@@ -31,7 +32,7 @@ function ConnectedWorkspace({theme,brief}:{brief?:boolean;theme:'light'|'dark'})
     return ()=>{if(!brief)setKnowledgeRoot(null)}
   },[])
   const accountSlot=document.getElementById('knowledge-account-slot')
-  return <><div ref={host} data-theme={theme} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme+'\n'+atlasLayout}</style>{location.hash.split('/')[0]==='#products'&&<ParameterVerification/>}{brief?<Intelligence/>:<App/>}</>,root)}</div>{!brief&&accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
+  return <><div ref={host} data-theme={theme} data-brief={brief || undefined} className="knowledge-host">{root&&createPortal(<><style>{leafletStyles+'\n'+styles.join('\n')+'\n'+layout+'\n'+polishStyles+'\n'+unifiedTheme+'\n'+atlasLayout+'\n'+briefStyles}</style>{!brief&&location.hash.split('/')[0]==='#products'&&<ParameterVerification/>}{brief?<Intelligence/>:<App/>}</>,root)}</div>{!brief&&accountSlot&&createPortal(<AccountBar/>,accountSlot)}</>
 }
 
 export default function KnowledgeWorkspace({theme,brief}:{brief?:boolean;theme:'light'|'dark'}) {

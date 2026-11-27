@@ -34,8 +34,8 @@ export function EditorialCopy({id,title,summary}:{id:string;title:string;summary
   const [draft,edit]=useState<Copy|null>(null)
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
-  if(!draft)return <><h2>{value.title}</h2><p style={{whiteSpace:'pre-wrap'}}>{value.summary}</p><button disabled={!context.owner} onClick={()=>{edit({...value});setError('')}}>编辑情报</button></>
-  return <form style={{display:'grid',gap:10}} onSubmit={async e=>{
+  if(!draft)return <><div className="editorial-title"><h2>{value.title}</h2><button disabled={!context.owner} onClick={()=>{edit({...value});setError('')}} aria-label={`编辑情报：${value.title}`}>编辑</button></div><p style={{whiteSpace:'pre-wrap'}}>{value.summary}</p></>
+  return <form className="editorial-form" style={{display:'grid',gap:10}} onSubmit={async e=>{
     e.preventDefault()
     if(!supabase||busy)return
     const copy={title:draft.title.trim(),summary:draft.summary.trim()}
