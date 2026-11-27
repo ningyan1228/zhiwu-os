@@ -15,6 +15,7 @@ const source = process.env.KNOWLEDGE_SOURCE || join(cache,`knowledge-workbench-$
 const target = resolve('src/knowledge-generated')
 mkdirSync(target,{recursive:true})
 cpSync(join(source,'src'),target,{recursive:true})
+cpSync(resolve('src/knowledge-overrides/GlobalLeadMap.tsx.template'), join(target, 'features/market/GlobalLeadMap.tsx'))
 // Assets are namespaced; no research, private imports, credentials or source docs.
 if (existsSync(join(source,'public'))) cpSync(join(source,'public'),resolve('public/knowledge'),{recursive:true})
 function walk(dir) { return readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(join(dir,e.name)):[join(dir,e.name)]) }
