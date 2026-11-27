@@ -395,10 +395,10 @@ function App() {
       <div className="brand"><div className="brand-mark"><img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="干就是学工作站"/></div><div><strong>干就是学</strong><span>工作站</span></div><button className="mobile-close" onClick={() => setSidebar(false)}><X size={18}/></button></div>
       <nav className="unified-nav">
         <button className={['dashboard','tasks','calendar'].includes(view)?'active':''} title="今日工作" onClick={()=>openView('dashboard')}><Grid2X2 size={18}/><span>今日工作</span></button>
-        <details open={view === 'knowledge' && /^#market-intelligence(?:\/(?:results|map|leads)(?:\/.*)?)?$/.test(location.hash)}>
+        <details open={view === 'knowledge' && /^#market-intelligence(?:\/(?:gallery|results|map|leads)(?:\/.*)?)?$/.test(location.hash)}>
           <summary title="客户开发"><Radar size={18}/>客户开发</summary>
-          {[['market-intelligence','客户库'],['market-intelligence/results','开发成果']].map(([route,label]) => {
-            const active = view === 'knowledge' && (route.endsWith('/results') ? location.hash === '#' + route : /^#market-intelligence(?:\/(?:map|leads)(?:\/.*)?)?$/.test(location.hash))
+          {[['market-intelligence','客户库'],['market-intelligence/gallery','国家客户图鉴'],['market-intelligence/results','开发成果']].map(([route,label]) => {
+            const active = view === 'knowledge' && (route !== 'market-intelligence' ? location.hash === '#' + route : /^#market-intelligence(?:\/(?:map|leads)(?:\/.*)?)?$/.test(location.hash))
             return <button key={route} className={active ? 'active' : ''} aria-current={active ? 'page' : undefined} onClick={() => openKnowledge(route)}>{label}</button>
           })}
         </details>
@@ -1090,6 +1090,7 @@ function SupplierEditForm({ supplier, close, submit }: { supplier: Supplier; clo
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
+
 
 
 

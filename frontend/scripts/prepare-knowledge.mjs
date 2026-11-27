@@ -85,3 +85,6 @@ writeFileSync(controlsFile, readFileSync(controlsFile, 'utf8')
   .replace('{advancedContent}', '</details><details className="atlas-filter-group"><summary>收录日期与名单管理</summary>{advancedContent}')
   .replace('<LeadListManager work={work} leads={leads} />', '<LeadListManager work={work} leads={leads} /></details>'))
 
+
+const galleryMarket = readFileSync(marketViewFile, 'utf8')
+writeFileSync(marketViewFile, "import { CountryGallery } from '@/CountryGallery'\n" + galleryMarket.replace('  const customerView =', "  if (currentRoute[1] === 'gallery') return <CountryGallery leads={data.leads}/>\n  const customerView ="))
