@@ -63,3 +63,7 @@ writeFileSync(followupView,readFileSync(followupView,'utf8').replace("const defa
 const mapWorkspace = join(target, 'features/market/CustomerMapWorkspace.tsx')
 writeFileSync(mapWorkspace, readFileSync(mapWorkspace, 'utf8').replace('className="explorer-profile"', 'className="explorer-profile" data-product={activeLead.productId}'))
 
+
+const leadCardFile = join(target, 'features/market/LeadCard.tsx')
+const leadCardSource = readFileSync(leadCardFile, 'utf8')
+writeFileSync(leadCardFile, leadCardSource.replace('<div className="customer-card-meta">', '<div className="customer-card-meta"><h3 className="atlas-business-title">业务与开发</h3>'))

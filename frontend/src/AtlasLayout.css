@@ -75,3 +75,21 @@
 .market-workspace-page .market-map-workspace:has(.customer-explorer) .customer-work-toolbar .work-preparation-compact {display:contents}
 .market-workspace-page .market-map-workspace:has(.customer-explorer) .customer-work-toolbar .work-preparation-quick {grid-area:3/1/4/-1;position:static;flex-wrap:wrap}
 }
+.atlas-business-title {display:none}
+.market-workspace-page .explorer-inspector .explorer-profile {padding:18px 20px}
+.market-workspace-page .explorer-inspector .explorer-profile h2 {margin:8px 0;font-size:clamp(20px,1.5vw,26px)}
+.market-workspace-page .explorer-inspector .explorer-profile p {margin:0 0 12px}
+.market-workspace-page .explorer-inspector .explorer-detail-heading {display:block;margin:0;padding:9px 18px;background:var(--surface-soft);border:0}
+.explorer-inspector .explorer-detail-heading strong,
+.market-workspace-page .explorer-inspector .customer-card-meta :is(.customer-card-country,.customer-card-industry) {display:none}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-card-meta {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:0;padding:16px 18px 6px}
+.explorer-inspector .atlas-business-title {display:block;margin:0;font-size:17px;color:var(--text)}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-card-evidence {margin:0;padding:0 18px;background:transparent!important}
+.market-workspace-page .explorer-inspector .customer-business-brief {display:block;padding:0;background:transparent!important;border:0}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-brief-row {display:block;margin:0;padding:12px 0;border-bottom:1px solid var(--line)}
+.explorer-inspector .customer-brief-row>.customer-brief-label {display:block;margin:0 0 5px}
+.market-workspace-page .explorer-inspector .customer-brief-row p {margin:0;font-size:14px;line-height:1.65}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-card-opportunity span {font-size:14px;line-height:1.6;margin-top:3px}
+.market-workspace-page .explorer-inspector .customer-business-evidence {margin:0;padding-block:5px}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-card-dates {padding:10px 18px 3px}
+.market-workspace-page .customer-explorer .explorer-inspector .customer-card-actions {padding:12px 18px;gap:8px;border-top:1px solid var(--line)}
