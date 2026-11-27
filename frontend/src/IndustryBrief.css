@@ -14,3 +14,5 @@
 :host([data-brief]) .article-card p { margin:7px 0; font-size:14px; line-height:1.6 }
 :host([data-brief]) .article-footer { margin-top:12px; padding-top:10px; flex-wrap:wrap; gap:8px }
 :host([data-brief]) .article-footer .muted { display:none }
+.editorial-brief-summary, :host([data-brief]) .editorial-full-summary { display:none }
+:host([data-brief]) .editorial-brief-summary { display:inline }

@@ -94,6 +94,6 @@ const originalIntel = readFileSync(app,'utf8')
 const editableIntel = originalIntel
   .replace('function Intelligence() {', 'export function Intelligence() { return <EditorialProvider><IntelligenceFeed/></EditorialProvider> }\nfunction IntelligenceFeed() {')
   .replace(/<h2>\{article.title\}<\/h2><p>\{(summaries\[article.id\][^}]+)\}<\/p>/, '<EditorialCopy id={article.id} title={article.title} summary={$1}/>')
-  .replace('<h2>{article.title}</h2><p>{article.summary}</p>', '<EditorialCopy id={article.id} title={article.title} summary={article.summary}/>')
+  .replace('<h2>{article.title}</h2><p>{article.summary}</p>', '<EditorialCopy id={article.id} title={article.title} summary={article.summary} preview={article.relevance}/>')
 if ((editableIntel.match(/<EditorialCopy /g)||[]).length !== 2) throw Error('Review industry intelligence card adapter')
 writeFileSync(app,"import { EditorialCopy, EditorialProvider } from '../EditorialCopy'\n"+editableIntel)

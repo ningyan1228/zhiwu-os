@@ -27,14 +27,14 @@ export function EditorialProvider({children}:{children:ReactNode}) {
   return <Context.Provider value={{owner,rows,saved:(key,copy)=>setRows(old=>({...old,[key]:copy}))}}>{error&&<button onClick={()=>retry(n=>n+1)}>{error} · 重试</button>}{children}</Context.Provider>
 }
 
-export function EditorialCopy({id,title,summary}:{id:string;title:string;summary:string}) {
+export function EditorialCopy({id,title,summary,preview}:{id:string;title:string;summary:string;preview?:string}) {
   const context=useContext(Context)!
   const key=id==='trade-gov-export-basics'?'1f018f77-e4ea-46ce-a58e-3cf4822de280':id==='ifa-fertilizer'?'e46acd64-a42c-4657-83cd-45eb91a41129':id
   const value=context.rows[key]??{title,summary}
   const [draft,edit]=useState<Copy|null>(null)
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
-  if(!draft)return <><div className="editorial-title"><h2>{value.title}</h2><button disabled={!context.owner} onClick={()=>{edit({...value});setError('')}} aria-label={`编辑情报：${value.title}`}>编辑</button></div><p style={{whiteSpace:'pre-wrap'}}>{value.summary}</p></>
+  if(!draft)return <><div className="editorial-title"><h2>{value.title}</h2><button disabled={!context.owner} onClick={()=>{edit({...value});setError('')}} aria-label={`编辑情报：${value.title}`}>编辑</button></div><p style={{whiteSpace:'pre-wrap'}}>{context.rows[key] || !preview ? value.summary : <><span className="editorial-full-summary">{value.summary}</span><span className="editorial-brief-summary">{preview}</span></>}</p></>
   return <form className="editorial-form" style={{display:'grid',gap:10}} onSubmit={async e=>{
     e.preventDefault()
     if(!supabase||busy)return
