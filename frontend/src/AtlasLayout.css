@@ -2,7 +2,7 @@
 .market-workspace-page .market-map-workspace:has(.customer-explorer) {
  display:grid; grid-template-columns:minmax(235px, .82fr) minmax(260px,1.45fr) minmax(265px,1fr);
  grid-template-rows:auto auto auto minmax(145px,1fr); gap:0 12px;
- height:calc(100dvh - 150px); min-height:590px; align-items:stretch;
+ height:var(--atlas-height,calc(100dvh - 84px)); min-height:420px; align-items:stretch;
 }
 .market-map-workspace:has(.customer-explorer) > .customer-map-view,
 .market-map-workspace .customer-map-view > .customer-explorer { display:contents }
@@ -202,3 +202,6 @@
  :host .company-detail-backdrop.company-detail-drawer-backdrop:not(.company-detail-inline) {backdrop-filter:none;-webkit-backdrop-filter:none}
 }
 .market-workspace-page>.market-heading:empty {display:none}
+
+@media(min-width:1050px){:host .page-content:has(.customer-explorer){padding-bottom:0!important}}
+

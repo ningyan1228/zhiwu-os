@@ -152,15 +152,16 @@ export function GlobalLeadMap({ leads, selectedLead, hoveredLead, onSelectLead, 
   useEffect(() => {
     const element = frameRef.current
     if (!element) return
+    const grid = element.closest<HTMLElement>('.market-map-workspace')
+    if (!grid) return
     let pending = 0
     const measure = () => {
-      const rect = element.getBoundingClientRect()
-      const scale = element.offsetWidth ? rect.width / element.offsetWidth : 1
-      const legend = element.querySelector<HTMLElement>('.lead-map-legend')
-      const documentTop = rect.top + window.scrollY
-      const available = (window.innerHeight - documentTop - 24) / scale - (legend?.offsetHeight ?? 20) - 10
-      const height = `${Math.max(340, Math.floor(available))}px`
-      if (element.style.getPropertyValue('--lead-map-fill-height') !== height) element.style.setProperty('--lead-map-fill-height', height)
+      const rect = grid.getBoundingClientRect()
+      if (!grid.offsetWidth || !rect.width) return
+      const scale = rect.width / grid.offsetWidth
+      const top = rect.top + window.scrollY
+      const height = Math.floor((window.innerHeight - top - 8) / scale)
+      grid.style.setProperty('--atlas-height', height + 'px')
     }
     const schedule = () => { cancelAnimationFrame(pending); pending = requestAnimationFrame(measure) }
     const observer = new ResizeObserver(schedule)
@@ -186,4 +187,5 @@ export function GlobalLeadMap({ leads, selectedLead, hoveredLead, onSelectLead, 
     <details className="atlas-map-key"><summary aria-label="地图说明" title="地图说明">ⓘ</summary><p>数字为当前筛选内的公司数，彩色点按产品区分。{showDensity && '黄圈表示各国已核验公开线索数量，位置为客户坐标汇总。'}数量不代表市场规模、成交概率或真实需求量。</p></details>
   </div>
 }
+
 
