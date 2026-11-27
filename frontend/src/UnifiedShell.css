@@ -114,3 +114,8 @@ html:has(.drawer-layer),body:has(.drawer-layer){overflow:hidden}
 .app-shell>main>header:has(.knowledge-account-menu[open]) {z-index:2000}
 .knowledge-host {isolation:isolate}
 #knowledge-account-slot:empty {display:none}
+@media(min-width:1025px) {
+.app-shell:not(.sidebar-compact)>.sidebar {width:160px!important;box-sizing:border-box;padding-inline:8px}
+.app-shell:not(.sidebar-compact)>main {margin-left:160px!important;width:calc(100% - 160px)!important}
+.app-shell:not(.sidebar-compact)>.sidebar .brand {padding-inline:6px}
+}

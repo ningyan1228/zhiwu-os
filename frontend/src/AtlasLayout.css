@@ -71,3 +71,7 @@
 .customer-explorer .explorer-company {padding:9px 8px;margin-block:2px}
 .customer-explorer .explorer-company-tags i {display:none}
 }
+@media(min-width:1050px) {
+.market-workspace-page .market-map-workspace:has(.customer-explorer) .customer-work-toolbar .work-preparation-compact {display:contents}
+.market-workspace-page .market-map-workspace:has(.customer-explorer) .customer-work-toolbar .work-preparation-quick {grid-area:3/1/4/-1;position:static;flex-wrap:wrap}
+}
