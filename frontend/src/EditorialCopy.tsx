@@ -27,6 +27,8 @@ export function EditorialProvider({children}:{children:ReactNode}) {
   return <Context.Provider value={{owner,rows,saved:(key,copy)=>setRows(old=>({...old,[key]:copy}))}}>{error&&<button onClick={()=>retry(n=>n+1)}>{error} · 重试</button>}{children}</Context.Provider>
 }
 
+function editorialKey(id:string) { return id==='trade-gov-export-basics'?'1f018f77-e4ea-46ce-a58e-3cf4822de280':id==='ifa-fertilizer'?'e46acd64-a42c-4657-83cd-45eb91a41129':id }
+
 type BriefItem = Copy & { id:string; label:string; url?:string; excerpt?:string }
 
 export function BriefList({items}:{items:BriefItem[]}) {
@@ -61,7 +63,7 @@ export function ManualIntelligence({category,showNews}:{category:string;showNews
 }
 export function EditorialCopy({id,title,summary,preview,creating=false,onDone}:{id:string;title:string;summary:string;preview?:string;creating?:boolean;onDone?:(saved:boolean)=>void}) {
   const context=useContext(Context)!
-  const key=id==='trade-gov-export-basics'?'1f018f77-e4ea-46ce-a58e-3cf4822de280':id==='ifa-fertilizer'?'e46acd64-a42c-4657-83cd-45eb91a41129':id
+  const key=editorialKey(id)
   const value=context.rows[key]??{title,summary}
   const [draft,edit]=useState<Copy|null>(creating?{title,summary}:null)
   const [busy,setBusy]=useState(false)
