@@ -39,7 +39,7 @@
 .market-map-workspace:has(.atlas-panel-toggle[aria-expanded=false]) .customer-explorer>div:nth-child(2) {grid-column:2/4}
 }
 :host .app-shell,:host .main-area,:host .market-workspace-page {background:transparent!important}
-:host .market-workspace-page:has(.customer-explorer) {background:var(--workspace-wallpaper) fixed!important;border-radius:16px}
+:host {background:var(--workspace-wallpaper) fixed!important}
 .market-workspace-page .market-map-workspace:has(.customer-explorer)>:is(.work-controls-compact,.compact-customer-results),
 .market-workspace-page .customer-map-view :is(.map-list-toolbar,.explorer-directory,.explorer-inspector,.atlas-panel-toggle) {
  background:var(--workspace-glass)!important;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-color:color-mix(in srgb,var(--ui-surface) 72%,transparent)
@@ -50,7 +50,7 @@
 .market-workspace-page .customer-map-view .explorer-profile[data-product="fertilizer-coating"] {--cover:url('/material-covers/granules.jpg')}
 .market-workspace-page .customer-map-view .explorer-profile :is(h2,p,.explorer-eyebrow) {color:white!important;text-shadow:0 1px 4px #101820}
 @media(min-width:1600px){.market-workspace-page .market-map-workspace:has(.customer-explorer){grid-template-columns:clamp(320px,21vw,420px) minmax(0,1fr) clamp(360px,24vw,510px)}}
-:host .market-workspace-page:has(.customer-explorer){background:transparent!important}
+:host .page-content:has(.market-workspace-page),:host .market-workspace-page:has(.customer-explorer),:host .market-workspace-page .market-heading {background:transparent!important}
 .market-workspace-page:has(.customer-explorer) .market-heading {margin-bottom:8px;padding-block:2px}
 .atlas-map-key {position:absolute;bottom:12px;left:12px;z-index:500;color:var(--text);font-size:13px}
 .atlas-map-key summary {width:30px;height:30px;display:grid;place-items:center;border-radius:50%;background:var(--surface);cursor:pointer;font-size:17px}
@@ -93,3 +93,4 @@
 .market-workspace-page .explorer-inspector .customer-business-evidence {margin:0;padding-block:5px}
 .market-workspace-page .customer-explorer .explorer-inspector .customer-card-dates {padding:10px 18px 3px}
 .market-workspace-page .customer-explorer .explorer-inspector .customer-card-actions {padding:12px 18px;gap:8px;border-top:1px solid var(--line)}
+
