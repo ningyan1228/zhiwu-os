@@ -38,3 +38,9 @@
 .market-map-workspace:has(.atlas-panel-toggle[aria-expanded=false]) .explorer-inspector {display:none}
 .market-map-workspace:has(.atlas-panel-toggle[aria-expanded=false]) .customer-explorer>div:nth-child(2) {grid-column:2/4}
 }
+:host .app-shell,:host .main-area,:host .market-workspace-page {background:transparent!important}
+:host .market-workspace-page:has(.customer-explorer) {background:var(--workspace-wallpaper) fixed!important;border-radius:16px}
+.market-workspace-page .market-map-workspace:has(.customer-explorer)>:is(.work-controls-compact,.compact-customer-results),
+.market-workspace-page .customer-map-view :is(.map-list-toolbar,.explorer-directory,.explorer-inspector,.atlas-panel-toggle) {
+ background:var(--workspace-glass)!important;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-color:color-mix(in srgb,var(--ui-surface) 72%,transparent)
+}

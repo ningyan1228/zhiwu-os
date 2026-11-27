@@ -78,3 +78,12 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .outreach-copy-options [data-copy-part="body"]{background:var(--ui-accent)!important;border-color:var(--ui-accent)!important;color:#fff!important}
 :host([data-theme="dark"]) :is(.product-item,.product-item.selected,.product-list){background:var(--ui-surface)!important;color:var(--ui-text)!important}
 :host([data-theme="dark"]) .product-item.selected{background:var(--ui-tint)!important}
+:root,:host {
+ --workspace-wallpaper:radial-gradient(ellipse at 8% 8%,#c0eee2,transparent 54%),radial-gradient(ellipse at 92% 12%,#d3dbff,transparent 52%),linear-gradient(145deg,#f5fcfa,#d8edf6 60%,#ede8fc);
+ --workspace-glass:rgba(255,255,255,.75);
+}
+:root[data-theme=dark],:host([data-theme=dark]) {
+ --workspace-wallpaper:radial-gradient(ellipse at 8% 8%,#19463f,transparent 60%),linear-gradient(135deg,#101e2e,#262943);
+ --workspace-glass:rgba(21,34,46,.84);
+}
+@media(prefers-reduced-transparency:reduce) { :root,:host {--workspace-glass:var(--ui-surface)} }
