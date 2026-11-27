@@ -87,3 +87,20 @@ button:disabled{opacity:.45;cursor:not-allowed}
  --workspace-glass:rgba(21,34,46,.84);
 }
 @media(prefers-reduced-transparency:reduce) { :root,:host {--workspace-glass:var(--ui-surface)} }
+
+/* Shared material for the host and its isolated knowledge pages. */
+:root,:host {
+ --workspace-glass:color-mix(in srgb,var(--ui-surface) 67%,transparent);
+ --glass-inset:color-mix(in srgb,var(--ui-surface) 38%,transparent);
+ --glass-edge:color-mix(in srgb,var(--ui-surface) 72%,var(--ui-line));
+ --glass-filter:blur(20px) saturate(1.24);
+}
+body,:host {background:var(--workspace-wallpaper) fixed!important}
+:is(.app-shell,.main-area) :is(.panel,.table-panel,.product-card,.metric,.modal,.drawer,.setup-card,.inquiry-detail,.inquiry-list,.inquiry-empty,.product-detail,.article-card,.work-list-manager,.supplier-card,.map-line-card,.map-product-group,.trade-panel,.crm-memory-card,.mail-list-panel,.mail-detail-panel,.account-popover,.notification-panel,.quote-list-panel,.memory-card,.project-card,.relationship-card,.formal-quote-card,.country-card,.crm-card) {
+ background:var(--workspace-glass)!important;border-color:var(--glass-edge)!important;
+ -webkit-backdrop-filter:var(--glass-filter);backdrop-filter:var(--glass-filter);
+ box-shadow:inset 0 1px 0 var(--glass-inset),0 4px 18px #182e490a
+}
+@media(prefers-reduced-transparency:reduce){
+ :root,:host {--workspace-glass:var(--ui-surface);--glass-inset:var(--ui-soft);--glass-filter:none}
+}
