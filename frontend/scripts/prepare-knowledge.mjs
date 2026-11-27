@@ -93,7 +93,9 @@ writeFileSync(marketViewFile, "import { CountryGallery } from '@/CountryGallery'
 const originalIntel = readFileSync(app,'utf8')
 const editableIntel = originalIntel
   .replace('function Intelligence() {', 'export function Intelligence() { return <EditorialProvider><IntelligenceFeed/></EditorialProvider> }\nfunction IntelligenceFeed() {')
+  .replace('<div className="article-list">{actual.length', '<div className="article-list"><ManualIntelligence category={category} showNews={()=>setCategory("全部")}/>{actual.length')
+  .replace("...new Set((actual.length ? actual : articles).map(a => a.kind))", "...new Set(['行业资讯', ...(actual.length ? actual : articles).map(a => a.kind)])")
   .replace(/<h2>\{article.title\}<\/h2><p>\{(summaries\[article.id\][^}]+)\}<\/p>/, '<EditorialCopy id={article.id} title={article.title} summary={$1}/>')
   .replace('<h2>{article.title}</h2><p>{article.summary}</p>', '<EditorialCopy id={article.id} title={article.title} summary={article.summary} preview={article.relevance}/>')
 if ((editableIntel.match(/<EditorialCopy /g)||[]).length !== 2) throw Error('Review industry intelligence card adapter')
-writeFileSync(app,"import { EditorialCopy, EditorialProvider } from '../EditorialCopy'\n"+editableIntel)
+writeFileSync(app,"import { EditorialCopy, EditorialProvider, ManualIntelligence } from '../EditorialCopy'\n"+editableIntel)

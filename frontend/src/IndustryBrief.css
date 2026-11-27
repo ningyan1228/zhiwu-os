@@ -16,3 +16,4 @@
 :host([data-brief]) .article-footer .muted { display:none }
 .editorial-brief-summary, :host([data-brief]) .editorial-full-summary { display:none }
 :host([data-brief]) .editorial-brief-summary { display:inline }
+.editorial-create { display:flex; justify-content:flex-end }
