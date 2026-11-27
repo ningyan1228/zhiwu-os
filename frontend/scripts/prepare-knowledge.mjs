@@ -4,7 +4,7 @@ import { resolve, join } from 'node:path'
 import { polishKnowledge } from './polish-knowledge.mjs'
 
 // Only this audited public revision is imported. Private imports are never copied.
-const revision = '6cd2454c533990a91166235ecfc5f74f06cddef1'
+const revision = '27748e0ba82e8cc9e9e4ff33edf03b90c2f4fb22'
 const cache = resolve('.knowledge-source')
 if (!process.env.KNOWLEDGE_SOURCE) {
   mkdirSync(cache, {recursive:true})

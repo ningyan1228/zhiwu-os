@@ -1,0 +1,27 @@
+@media (min-width:1050px) {
+.market-workspace-page .market-map-workspace:has(.customer-explorer) {
+ display:grid; grid-template-columns:minmax(235px, .82fr) minmax(260px,1.45fr) minmax(265px,1fr);
+ grid-template-rows:auto auto auto minmax(145px,1fr); gap:0 12px;
+ height:calc(100dvh - 150px); min-height:590px; align-items:stretch;
+}
+.market-map-workspace:has(.customer-explorer) > .customer-map-view,
+.market-map-workspace .customer-map-view > .customer-explorer { display:contents }
+.market-map-workspace:has(.customer-explorer) > .work-controls-compact,
+.market-map-workspace:has(.customer-explorer) > .compact-customer-results,
+.market-map-workspace:has(.customer-explorer) .map-list-toolbar,
+.customer-map-view .explorer-directory {grid-column:1; min-width:0; margin:0; padding:12px; background:var(--surface)}
+.market-map-workspace:has(.customer-explorer) .customer-work-toolbar {display:flex;flex-wrap:wrap;gap:8px}
+.market-map-workspace:has(.customer-explorer) .customer-work-toolbar h1,
+.market-map-workspace:has(.customer-explorer) .customer-work-toolbar .work-search {flex:1 1 100%;width:100%}
+.market-map-workspace:has(.customer-explorer) .compact-customer-results {grid-row:2;display:flex;flex-wrap:wrap;gap:6px}
+.market-map-workspace:has(.customer-explorer) .map-list-toolbar {grid-row:3;display:flex;flex-wrap:wrap;gap:5px}
+.market-map-workspace:has(.customer-explorer) .map-list-context,.customer-explorer .explorer-directory-hint,.customer-explorer .explorer-directory>.sidebar-title {display:none}
+.customer-map-view .customer-explorer>.explorer-directory {grid-row:4;overflow:auto;contain:size;padding:3px}
+.customer-map-view .customer-explorer>div:nth-child(2) {grid-column:2;grid-row:1/5;min-height:0}
+.customer-map-view .customer-explorer>.explorer-inspector {grid-column:3;grid-row:1/5;overflow:auto;contain:size}
+.customer-map-view .customer-explorer .lead-map-frame {height:100%;display:flex;flex-direction:column}
+.customer-map-view .customer-explorer .lead-map-frame .global-lead-map {flex:1;height:100%;min-height:0;max-height:none}
+.customer-map-view .explorer-company-copy>strong {display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.customer-map-view .explorer-profile {padding:18px}
+.customer-map-view .explorer-profile h2 {font-size:21px;margin:10px 0}
+}
