@@ -44,3 +44,9 @@
 .market-workspace-page .customer-map-view :is(.map-list-toolbar,.explorer-directory,.explorer-inspector,.atlas-panel-toggle) {
  background:var(--workspace-glass)!important;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-color:color-mix(in srgb,var(--ui-surface) 72%,transparent)
 }
+:host .page-content:has(.market-workspace-page) {width:100%!important;max-width:none!important;box-sizing:border-box;padding-inline:clamp(10px,1vw,22px)!important}
+.market-workspace-page .customer-map-view .explorer-profile[data-product] {--cover:url('/material-covers/pigment.jpg');background:linear-gradient(90deg,#091722d9,#0a172c65),var(--cover) center/cover}
+.market-workspace-page .customer-map-view .explorer-profile[data-product="elo"] {--cover:url('/material-covers/linseed.jpg')}
+.market-workspace-page .customer-map-view .explorer-profile[data-product="fertilizer-coating"] {--cover:url('/material-covers/granules.jpg')}
+.market-workspace-page .customer-map-view .explorer-profile :is(h2,p,.explorer-eyebrow) {color:white!important;text-shadow:0 1px 4px #101820}
+@media(min-width:1600px){.market-workspace-page .market-map-workspace:has(.customer-explorer){grid-template-columns:clamp(320px,21vw,420px) minmax(0,1fr) clamp(360px,24vw,510px)}}

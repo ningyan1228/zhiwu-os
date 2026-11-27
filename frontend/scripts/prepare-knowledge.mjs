@@ -59,4 +59,5 @@ await import('./prepare-overview.mjs')
 
 // Respect a source ledger's explicitly declared contact-priority ordering.
 const followupView=join(target,'features/market/FollowupViews.tsx')
-writeFileSync(followupView,readFileSync(followupView,'utf8').replace("const defaultOrder = 'schedule'","const defaultOrder = document.metadata.default_sort_field === 'contact_priority_rank' ? 'priority' : 'schedule'"))
+writeFileSync(followupView,readFileSync(followupView,'utf8').replace("const defaultOrder = 'schedule'","const defaultOrder = document.metadata.default_sort_field === 'contact_priority_rank' ? 'priority' : 'schedule'"))const mapWorkspace = join(target, 'features/market/CustomerMapWorkspace.tsx')
+writeFileSync(mapWorkspace, readFileSync(mapWorkspace, 'utf8').replace('className="explorer-profile"', 'className="explorer-profile" data-product={activeLead.productId}'))
